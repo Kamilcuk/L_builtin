@@ -7,6 +7,9 @@ struct word_list;
 #define GETOPT_HELP -99
 #endif
 
+/* Top-level entry point, implemented in Rust (src/dispatch.rs). */
+extern int L_builtin_builtin(struct word_list *list);
+
 int lseek_subcommand(struct word_list *list);
 int poll_subcommand(struct word_list *list);
 #ifdef HAVE_PPOLL
@@ -23,10 +26,6 @@ int send_subcommand(struct word_list *list);
 int recv_subcommand(struct word_list *list);
 int sleep_subcommand(struct word_list *list);
 
-#ifdef HAVE_LUA
-int lua_subcommand(struct word_list *list);
-#endif
-
 extern char *lseek_doc[];
 extern char *poll_doc[];
 #ifdef HAVE_PPOLL
@@ -42,9 +41,5 @@ extern char *shutdown_doc[];
 extern char *send_doc[];
 extern char *recv_doc[];
 extern char *sleep_doc[];
-
-#ifdef HAVE_LUA
-extern char *lua_doc[];
-#endif
 
 #endif

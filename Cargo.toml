@@ -1,0 +1,42 @@
+[package]
+name = "l_builtin_rs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.70"
+
+[lib]
+name = "l_builtin_rs"
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[features]
+# Enabled by CMake when ppoll(2) is available, so the dispatch table can
+# include the ppoll subcommand in sync with the C build.
+ppoll = []
+
+[dependencies]
+clap = { version = "4.5", features = ["derive", "wrap_help"] }
+thiserror = "1.0"
+libc = "0.2"
+nix = "0.31"
+rustix = { version = "1.1", features = ["param", "use-libc-auxv", "time"] }
+mlua = { version = "0.10", features = ["lua51", "vendored"] }
+smallvec = "1.13"
+uucore = { git = "https://github.com/uutils/coreutils", package = "uucore", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+
+# uutils coreutils crates
+uu_ls = { git = "https://github.com/uutils/coreutils", package = "uu_ls", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+uu_stat = { git = "https://github.com/uutils/coreutils", package = "uu_stat", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+uu_dirname = { git = "https://github.com/uutils/coreutils", package = "uu_dirname", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+uu_rm = { git = "https://github.com/uutils/coreutils", package = "uu_rm", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+
+[dev-dependencies]
+tempfile = "3.15"
+pretty_assertions = "1.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -11,51 +11,7 @@
 extern char *this_command_name;
 extern struct builtin L_builtin_struct;
 
-struct subcommand_def {
-  const char *name;
-  sh_builtin_func_t *func;
-  char **doc;
-};
-
-static struct subcommand_def subcommands[] = {
-  {"lseek", lseek_subcommand, lseek_doc},
-  {"poll", poll_subcommand, poll_doc},
-#ifdef HAVE_PPOLL
-  {"ppoll", ppoll_subcommand, ppoll_doc},
-#endif
-  {"sigmask", sigmask_subcommand, sigmask_doc},
-  {"sigunmask", sigunmask_subcommand, sigunmask_doc},
-  {"pipe", pipe_subcommand, pipe_doc},
-  {"listen", listen_subcommand, listen_doc},
-  {"accept", accept_subcommand, accept_doc},
-  {"connect", connect_subcommand, connect_doc},
-  {"shutdown", shutdown_subcommand, shutdown_doc},
-  {"send", send_subcommand, send_doc},
-  {"recv", recv_subcommand, recv_doc},
-  {"sleep", sleep_subcommand, sleep_doc},
-#ifdef HAVE_LUA
-  {"lua", lua_subcommand, lua_doc},
-#endif
-  {NULL, NULL, NULL}
-};
-
-static struct subcommand_def *find_subcommand(const char *name)
-{
-  for (int i = 0; subcommands[i].name; i++) {
-    if (strcmp(name, subcommands[i].name) == 0)
-      return &subcommands[i];
-  }
-  return NULL;
-}
-
-static void print_arr(char **arr)
-{
-  if (arr) {
-    for (int i = 0; arr[i]; i++)
-      printf("%s\n", arr[i]);
-  }
-}
-
+/* Main help text */
 char *L_builtin_doc[] = {
   "L_lib helper builtins.",
   "",
@@ -77,44 +33,46 @@ char *L_builtin_doc[] = {
   "  send       Send bytes over a socket",
   "  recv       Receive bytes from a socket",
   "  sleep      High-precision sub-second sleep",
-#ifdef HAVE_LUA
+  "  core       Core utilities (ls, stat) via Rust/uutils",
   "  lua        Execute LuaJIT script",
-#endif
   "",
   "Use 'L_builtin <subcommand> -h' for more information.",
   (char *)NULL
 };
 
-int L_builtin_builtin(WORD_LIST *list)
+/* Print help array */
+static void print_arr(char **arr)
 {
-  if (list == 0) {
-    if (this_command_name && *this_command_name)
-      fprintf(stderr, "%s: usage: ", this_command_name);
-    fprintf(stderr, "%s\n", L_builtin_struct.short_doc);
-    return (EX_USAGE);
+  if (arr) {
+    for (int i = 0; arr[i]; i++)
+      printf("%s\n", arr[i]);
   }
-
-  char *subcommand_name = list->word->word;
-  if (strcmp(subcommand_name, "-h") == 0 || strcmp(subcommand_name, "--help") == 0) {
-    print_arr(L_builtin_doc);
-    return (EX_USAGE);
-  }
-  struct subcommand_def *sub = find_subcommand(subcommand_name);
-
-  if (sub == NULL) {
-    builtin_error("%s: invalid subcommand", subcommand_name);
-    return (EX_USAGE);
-  }
-
-  /* Check for help request for subcommand */
-  if (list->next && (strcmp(list->next->word->word, "-h") == 0 ||
-                     strcmp(list->next->word->word, "--help") == 0)) {
-    print_arr(sub->doc);
-    return (EXECUTION_SUCCESS);
-  }
-
-  return (*sub->func)(list->next);
 }
+
+/*
+ * Help/usage helpers called from the Rust-side dispatcher (src/dispatch.rs).
+ * They live in C because they need access to bash globals (this_command_name,
+ * the L_builtin_struct short_doc, and the L_builtin_doc array).
+ */
+
+void l_builtin_print_usage(void)
+{
+  if (this_command_name && *this_command_name)
+    fprintf(stderr, "%s: usage: ", this_command_name);
+  fprintf(stderr, "%s\n", L_builtin_struct.short_doc);
+}
+
+void l_builtin_print_help(void)
+{
+  print_arr(L_builtin_doc);
+}
+
+void l_builtin_unknown_subcommand(const char *name)
+{
+  fprintf(stderr, "%s: unknown subcommand: %s\n", this_command_name, name);
+}
+
+/* `L_builtin_builtin` is provided by the Rust crate (src/dispatch.rs). */
 
 struct builtin L_builtin_struct = {
   "L_builtin",

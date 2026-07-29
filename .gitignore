@@ -22,3 +22,6 @@ target
 #.idea/
 build
 compile_commands.json
+temp/
+temp/
+target

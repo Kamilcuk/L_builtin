@@ -1,0 +1,19 @@
+/* Version script for L_builtin.so
+ *
+ * Bash's `enable -f` dlopens the module and dlsym()s only "L_builtin_struct"
+ * (builtins/enable.def). Everything else referenced from the struct
+ * (L_builtin_builtin, L_builtin_doc) is resolved via direct pointers inside
+ * the .so, so it does not need to be exported.
+ *
+ * Hiding all other symbols:
+ *  - keeps lua_*, uu_*, and subcommand symbols out of the dynamic symbol
+ *    table (no interposition in either direction),
+ *  - avoids any future collision with bash's ~2500 -rdynamic exports,
+ *  - lets the linker drop unused code.
+ */
+{
+  global:
+    L_builtin_struct;
+  local:
+    *;
+};

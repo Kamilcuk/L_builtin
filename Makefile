@@ -14,7 +14,7 @@ build:
 	cmake --build $(B)
 
 test:
-	B=$(B) $(BASH) ./test.sh
+	B=$(B) $(BASH) ./runtests.sh
 	$(MAKE) check-format
 	$(MAKE) tidy
 	$(MAKE) cppcheck
