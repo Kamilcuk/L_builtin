@@ -9,12 +9,16 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+use std::ffi::{c_char, CStr};
+use std::io::{stdout, stderr, Write};
 use crate::bash_api::{
-    EX_USAGE, WORD_LIST, c_char, c_int, l_word_desc_string, l_word_list_next, l_word_list_word,
+    c_int, l_execute_word_list, l_word_desc_string, l_word_list_next, l_word_list_word,
+    EX_USAGE, WORD_LIST,     this_command_name
 };
+use crate::shared::capture_into_variable;
 
-use std::ffi::CStr;
-use std::io::Write;
+use std::ffi::{OsStr};
+use std::os::unix::ffi::OsStrExt;
 
 // C subcommand handlers (compiled into the same .so)
 extern "C" {
@@ -32,18 +36,8 @@ extern "C" {
     fn send_subcommand(list: *mut WORD_LIST) -> c_int;
     fn recv_subcommand(list: *mut WORD_LIST) -> c_int;
     fn sleep_subcommand(list: *mut WORD_LIST) -> c_int;
-}
-
-// Rust subcommand handlers are defined in this crate (cmd_core.rs / cmd_lua.rs)
-// and referenced directly below.
-
-// Small C helpers that need access to bash globals (this_command_name, docs).
-extern "C" {
-    fn l_builtin_print_usage();
-    fn l_builtin_print_help();
-    fn l_builtin_unknown_subcommand(name: *const c_char);
-    /// glibc fflush; called with NULL to flush all C stdio output streams.
     fn fflush(stream: *mut core::ffi::c_void) -> c_int;
+    pub static L_builtin_doc: *const *const c_char;
 }
 
 type SubcommandFn = unsafe extern "C" fn(*mut WORD_LIST) -> c_int;
@@ -69,26 +63,121 @@ const SUBCOMMAND_TABLE: &[(&[u8], SubcommandFn)] = &crate::shared::sort_by_byte_
     (b"sleep", sleep_subcommand),
     (b"core", crate::cmd_core::l_core_subcommand),
     (b"lua", crate::cmd_lua::l_lua_subcommand),
+    (b"capture", capture_subcommand),
 ]);
+
+/// Iterates through a NULL-terminated array of C string pointers (`*const *const c_char`)
+/// and streams each string directly to stdout, followed by a newline.
+///
+/// # Safety
+///
+/// `arr` must be null or point to a readable, NULL-terminated array of valid C string pointers.
+pub unsafe fn print_arr(mut arr: *const *const c_char) {
+    if arr.is_null() {
+        return;
+    }
+
+    let mut handle = stdout().lock();
+    while !(*arr).is_null() {
+        let cstr = CStr::from_ptr(*arr);
+        let _ = handle.write_all(cstr.to_bytes());
+        let _ = handle.write_all(b"\n");
+        arr = arr.add(1);
+    }
+}
+
+/// Equivalent to `l_builtin_print_usage` using `L_builtin_doc[2]` for `short_doc`.
+pub unsafe fn l_builtin_print_usage() {
+    let mut err = stderr().lock();
+
+    if !this_command_name.is_null() && *this_command_name != 0 {
+        let name = CStr::from_ptr(this_command_name).to_bytes();
+        let _ = err.write_all(name);
+        let _ = err.write_all(b": usage: ");
+    }
+
+    if !L_builtin_doc.is_null() {
+        let short_doc_ptr = *L_builtin_doc.add(2);
+        if !short_doc_ptr.is_null() {
+            let doc = CStr::from_ptr(short_doc_ptr).to_bytes();
+            let _ = err.write_all(doc);
+        }
+    }
+    let _ = err.write_all(b"\n");
+}
+
+/// Equivalent to `l_builtin_print_help` in C.
+pub unsafe fn l_builtin_print_help() {
+    print_arr(L_builtin_doc);
+}
+
+/// Equivalent to `l_builtin_unknown_subcommand` in C.
+pub unsafe fn l_builtin_unknown_subcommand(name: *const c_char) {
+    let mut err = stderr().lock();
+
+    if !this_command_name.is_null() && *this_command_name != 0 {
+        let cmd = CStr::from_ptr(this_command_name).to_bytes();
+        let _ = err.write_all(cmd);
+        let _ = err.write_all(b": ");
+    }
+
+    let _ = err.write_all(b"unknown subcommand: ");
+    if !name.is_null() {
+        let sub = CStr::from_ptr(name).to_bytes();
+        let _ = err.write_all(sub);
+    }
+    let _ = err.write_all(b"\n");
+}
+
+/// `capture VAR <command> [args...]`: run the command with stdout captured
+/// into VAR (memfd redirection).
+///
+/// The command is always executed through the shell, so external commands,
+/// shell functions, builtins, and L_builtin subcommands all work uniformly.
+/// Words are single-quoted before being joined, so arguments reach the
+/// command verbatim (no re-splitting or globbing).
+///
+/// Lives in the dispatch table with the same C ABI as every other handler;
+/// `list` starts at VAR (the dispatcher already consumed the word `capture`).
+#[no_mangle]
+pub extern "C" fn capture_subcommand(list: *mut WORD_LIST) -> c_int {
+    let Some(var_ptr) = first_word(list) else {
+        eprintln!("L_builtin capture: usage: L_builtin capture VAR <command> [args...]");
+        return EX_USAGE;
+    };
+    let var = OsStr::from_bytes(unsafe { CStr::from_ptr(var_ptr).to_bytes() });
+    let cmd_list = unsafe { l_word_list_next(list) };
+    if first_word(cmd_list).is_none() {
+        eprintln!("L_builtin capture: missing command");
+        return EX_USAGE;
+    }
+    capture_into_variable(
+        "L_builtin capture",
+        var,
+        || unsafe { l_execute_word_list(cmd_list) },
+    )
+}
+
+/// Read the first word of `list` as a C string pointer, or None if any
+/// pointer on the way is null.
+fn first_word(list: *mut WORD_LIST) -> Option<*const c_char> {
+    if list.is_null() {
+        return None;
+    }
+    let word_desc = unsafe { l_word_list_word(list) };
+    if word_desc.is_null() {
+        return None;
+    }
+    let str_ptr = unsafe { l_word_desc_string(word_desc) };
+    (!str_ptr.is_null()).then_some(str_ptr)
+}
 
 #[no_mangle]
 pub extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
-    if list.is_null() {
+    let Some(str_ptr) = first_word(list) else {
         unsafe { l_builtin_print_usage() };
         return EX_USAGE;
-    }
-
-    // Read the subcommand name (first word) using C shims.
-    let word_desc = unsafe { l_word_list_word(list) };
-    if word_desc.is_null() {
-        unsafe { l_builtin_print_usage() };
-        return EX_USAGE;
-    }
-    let str_ptr = unsafe { l_word_desc_string(word_desc) };
-    if str_ptr.is_null() {
-        unsafe { l_builtin_print_usage() };
-        return EX_USAGE;
-    }
+    };
     let name = unsafe { CStr::from_ptr(str_ptr).to_bytes() };
 
     if name == b"-h" || name == b"--help" {
@@ -98,12 +187,11 @@ pub extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
 
     // Find the handler for this subcommand name (table is sorted at compile
     // time, so binary search applies).
-    let handler = SUBCOMMAND_TABLE
+    match SUBCOMMAND_TABLE
         .binary_search_by(|(n, _)| n.cmp(&name))
         .ok()
-        .map(|i| SUBCOMMAND_TABLE[i].1);
-
-    match handler {
+        .map(|i| SUBCOMMAND_TABLE[i].1)
+    {
         Some(f) => {
             // Advance past the subcommand name; handlers expect the list to
             // start at the first real argument.

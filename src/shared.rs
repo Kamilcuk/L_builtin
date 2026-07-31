@@ -1,93 +1,151 @@
 //! Shared utilities for L_builtin Rust implementation
 
-use std::ffi::{CStr, OsStr, OsString};
+use std::ffi::{CString, OsStr};
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::raw::c_int;
 use std::os::unix::ffi::OsStrExt;
 
-use crate::bash_api::{WORD_LIST, l_word_list_next, l_word_list_word, l_word_desc_string};
+use crate::bash_api::{bind_variable, find_variable, l_readonly_p};
 
-/// Iterator over Bash WORD_LIST arguments
-pub struct WordListArgs {
-    current: *mut WORD_LIST,
-}
-
-impl WordListArgs {
-    /// # Safety
-    /// `head` must be a valid pointer to a Bash `WORD_LIST` structure (or null).
-    pub unsafe fn new(head: *mut WORD_LIST) -> Self {
-        Self { current: head }
-    }
-}
-
-impl Iterator for WordListArgs {
-    type Item = OsString;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while !self.current.is_null() {
-            unsafe {
-                let node = self.current;
-                // Use shim function instead of direct field access
-                self.current = l_word_list_next(node);
-                let word_desc = l_word_list_word(node);
-                if !word_desc.is_null() {
-                    let str_ptr = l_word_desc_string(word_desc);
-                    if !str_ptr.is_null() {
-                        let c_str = CStr::from_ptr(str_ptr);
-                        return Some(OsStr::from_bytes(c_str.to_bytes()).to_os_string());
-                    }
-                }
-            }
-        }
-        None
-    }
-}
-
-/// Extracts the current node's word as an `OsString` and mutates `list` to point to the next `WORD_LIST` node.
-/// Returns `None` if `*list` is null or if the string pointers inside are null.
-pub unsafe fn word_list_next<'a>(list: &mut *mut WORD_LIST) -> Option<&'a std::ffi::OsStr> {
-    let current = *list;
-    if current.is_null() {
-        return None;
-    }
-    let word_ptr = l_word_list_word(current);
-    if word_ptr.is_null() {
-        return None;
-    }
-    let str_ptr = l_word_desc_string(word_ptr);
-    if str_ptr.is_null() {
-        return None;
-    }
-    // Advance to next node before returning
-    *list = l_word_list_next(current);
-    // Borrow C memory directly as &[u8] -> &OsStr (Zero-Copy)
-    let bytes = std::ffi::CStr::from_ptr(str_ptr).to_bytes();
-    Some(std::ffi::OsStr::from_bytes(bytes))
-}
-
-/// Convert Bash WORD_LIST to Rust Vec<&OsStr> using byte-level conversion
-pub fn word_list_to_os_str<'a>(mut list: *mut WORD_LIST) -> Vec<&'a std::ffi::OsStr> {
-    let mut args = Vec::new();
+/// Bind `value` to the shell variable `name`.
+///
+/// Takes `value` by value so the `CString` conversion reuses its allocation.
+/// Fails on embedded NUL bytes, readonly variables, or a failed bind.
+pub fn bind_shell_variable(name: &OsStr, value: Vec<u8>) -> Result<(), String> {
+    let c_name = CString::new(name.as_bytes())
+        .map_err(|_| "variable name contains NUL byte".to_string())?;
+    let c_value =
+        CString::new(value).map_err(|_| "value contains NUL byte".to_string())?;
     unsafe {
-        while let Some(arg) = word_list_next(&mut list) {
-            args.push(arg);
+        let var = find_variable(c_name.as_ptr());
+        if !var.is_null() && l_readonly_p(var) != 0 {
+            return Err(format!("{}: readonly variable", name.to_string_lossy()));
+        }
+        if bind_variable(c_name.as_ptr(), c_value.as_ptr(), 0).is_null() {
+            return Err(format!("failed to set variable: {}", name.to_string_lossy()));
         }
     }
-    args
+    Ok(())
 }
 
-/// Convert Bash WORD_LIST to owned Vec<OsString>
-pub fn word_list_to_os_strings(mut list: *mut WORD_LIST) -> Vec<OsString> {
-    let mut args = Vec::new();
-    unsafe {
-        while let Some(arg) = word_list_next(&mut list) {
-            args.push(arg.to_os_string());
+/// RAII redirection of fd 1 into a memfd (constructor/destructor pattern).
+///
+/// `begin()` drains userspace stdout buffers, saves fd 1, and points it at a
+/// fresh memfd. Dropping the guard drains buffers again and restores fd 1 —
+/// on the success path, on errors, and after a caught panic alike.
+/// `finish()` additionally returns the captured bytes.
+pub struct StdoutCapture {
+    /// Dup of the original fd 1 (cloexec, >= 10 to stay out of the
+    /// script-visible range). Restored and closed on drop.
+    saved: OwnedFd,
+    /// Capture target; `Some` until `finish()` takes it.
+    memfd: Option<File>,
+}
+
+impl StdoutCapture {
+    pub fn begin() -> io::Result<Self> {
+        // Pending buffered output must reach the *real* stdout, not the capture.
+        flush_stdout_buffers();
+
+        let fd = unsafe { libc::memfd_create(c"L_capture".as_ptr(), libc::MFD_CLOEXEC) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
         }
+        let memfd = unsafe { File::from_raw_fd(fd) };
+
+        let fd = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 10) };
+        if fd < 0 {
+            // EBADF: stdout was closed (e.g. `L_builtin ... >&-`).
+            return Err(io::Error::last_os_error());
+        }
+        let saved = unsafe { OwnedFd::from_raw_fd(fd) };
+
+        if unsafe { libc::dup2(memfd.as_raw_fd(), 1) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self { saved, memfd: Some(memfd) })
     }
-    args
+
+    /// Restore fd 1 and return everything captured.
+    pub fn finish(mut self) -> io::Result<Vec<u8>> {
+        let mut file = self.memfd.take().expect("memfd taken only by finish()");
+        // Drop drains buffers into the memfd and restores fd 1; the taken
+        // File keeps the memfd itself alive for reading.
+        drop(self);
+
+        file.seek(SeekFrom::Start(0))?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+        Ok(buf)
+    }
 }
 
-/// Convert Bash WORD_LIST to owned Vec<OsString> from argv-style list (first element is command name)
-pub fn argv_to_os_strings(list: *mut WORD_LIST) -> Vec<OsString> {
-    word_list_to_os_strings(list)
+impl Drop for StdoutCapture {
+    fn drop(&mut self) {
+        // Drain what ran under the capture, then put the original fd 1 back.
+        flush_stdout_buffers();
+        unsafe { libc::dup2(self.saved.as_raw_fd(), 1) };
+    }
+}
+
+/// Drain both userspace stdout buffers (Rust's LineWriter and C stdio) down
+/// to whatever fd 1 currently is.
+pub fn flush_stdout_buffers() {
+    let _ = io::stdout().flush();
+    unsafe { libc::fflush(std::ptr::null_mut()) };
+}
+
+/// Run `f` with stdout captured, then bind the output (trailing newlines
+/// stripped, matching `$(...)` / `${ ...; }` semantics) to shell variable
+/// `var`. Returns `f`'s exit code, or 1 on capture/bind/panic errors.
+///
+/// `ename` prefixes error messages. Panics in `f` are caught: fd 1 must be
+/// restored, and a panic crossing the extern "C" boundary would abort bash.
+pub fn capture_into_variable(
+    ename: &str,
+    var: &OsStr,
+    f: impl FnOnce() -> c_int,
+) -> c_int {
+    let capture = match StdoutCapture::begin() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{ename}: cannot capture stdout: {e}");
+            return 1;
+        }
+    };
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+
+    // Restores fd 1 on every path, including the panic path below.
+    let output = capture.finish();
+
+    let ret = match result {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("{ename}: captured command panicked");
+            return 1;
+        }
+    };
+    let mut output = match output {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("{ename}: failed to read captured output: {e}");
+            return 1;
+        }
+    };
+
+    // Strip trailing newlines, matching `$(...)` semantics.
+    while output.last() == Some(&b'\n') {
+        output.pop();
+    }
+
+    if let Err(e) = bind_shell_variable(var, output) {
+        eprintln!("{ename}: {e}");
+        return 1;
+    }
+    ret
 }
 
 /// Lexicographic `a < b` for byte slices, usable in const context.
@@ -125,14 +183,22 @@ pub const fn sort_by_byte_key<T: Copy, const N: usize>(
     arr
 }
 
-/// Wrapper for printing OsString as raw bytes without UTF-8 conversion
-#[repr(transparent)]
-#[derive(Copy, Clone)]
-pub struct RawCStr<'a>(pub &'a CStr);
-
-impl<'a> RawCStr<'a> {
-    #[inline]
-    pub fn to_os_string(&self) -> OsString {
-        OsString::from(std::ffi::OsStr::from_bytes(self.0.to_bytes()))
-    }
+/// Unwrap a `lexopt::Result`, printing `"{ename}: {error}"` to stderr and
+/// returning `code` on failure.
+///
+/// `ename` is the subcommand's name (e.g. its `ENAME` const); `expr` is the
+/// result being unwrapped; `code` is the exit code returned on error (e.g.
+/// `EX_USAGE`). The `return` exits the caller's function, so this is only
+/// valid inside a `-> c_int` subcommand handler.
+#[macro_export]
+macro_rules! return_on_err {
+    ($ename:expr, $expr:expr, $code:expr) => {
+        match $expr {
+            Ok(val) => val,
+            Err(e) => {
+                eprintln!("{}: {e}", $ename);
+                return $code;
+            }
+        }
+    };
 }
