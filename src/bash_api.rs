@@ -1,13 +1,14 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
-
 use std::ffi::{CStr, OsStr};
-pub use std::ops::Deref;
+use std::iter::Map;
 use std::marker::PhantomData;
-use std::os::unix::ffi::OsStrExt;
+pub use std::ops::Deref;
 pub use std::os::raw::{c_char, c_int, c_void};
+use std::os::unix::ffi::OsStrExt;
 
+use crate::{beprintln, bprintln};
 
 // Bash exit-code macros (from shell.h)
 pub const EX_USAGE: c_int = 258; /* syntax error in usage */
@@ -57,7 +58,8 @@ extern "C" {
     pub fn l_array_cell(var: *mut SHELL_VAR) -> *mut ARRAY;
     pub fn l_assoc_p(var: *mut SHELL_VAR) -> c_int;
     pub fn l_assoc_cell(var: *mut SHELL_VAR) -> *mut HASH_TABLE;
-    pub fn bind_variable(name: *const c_char, value: *const c_char, flags: c_int) -> *mut SHELL_VAR;
+    pub fn bind_variable(name: *const c_char, value: *const c_char, flags: c_int)
+        -> *mut SHELL_VAR;
     pub fn find_function(name: *const c_char) -> *mut SHELL_VAR;
     pub fn make_new_array_variable(name: *const c_char) -> *mut SHELL_VAR;
     /// Convert an existing scalar variable to an indexed array in place
@@ -131,6 +133,34 @@ pub unsafe fn l_expand_string_to_string_in_quotes_owned(s: *const c_char) -> CSt
 
 ///////////////////////////////////////////////////////////////////////////
 
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+pub struct RawCStr<'a> {
+    ptr: *const c_char,
+    _marker: PhantomData<&'a c_char>,
+}
+
+impl<'a> RawCStr<'a> {
+    #[inline(always)]
+    pub const unsafe fn from_ptr(ptr: *const c_char) -> Self {
+        Self {
+            ptr,
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_ptr(self) -> *const c_char {
+        self.ptr
+    }
+
+    #[inline(always)]
+    pub unsafe fn to_cstr(self) -> &'a CStr {
+        CStr::from_ptr(self.ptr)
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 // --- Borrowed View (Zero Allocation) ---
 
@@ -139,9 +169,11 @@ pub unsafe fn l_expand_string_to_string_in_quotes_owned(s: *const c_char) -> CSt
 /// Ties the lifetime `'a` to the caller's stack frame or parent handle.
 #[derive(Copy, Clone)]
 pub struct WordListView<'a> {
-    head: *mut WORD_LIST,
+    pub head: *mut WORD_LIST,
     _marker: PhantomData<&'a WORD_LIST>,
 }
+
+pub type WordListIterOsStr<'a> = Map<WordListIter<'a>, fn(&[u8]) -> &OsStr>;
 
 impl<'a> WordListView<'a> {
     /// Construct a view from a raw `*mut WORD_LIST`.
@@ -157,18 +189,30 @@ impl<'a> WordListView<'a> {
         }
     }
 
+    pub fn print(&self) {
+        for it in self.iter() {
+            bprintln!(it);
+        }
+    }
+
+    /// Yields `&'a OsStr` slices directly referencing C memory.
+    #[inline]
+    pub fn iter_osstr(&self) -> WordListIterOsStr {
+        self.iter().map(OsStr::from_bytes)
+    }
+
     /// Creates an iterator yielding `&'a OsStr` slices directly referencing C memory.
     #[inline]
     pub fn iter(&self) -> WordListIter<'a> {
         WordListIter {
-            current: self.head,
+            head: self.head,
             _marker: PhantomData,
         }
     }
 }
 
 impl<'a> IntoIterator for WordListView<'a> {
-    type Item = &'a OsStr;
+    type Item = &'a [u8];
     type IntoIter = WordListIter<'a>;
 
     #[inline]
@@ -177,20 +221,28 @@ impl<'a> IntoIterator for WordListView<'a> {
     }
 }
 
-/// Iterator yielding `&'a OsStr` directly from `WORD_LIST` nodes.
+#[derive(Clone)]
 pub struct WordListIter<'a> {
-    current: *mut WORD_LIST,
+    pub head: *mut WORD_LIST,
     _marker: PhantomData<&'a WORD_LIST>,
 }
 
+impl<'a> WordListIter<'a> {
+    pub fn print(&self) {
+        for it in self.clone() {
+            bprintln!(it);
+        }
+    }
+}
+
 impl<'a> Iterator for WordListIter<'a> {
-    type Item = &'a OsStr;
+    type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
-        while !self.current.is_null() {
-            let curr = self.current;
+        while !self.head.is_null() {
+            let curr = self.head;
             unsafe {
-                self.current = l_word_list_next(curr);
+                self.head = l_word_list_next(curr);
                 let word_ptr = l_word_list_word(curr);
                 if word_ptr.is_null() {
                     continue;
@@ -200,7 +252,7 @@ impl<'a> Iterator for WordListIter<'a> {
                     continue;
                 }
                 let bytes = CStr::from_ptr(str_ptr).to_bytes();
-                return Some(OsStr::from_bytes(bytes));
+                return Some(bytes);
             }
         }
         None
@@ -243,7 +295,7 @@ impl Drop for WordListOwned {
 }
 
 impl<'a> IntoIterator for &'a WordListOwned {
-    type Item = &'a OsStr;
+    type Item = &'a [u8];
     type IntoIter = WordListIter<'a>;
 
     #[inline]

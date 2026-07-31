@@ -1,9 +1,13 @@
 //! Lua subcommand implementation using mlua
-use crate::bash_api::{WordListOwned, WordListView, expand_string};
+use crate::bash_api::{WordListIter, WordListIterOsStr, WordListOwned, WordListView, expand_string};
+use crate::beprintln;
+use crate::bprint_bytes::BDisplay;
+use crate::bprintln;
 use crate::return_on_err;
-use crate::shared::bind_shell_variable;
+use crate::shared::{bind_shell_variable, lexopt_unexpected};
 
 use std::ffi::{CStr, OsStr, OsString};
+use std::io::Write;
 use std::os::raw::c_int;
 use std::os::unix::ffi::OsStrExt;
 
@@ -13,17 +17,24 @@ use mlua::{Lua, Value};
 use crate::bash_api::{
     array_flush, array_insert, assoc_flush, assoc_keys_to_word_list, assoc_reference,
     bind_variable, check_unbind_variable, convert_var_to_array, execute_shell_function,
-    find_function, find_variable, l_array_cell, l_array_head, l_array_p,
-    l_assoc_cell, l_assoc_insert, l_assoc_p, l_element_forw, l_element_index, l_element_value, l_expand_string_to_string_in_quotes_owned, l_invisible_p, l_readonly_p,
-    l_value_cell, make_new_array_variable, make_word, make_word_list, EX_USAGE,
-    SHELL_VAR, WORD_LIST,
+    find_function, find_variable, l_array_cell, l_array_head, l_array_p, l_assoc_cell,
+    l_assoc_insert, l_assoc_p, l_element_forw, l_element_index, l_element_value,
+    l_expand_string_to_string_in_quotes_owned, l_invisible_p, l_readonly_p, l_value_cell,
+    make_new_array_variable, make_word, make_word_list, EX_USAGE, SHELL_VAR, WORD_LIST,
 };
 
+impl BDisplay for mlua::Error {
+    fn bwrite<W: Write + ?Sized>(&self, w: &mut W) {
+        w.write_all(self.to_string().as_bytes()).unwrap();
+    }
+}
 const ENAME: &str = "L_builtin lua";
 
 #[no_mangle]
 pub extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut parser = Parser::from_args(unsafe { WordListView::from_raw(list) });
+    let mut list = unsafe { WordListView::from_raw(list) }.iter();
+    let mut listosstr = list.by_ref().map(OsStr::from_bytes);
+    let mut parser = Parser::from_args(&mut listosstr);
     let mut ret_var: Option<OsString> = None;
     while let Some(arg) = return_on_err!(ENAME, parser.next(), EX_USAGE) {
         match arg {
@@ -34,22 +45,8 @@ pub extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
                 print_lua_help();
                 return 0;
             }
-            Short(c) => {
-                eprintln!("{ENAME}: unknown option -{c}");
-                return 2;
-            }
-            Long(l) => {
-                eprintln!("{ENAME}: unknown option --{l}");
-                return 2;
-            }
             Value(val) => {
-                // First free argument is the script; everything after it is a
-                // script argument. `raw_args` surfaces the literal `--`
-                // separator, so skip it.
-                let script_args = return_on_err!(ENAME, parser.raw_args(), EX_USAGE)
-                    .skip_while(|a| a.to_str() == Some("--"))
-                    .collect::<Vec<_>>();
-                let return_value = return_on_err!(ENAME, run_lua_script(&val, &script_args), 1);
+                let return_value = return_on_err!(ENAME, run_lua_script(&val, list), 1);
                 if let Some(var_name) = ret_var {
                     return_on_err!(
                         ENAME,
@@ -59,50 +56,48 @@ pub extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
                 }
                 return 0;
             }
+            _ => {
+                return lexopt_unexpected(ENAME, arg);
+            }
         }
     }
-
     // No script was given — only options (or nothing).
-    eprintln!("{ENAME}: missing script");
-    eprintln!("Usage: L_builtin lua [-v VAR] <script> [args...]");
+    beprintln!(ENAME, b": missing script");
+    beprintln!(b"Usage: L_builtin lua [-v VAR] <script> [args...]");
     return 2;
 }
 
 /// Print usage to stdout (matching the `-h`/`--help` contract the tests expect).
 fn print_lua_help() {
-    println!("Usage: L_builtin lua [-v VAR] <script> [args...]");
-    println!();
-    println!("Run a Lua script in-process, with access to a bash.* API.");
-    println!();
-    println!("Options:");
-    println!("  -v VAR, --var VAR   Bind the script's return value to shell variable VAR");
-    println!("  -h, --help          Show this help and exit");
-    println!();
-    println!("Arguments:");
-    println!("  script              Lua script: inline code, or a file path");
-    println!("  args...             Arguments exposed to the script via the Lua 'arg' table");
+    bprintln!(b"Usage: L_builtin lua [-v VAR] <script> [args...]");
+    bprintln!(b"");
+    bprintln!(b"Run a Lua script in-process, with access to a bash.* API.");
+    bprintln!(b"");
+    bprintln!(b"Options:");
+    bprintln!(b"  -v VAR, --var VAR   Bind the script's return value to shell variable VAR");
+    bprintln!(b"  -h, --help          Show this help and exit");
+    bprintln!(b"");
+    bprintln!(b"Arguments:");
+    bprintln!(b"  script              Lua script: inline code, or a file path");
+    bprintln!(b"  args...             Arguments exposed to the script via the Lua 'arg' table");
 }
 
 /// Run a Lua script and return its string result, or the underlying `mlua`
 /// error. Callers map the error to a message + exit code in one place.
-fn run_lua_script(script: &OsStr, args: &[OsString]) -> Result<String, mlua::Error> {
+fn run_lua_script(script: &OsStr, args: WordListIter) -> Result<String, mlua::Error> {
     let lua = Lua::new();
-
     // Register bash API functions
     register_bash_api(&lua)?;
-
     // Set up arg table
     let arg_table = lua.create_table()?;
-    for (i, arg) in args.iter().enumerate() {
-        let s = lua.create_string(arg.as_bytes())?;
+    for (i, arg) in args.enumerate() {
+        let s = lua.create_string(arg)?;
         arg_table.set(i + 1, s)?;
     }
     lua.globals().set("arg", arg_table)?;
-
     // Execute the script and get the return value (similar to luaL_dostring in C)
     let chunk = lua.load(script.as_bytes());
     let result: mlua::Value = chunk.eval()?;
-
     // Convert the return value to a string (similar to lua_tostring in C)
     Ok(result.to_string()?)
 }
@@ -274,8 +269,8 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
                             // The slice borrows the C string in place and excludes
                             // its NUL, which is still present just past the end —
                             // so the pointer is a valid C string for lookup.
-                            let val = assoc_reference(hash, key.as_bytes().as_ptr().cast());
-                            let k = lua.create_string(key.as_bytes())?;
+                            let val = assoc_reference(hash, key.as_ptr().cast());
+                            let k = lua.create_string(key)?;
                             let v = if val.is_null() {
                                 lua.create_string("")?
                             } else {
@@ -398,7 +393,7 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
             let table = lua.create_table()?;
             let mut idx = 1;
             for word in &WordListOwned(expand_string(s.as_ptr().cast(), 0)) {
-                table.set(idx, lua.create_string(word.as_bytes())?)?;
+                table.set(idx, lua.create_string(word)?)?;
                 idx += 1;
             }
             Ok(Value::Table(table))

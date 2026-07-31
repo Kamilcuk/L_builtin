@@ -7,24 +7,30 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::raw::c_int;
 use std::os::unix::ffi::OsStrExt;
 
+use lexopt::Arg::{self, Long, Short, Value};
+
 use crate::bash_api::{bind_variable, find_variable, l_readonly_p};
+use crate::beprintln;
+use crate::bprint_bytes::BDisplay;
 
 /// Bind `value` to the shell variable `name`.
 ///
 /// Takes `value` by value so the `CString` conversion reuses its allocation.
 /// Fails on embedded NUL bytes, readonly variables, or a failed bind.
 pub fn bind_shell_variable(name: &OsStr, value: Vec<u8>) -> Result<(), String> {
-    let c_name = CString::new(name.as_bytes())
-        .map_err(|_| "variable name contains NUL byte".to_string())?;
-    let c_value =
-        CString::new(value).map_err(|_| "value contains NUL byte".to_string())?;
+    let c_name =
+        CString::new(name.as_bytes()).map_err(|_| "variable name contains NUL byte".to_string())?;
+    let c_value = CString::new(value).map_err(|_| "value contains NUL byte".to_string())?;
     unsafe {
         let var = find_variable(c_name.as_ptr());
         if !var.is_null() && l_readonly_p(var) != 0 {
             return Err(format!("{}: readonly variable", name.to_string_lossy()));
         }
         if bind_variable(c_name.as_ptr(), c_value.as_ptr(), 0).is_null() {
-            return Err(format!("failed to set variable: {}", name.to_string_lossy()));
+            return Err(format!(
+                "failed to set variable: {}",
+                name.to_string_lossy()
+            ));
         }
     }
     Ok(())
@@ -65,7 +71,10 @@ impl StdoutCapture {
         if unsafe { libc::dup2(memfd.as_raw_fd(), 1) } < 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(Self { saved, memfd: Some(memfd) })
+        Ok(Self {
+            saved,
+            memfd: Some(memfd),
+        })
     }
 
     /// Restore fd 1 and return everything captured.
@@ -103,11 +112,7 @@ pub fn flush_stdout_buffers() {
 ///
 /// `ename` prefixes error messages. Panics in `f` are caught: fd 1 must be
 /// restored, and a panic crossing the extern "C" boundary would abort bash.
-pub fn capture_into_variable(
-    ename: &str,
-    var: &OsStr,
-    f: impl FnOnce() -> c_int,
-) -> c_int {
+pub fn capture_into_variable(ename: &str, var: &OsStr, f: impl FnOnce() -> c_int) -> c_int {
     let capture = match StdoutCapture::begin() {
         Ok(c) => c,
         Err(e) => {
@@ -183,6 +188,32 @@ pub const fn sort_by_byte_key<T: Copy, const N: usize>(
     arr
 }
 
+impl<'a> BDisplay for getargs::Error<&'a [u8]> {
+    fn bwrite<W: Write>(&self, w: &mut W) {
+        match self {
+            getargs::Error::RequiresValue(opt) => {
+                w.write_all(b"option requires a value: ").unwrap();
+                opt.bwrite(w);
+            }
+            getargs::Error::DoesNotRequireValue(opt) => {
+                w.write_all(b"option does not require a value: ").unwrap();
+                opt.bwrite(w);
+            }
+            &_ => todo!(),
+        }
+    }
+}
+
+impl<'a> BDisplay for getargs::Opt<&'a [u8]> {
+    fn bwrite<W: Write>(&self, w: &mut W) {}
+}
+
+impl BDisplay for lexopt::Error {
+    fn bwrite<W: std::io::Write>(&self, w: &mut W) {
+        write!(w, "{}", self).unwrap();
+    }
+}
+
 /// Unwrap a `lexopt::Result`, printing `"{ename}: {error}"` to stderr and
 /// returning `code` on failure.
 ///
@@ -196,9 +227,26 @@ macro_rules! return_on_err {
         match $expr {
             Ok(val) => val,
             Err(e) => {
-                eprintln!("{}: {e}", $ename);
+                beprintln!("{}: {}", $ename, e);
                 return $code;
             }
         }
     };
+}
+
+pub fn lexopt_unexpected(ENAME: &(impl BDisplay + ?Sized), arg: Arg) -> c_int {
+    match arg {
+        Short(c) => {
+            beprintln!(ENAME, b": unknown option -", c as u8);
+            return 2;
+        }
+        Long(l) => {
+            beprintln!(ENAME, b": unknown option --", l);
+            return 2;
+        }
+        Value(val) => {
+            beprintln!(ENAME, b": unexpected argument", val);
+            return 2;
+        }
+    }
 }

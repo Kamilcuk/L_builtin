@@ -9,15 +9,21 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::ffi::{c_char, CStr};
-use std::io::{stdout, stderr, Write};
+use std::ffi::OsString;
+
+use getargs::Opt::{Long, Short};
+
 use crate::bash_api::{
     c_int, l_execute_word_list, l_word_desc_string, l_word_list_next, l_word_list_word,
-    EX_USAGE, WORD_LIST,     this_command_name
+    this_command_name, WordListView, EX_USAGE, WORD_LIST,
 };
-use crate::shared::capture_into_variable;
+use crate::bprintln;
+use crate::shared::{capture_into_variable, lexopt_unexpected};
+use crate::{beprintln, return_on_err};
+use std::ffi::{c_char, CStr};
+use std::io::Write;
 
-use std::ffi::{OsStr};
+use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 
 // C subcommand handlers (compiled into the same .so)
@@ -37,7 +43,7 @@ extern "C" {
     fn recv_subcommand(list: *mut WORD_LIST) -> c_int;
     fn sleep_subcommand(list: *mut WORD_LIST) -> c_int;
     fn fflush(stream: *mut core::ffi::c_void) -> c_int;
-    pub static L_builtin_doc: *const *const c_char;
+    pub static L_builtin_doc: [*const c_char; 0];
 }
 
 type SubcommandFn = unsafe extern "C" fn(*mut WORD_LIST) -> c_int;
@@ -65,68 +71,32 @@ const SUBCOMMAND_TABLE: &[(&[u8], SubcommandFn)] = &crate::shared::sort_by_byte_
     (b"lua", crate::cmd_lua::l_lua_subcommand),
     (b"capture", capture_subcommand),
 ]);
-
-/// Iterates through a NULL-terminated array of C string pointers (`*const *const c_char`)
-/// and streams each string directly to stdout, followed by a newline.
-///
-/// # Safety
-///
-/// `arr` must be null or point to a readable, NULL-terminated array of valid C string pointers.
-pub unsafe fn print_arr(mut arr: *const *const c_char) {
-    if arr.is_null() {
-        return;
-    }
-
-    let mut handle = stdout().lock();
-    while !(*arr).is_null() {
-        let cstr = CStr::from_ptr(*arr);
-        let _ = handle.write_all(cstr.to_bytes());
-        let _ = handle.write_all(b"\n");
-        arr = arr.add(1);
+unsafe fn l_builtin_print_help() {
+    let mut p = L_builtin_doc.as_ptr();
+    while !(*p).is_null() {
+        bprintln!(*p);
+        p = p.add(1);
     }
 }
 
-/// Equivalent to `l_builtin_print_usage` using `L_builtin_doc[2]` for `short_doc`.
-pub unsafe fn l_builtin_print_usage() {
-    let mut err = stderr().lock();
-
-    if !this_command_name.is_null() && *this_command_name != 0 {
-        let name = CStr::from_ptr(this_command_name).to_bytes();
-        let _ = err.write_all(name);
-        let _ = err.write_all(b": usage: ");
+unsafe fn l_builtin_print_usage() {
+    let cmd_name = this_command_name;
+    if !cmd_name.is_null() && *cmd_name != 0 {
+        bprintln!(cmd_name, b": usage:");
     }
-
-    if !L_builtin_doc.is_null() {
-        let short_doc_ptr = *L_builtin_doc.add(2);
-        if !short_doc_ptr.is_null() {
-            let doc = CStr::from_ptr(short_doc_ptr).to_bytes();
-            let _ = err.write_all(doc);
-        }
+    let doc_array = L_builtin_doc.as_ptr();
+    let short_doc_ptr = *doc_array.add(2);
+    if !short_doc_ptr.is_null() {
+        bprintln!(short_doc_ptr);
     }
-    let _ = err.write_all(b"\n");
 }
-
-/// Equivalent to `l_builtin_print_help` in C.
-pub unsafe fn l_builtin_print_help() {
-    print_arr(L_builtin_doc);
-}
-
-/// Equivalent to `l_builtin_unknown_subcommand` in C.
-pub unsafe fn l_builtin_unknown_subcommand(name: *const c_char) {
-    let mut err = stderr().lock();
-
-    if !this_command_name.is_null() && *this_command_name != 0 {
-        let cmd = CStr::from_ptr(this_command_name).to_bytes();
-        let _ = err.write_all(cmd);
-        let _ = err.write_all(b": ");
+unsafe fn l_builtin_unknown_subcommand(name: &[u8]) {
+    let cmd_name = this_command_name;
+    if !cmd_name.is_null() && *cmd_name != 0 {
+        beprintln!(cmd_name, b": unknown subcommand:", name);
+    } else {
+        beprintln!(b"unknown subcommand:", name);
     }
-
-    let _ = err.write_all(b"unknown subcommand: ");
-    if !name.is_null() {
-        let sub = CStr::from_ptr(name).to_bytes();
-        let _ = err.write_all(sub);
-    }
-    let _ = err.write_all(b"\n");
 }
 
 /// `capture VAR <command> [args...]`: run the command with stdout captured
@@ -142,20 +112,18 @@ pub unsafe fn l_builtin_unknown_subcommand(name: *const c_char) {
 #[no_mangle]
 pub extern "C" fn capture_subcommand(list: *mut WORD_LIST) -> c_int {
     let Some(var_ptr) = first_word(list) else {
-        eprintln!("L_builtin capture: usage: L_builtin capture VAR <command> [args...]");
+        beprintln!(b"L_builtin capture: usage: L_builtin capture VAR <command> [args...]");
         return EX_USAGE;
     };
     let var = OsStr::from_bytes(unsafe { CStr::from_ptr(var_ptr).to_bytes() });
     let cmd_list = unsafe { l_word_list_next(list) };
     if first_word(cmd_list).is_none() {
-        eprintln!("L_builtin capture: missing command");
+        beprintln!(b"L_builtin capture: missing command");
         return EX_USAGE;
     }
-    capture_into_variable(
-        "L_builtin capture",
-        var,
-        || unsafe { l_execute_word_list(cmd_list) },
-    )
+    capture_into_variable("L_builtin capture", var, || unsafe {
+        l_execute_word_list(cmd_list)
+    })
 }
 
 /// Read the first word of `list` as a C string pointer, or None if any
@@ -174,41 +142,45 @@ fn first_word(list: *mut WORD_LIST) -> Option<*const c_char> {
 
 #[no_mangle]
 pub extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
-    let Some(str_ptr) = first_word(list) else {
-        unsafe { l_builtin_print_usage() };
-        return EX_USAGE;
-    };
-    let name = unsafe { CStr::from_ptr(str_ptr).to_bytes() };
-
-    if name == b"-h" || name == b"--help" {
-        unsafe { l_builtin_print_help() };
-        return EX_USAGE;
+    let mut list = unsafe { WordListView::from_raw(list) }.iter();
+    let mut opts = getargs::Options::new(&mut list);
+    while let Some(opt) = return_on_err!("L_builtin", opts.next_opt(), EX_USAGE) {
+        beprintln!("HELO");
+        match opt {
+            Short(b'h') | Long(b"help") => {
+                unsafe { l_builtin_print_help() };
+                return 0;
+            }
+            _ => {}
+        }
     }
-
+    let val = match list.next() {
+        Some(val) => val,
+        None => {
+            unsafe { l_builtin_print_usage() };
+            return EX_USAGE;
+        }
+    };
     // Find the handler for this subcommand name (table is sorted at compile
     // time, so binary search applies).
-    match SUBCOMMAND_TABLE
-        .binary_search_by(|(n, _)| n.cmp(&name))
-        .ok()
-        .map(|i| SUBCOMMAND_TABLE[i].1)
-    {
-        Some(f) => {
-            // Advance past the subcommand name; handlers expect the list to
-            // start at the first real argument.
-            let next = unsafe { l_word_list_next(list) };
-            // Flush C stdio before the handler so buffered bash/C output
-            // cannot be reordered against direct fd writes from Rust.
-            unsafe { fflush(std::ptr::null_mut()) };
-            let ret = unsafe { f(next) };
-            // Flush both layers after the handler: C stdio (C/Lua handlers)
-            // and Rust's stdout buffer (never flushed at exit in a cdylib).
-            unsafe { fflush(std::ptr::null_mut()) };
-            let _ = std::io::stdout().flush();
-            ret
+    let subcommand = match SUBCOMMAND_TABLE.binary_search_by(|(n, _)| n.cmp(&val)) {
+        Ok(i) => SUBCOMMAND_TABLE[i].1,
+        Err(_) => {
+            unsafe { l_builtin_unknown_subcommand(val) };
+            return EX_USAGE;
         }
-        None => {
-            unsafe { l_builtin_unknown_subcommand(str_ptr) };
-            EX_USAGE
-        }
-    }
+    };
+    beprintln!("hi");
+    unsafe { WordListView::from_raw(list.head).print() }
+    beprintln!("hi");
+    //
+    // Flush C stdio before the handler so buffered bash/C output
+    // cannot be reordered against direct fd writes from Rust.
+    unsafe { fflush(std::ptr::null_mut()) };
+    let ret = unsafe { subcommand(list.head) };
+    // Flush both layers after the handler: C stdio (C/Lua handlers)
+    // and Rust's stdout buffer (never flushed at exit in a cdylib).
+    unsafe { fflush(std::ptr::null_mut()) };
+    let _ = std::io::stdout().flush();
+    return ret;
 }

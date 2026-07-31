@@ -10,9 +10,9 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EX_NOTFOUND, EX_USAGE, WORD_LIST, WordListView};
-use crate::shared::{capture_into_variable, sort_by_byte_key};
-use crate::return_on_err;
+use crate::bash_api::{WordListView, EX_NOTFOUND, EX_USAGE, WORD_LIST};
+use crate::shared::{capture_into_variable, lexopt_unexpected, sort_by_byte_key};
+use crate::{beprintln, return_on_err};
 
 use std::ffi::OsString;
 use std::os::raw::c_int;
@@ -60,7 +60,7 @@ const UU_DISPATCH_TABLE: &[(&[u8], UuMain)] = &sort_by_byte_key([
 
 #[no_mangle]
 pub extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut parser = Parser::from_args(unsafe { WordListView::from_raw(list) });
+    let mut parser = Parser::from_args(unsafe { WordListView::from_raw(list) }.iter_osstr());
     let mut capture_var: Option<OsString> = None;
     while let Some(arg) = return_on_err!(ENAME, parser.next(), EX_USAGE) {
         match arg {
@@ -71,57 +71,47 @@ pub extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
                 print_core_help();
                 return 0;
             }
-            Short(c) => {
-                eprintln!("{ENAME}: unknown option -{c}");
-                return 2;
-            }
-            Long(l) => {
-                eprintln!("{ENAME}: unknown option --{l}");
-                return 2;
-            }
             Value(val) => {
                 // First free argument is the subcommand — resolve it now.
                 let uumain =
                     match UU_DISPATCH_TABLE.binary_search_by(|(n, _)| n.cmp(&val.as_bytes())) {
                         Ok(i) => UU_DISPATCH_TABLE[i].1,
                         Err(_) => {
-                            eprintln!("{ENAME}: unknown subcommand: {}", val.to_string_lossy());
+                            beprintln!(b"{ENAME}: unknown subcommand: ", val);
                             return EX_NOTFOUND;
                         }
                     };
-                let rest: UuArgs = std::iter::once(val).chain(return_on_err!(ENAME, parser.raw_args(), EX_USAGE));
+                let rest: UuArgs =
+                    std::iter::once(val).chain(return_on_err!(ENAME, parser.raw_args(), EX_USAGE));
                 return match capture_var {
                     None => uumain(rest),
-                    Some(var) => capture_into_variable(
-                        ENAME,
-                        &var,
-                        || uumain(rest),
-                    ),
+                    Some(var) => capture_into_variable(ENAME, &var, || uumain(rest)),
                 };
             }
+            _ => return lexopt_unexpected(ENAME, arg),
         }
     }
     // No subcommand was given — only options (or nothing).
-    eprintln!("{ENAME}: missing subcommand");
-    eprintln!("Usage: L_builtin core [-v VAR] <subcommand> [args...]");
-    eprintln!("Available: ls, stat, dirname, rm");
+    beprintln!(b"{ENAME}: missing subcommand");
+    beprintln!(b"Usage: L_builtin core [-v VAR] <subcommand> [args...]");
+    beprintln!(b"Available: ls, stat, dirname, rm");
     return EX_NOTFOUND;
 }
 
 fn print_core_help() {
-    eprintln!("Core utilities via uutils/coreutils");
-    eprintln!();
-    eprintln!("L_builtin core [-v VAR] <subcommand> [options] [args]");
-    eprintln!();
-    eprintln!("Options:");
-    eprintln!("  -v VAR   Capture stdout of the subcommand into shell variable VAR");
-    eprintln!("           (trailing newlines stripped, like $(...))");
-    eprintln!();
-    eprintln!("Available subcommands:");
-    eprintln!("  ls       List directory contents");
-    eprintln!("  stat     Display file status");
-    eprintln!("  dirname  Strip last component from file name");
-    eprintln!("  rm       Remove files or directories");
-    eprintln!();
-    eprintln!("Use 'L_builtin core <subcommand> -h' for more information.");
+    beprintln!(b"Core utilities via uutils/coreutils");
+    beprintln!(b"");
+    beprintln!(b"L_builtin core [-v VAR] <subcommand> [options] [args]");
+    beprintln!(b"");
+    beprintln!(b"Options:");
+    beprintln!(b"  -v VAR   Capture stdout of the subcommand into shell variable VAR");
+    beprintln!(b"           (trailing newlines stripped, like $(...))");
+    beprintln!(b"");
+    beprintln!(b"Available subcommands:");
+    beprintln!(b"  ls       List directory contents");
+    beprintln!(b"  stat     Display file status");
+    beprintln!(b"  dirname  Strip last component from file name");
+    beprintln!(b"  rm       Remove files or directories");
+    beprintln!(b"");
+    beprintln!(b"Use 'L_builtin core <subcommand> -h' for more information.");
 }

@@ -7,11 +7,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-mod bash_alloc;
-mod bash_api;
-mod cmd_core;
-mod cmd_lua;
-mod dispatch;
+pub mod bash_alloc;
+pub mod bash_api;
+pub mod bprint_bytes;
+pub mod cmd_core;
+pub mod cmd_lua;
+pub mod dispatch;
 pub mod shared;
 
 /// Route all Rust allocations through bash's allocator, so the whole process

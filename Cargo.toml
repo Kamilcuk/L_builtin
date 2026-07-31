@@ -23,6 +23,7 @@ rustix = { version = "1.1", features = ["param", "use-libc-auxv", "time"] }
 mlua = { version = "0.10", features = ["lua51", "vendored"] }
 smallvec = "1.13"
 lexopt = "0.3"
+getargs = "0.5.0"
 uucore = { git = "https://github.com/uutils/coreutils", package = "uucore", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
 
 # uutils coreutils crates
