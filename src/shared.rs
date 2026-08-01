@@ -1,13 +1,12 @@
 //! Shared utilities for L_builtin Rust implementation
 
-use std::ffi::{CString, OsStr};
+use std::ffi::CStr;
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::raw::c_int;
-use std::os::unix::ffi::OsStrExt;
+use std::io::{self, Write};
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::raw::{c_char, c_int};
 
-use lexopt::Arg::{self, Long, Short, Value};
+use memmap2::Mmap;
 
 use crate::bash_api::{bind_variable, find_variable, l_readonly_p};
 use crate::beprintln;
@@ -15,143 +14,137 @@ use crate::bprint_bytes::BDisplay;
 
 /// Bind `value` to the shell variable `name`.
 ///
-/// Takes `value` by value so the `CString` conversion reuses its allocation.
-/// Fails on embedded NUL bytes, readonly variables, or a failed bind.
-pub fn bind_shell_variable(name: &OsStr, value: Vec<u8>) -> Result<(), String> {
-    let c_name =
-        CString::new(name.as_bytes()).map_err(|_| "variable name contains NUL byte".to_string())?;
-    let c_value = CString::new(value).map_err(|_| "value contains NUL byte".to_string())?;
+/// Both `name` and `value` must be NUL-terminated C strings (as returned by
+/// bash's C API). No copying or allocation is performed.
+/// Fails on readonly variables or a failed bind.
+pub fn bind_shell_variable(name: *const c_char, value: *const c_char) -> Result<(), String> {
     unsafe {
-        let var = find_variable(c_name.as_ptr());
+        debug_assert!(!name.is_null(), "name is null");
+        debug_assert!(!value.is_null(), "value is null");
+        let var = find_variable(name);
         if !var.is_null() && l_readonly_p(var) != 0 {
-            return Err(format!("{}: readonly variable", name.to_string_lossy()));
+            return Err(format!(
+                "{}: readonly variable",
+                CStr::from_ptr(name).to_string_lossy()
+            ));
         }
-        if bind_variable(c_name.as_ptr(), c_value.as_ptr(), 0).is_null() {
+        if bind_variable(name, value, 0).is_null() {
             return Err(format!(
                 "failed to set variable: {}",
-                name.to_string_lossy()
+                CStr::from_ptr(name).to_string_lossy()
             ));
         }
     }
     Ok(())
 }
 
-/// RAII redirection of fd 1 into a memfd (constructor/destructor pattern).
+/// Unwrap a `getargs::Result`, printing `"{ename}: {error}"` to stderr and
+/// returning `code` on failure.
 ///
-/// `begin()` drains userspace stdout buffers, saves fd 1, and points it at a
-/// fresh memfd. Dropping the guard drains buffers again and restores fd 1 —
-/// on the success path, on errors, and after a caught panic alike.
-/// `finish()` additionally returns the captured bytes.
-pub struct StdoutCapture {
-    /// Dup of the original fd 1 (cloexec, >= 10 to stay out of the
-    /// script-visible range). Restored and closed on drop.
-    saved: OwnedFd,
-    /// Capture target; `Some` until `finish()` takes it.
-    memfd: Option<File>,
+/// `ename` is the subcommand's name (e.g. its `ENAME` const); `expr` is the
+/// result being unwrapped; `code` is the exit code returned on error (e.g.
+/// `EX_USAGE`). The `return` exits the caller's function, so this is only
+/// valid inside a `-> c_int` subcommand handler.
+#[macro_export]
+macro_rules! return_on_err {
+    ($ename:expr, $expr:expr, $code:expr) => {
+        match $expr {
+            Ok(val) => val,
+            Err(e) => {
+                beprintln!($ename, ": ", e);
+                return $code;
+            }
+        }
+    };
 }
 
-impl StdoutCapture {
-    pub fn begin() -> io::Result<Self> {
-        // Pending buffered output must reach the *real* stdout, not the capture.
+#[macro_export]
+macro_rules! return_on_err2 {
+    ($ename:expr, $prefix:expr, $expr:expr, $code:expr) => {
+        match $expr.inspect_err(|e| {
+            $crate::beprintln!($ename, concat!(": ", $prefix, ": "), e);
+        }) {
+            Ok(val) => val,
+            Err(_) => return $code,
+        }
+    };
+}
+
+////////////////////////////////////
+
+struct RedirectStdout {
+    saved_stdout: File,
+}
+
+impl RedirectStdout {
+    pub fn new(target: &File) -> io::Result<Self> {
         flush_stdout_buffers();
-
-        let fd = unsafe { libc::memfd_create(c"L_capture".as_ptr(), libc::MFD_CLOEXEC) };
-        if fd < 0 {
+        let saved_fd = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 10) };
+        if saved_fd < 0 {
             return Err(io::Error::last_os_error());
         }
-        let memfd = unsafe { File::from_raw_fd(fd) };
-
-        let fd = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 10) };
-        if fd < 0 {
-            // EBADF: stdout was closed (e.g. `L_builtin ... >&-`).
+        let res = unsafe { libc::dup2(target.as_raw_fd(), 1) };
+        if res < 0 {
+            unsafe {
+                libc::close(saved_fd);
+            }
             return Err(io::Error::last_os_error());
         }
-        let saved = unsafe { OwnedFd::from_raw_fd(fd) };
-
-        if unsafe { libc::dup2(memfd.as_raw_fd(), 1) } < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(Self {
-            saved,
-            memfd: Some(memfd),
-        })
-    }
-
-    /// Restore fd 1 and return everything captured.
-    pub fn finish(mut self) -> io::Result<Vec<u8>> {
-        let mut file = self.memfd.take().expect("memfd taken only by finish()");
-        // Drop drains buffers into the memfd and restores fd 1; the taken
-        // File keeps the memfd itself alive for reading.
-        drop(self);
-
-        file.seek(SeekFrom::Start(0))?;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)?;
-        Ok(buf)
+        let saved_stdout = unsafe { File::from_raw_fd(saved_fd) };
+        Ok(Self { saved_stdout })
     }
 }
 
-impl Drop for StdoutCapture {
+impl Drop for RedirectStdout {
     fn drop(&mut self) {
-        // Drain what ran under the capture, then put the original fd 1 back.
         flush_stdout_buffers();
-        unsafe { libc::dup2(self.saved.as_raw_fd(), 1) };
+        unsafe {
+            libc::dup2(self.saved_stdout.as_raw_fd(), 1);
+        }
     }
 }
 
-/// Drain both userspace stdout buffers (Rust's LineWriter and C stdio) down
-/// to whatever fd 1 currently is.
 pub fn flush_stdout_buffers() {
     let _ = io::stdout().flush();
     unsafe { libc::fflush(std::ptr::null_mut()) };
 }
 
-/// Run `f` with stdout captured, then bind the output (trailing newlines
-/// stripped, matching `$(...)` / `${ ...; }` semantics) to shell variable
-/// `var`. Returns `f`'s exit code, or 1 on capture/bind/panic errors.
-///
-/// `ename` prefixes error messages. Panics in `f` are caught: fd 1 must be
-/// restored, and a panic crossing the extern "C" boundary would abort bash.
-pub fn capture_into_variable(ename: &str, var: &OsStr, f: impl FnOnce() -> c_int) -> c_int {
-    let capture = match StdoutCapture::begin() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("{ename}: cannot capture stdout: {e}");
-            return 1;
+////////////////////////////////////
+pub struct Memfd {
+    file: File,
+}
+
+impl Memfd {
+    pub fn new() -> io::Result<Self> {
+        let fd = unsafe { libc::memfd_create(c"L_capture".as_ptr(), libc::MFD_CLOEXEC) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
         }
-    };
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
-
-    // Restores fd 1 on every path, including the panic path below.
-    let output = capture.finish();
-
-    let ret = match result {
-        Ok(r) => r,
-        Err(_) => {
-            eprintln!("{ename}: captured command panicked");
-            return 1;
-        }
-    };
-    let mut output = match output {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("{ename}: failed to read captured output: {e}");
-            return 1;
-        }
-    };
-
-    // Strip trailing newlines, matching `$(...)` semantics.
-    while output.last() == Some(&b'\n') {
-        output.pop();
+        let memfd = unsafe { File::from_raw_fd(fd) };
+        Ok(Self { file: memfd })
     }
+}
 
-    if let Err(e) = bind_shell_variable(var, output) {
-        eprintln!("{ename}: {e}");
-        return 1;
-    }
+////////////////////////////////////
+pub fn capture_into_variable(ename: &str, var: *const c_char, f: impl FnOnce() -> c_int) -> c_int {
+    let mut memfd = return_on_err2!(ename, "cannot capture stdout", Memfd::new(), 1);
+    let result = {
+        let _guard = return_on_err2!(
+            ename,
+            "cannot redirect stdout",
+            RedirectStdout::new(&memfd.file),
+            1
+        );
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+    };
+    return_on_err2!(ename, "couldn't write to memfd", memfd.file.write(b"\0"), 1);
+    let ret = return_on_err2!(ename, "captured command panicked", result, 1);
+    let mmap = return_on_err2!(ename, "couldn't mmap", unsafe { Mmap::map(&memfd.file) }, 1);
+    return_on_err!(ename, bind_shell_variable(var, mmap.as_ptr().cast()), 1);
     ret
 }
+
+////////////////////////////////////
 
 /// Lexicographic `a < b` for byte slices, usable in const context.
 pub const fn bytes_lt(a: &[u8], b: &[u8]) -> bool {
@@ -176,19 +169,19 @@ pub const fn sort_by_byte_key<T: Copy, const N: usize>(
 ) -> [(&'static [u8], T); N] {
     let mut i = 1;
     while i < N {
+        let item = arr[i];
         let mut j = i;
-        while j > 0 && bytes_lt(arr[j].0, arr[j - 1].0) {
-            let tmp = arr[j];
+        while j > 0 && bytes_lt(item.0, arr[j - 1].0) {
             arr[j] = arr[j - 1];
-            arr[j - 1] = tmp;
             j -= 1;
         }
+        arr[j] = item;
         i += 1;
     }
     arr
 }
 
-impl<'a> BDisplay for getargs::Error<&'a [u8]> {
+impl BDisplay for getargs::Error<&[u8]> {
     fn bwrite<W: Write>(&self, w: &mut W) {
         match self {
             getargs::Error::RequiresValue(opt) => {
@@ -199,54 +192,71 @@ impl<'a> BDisplay for getargs::Error<&'a [u8]> {
                 w.write_all(b"option does not require a value: ").unwrap();
                 opt.bwrite(w);
             }
-            &_ => todo!(),
+            &_ => {}
         }
     }
 }
 
-impl<'a> BDisplay for getargs::Opt<&'a [u8]> {
-    fn bwrite<W: Write>(&self, w: &mut W) {}
+impl BDisplay for getargs::Opt<&[u8]> {
+    fn bwrite<W: Write>(&self, _w: &mut W) {}
 }
 
-impl BDisplay for lexopt::Error {
-    fn bwrite<W: std::io::Write>(&self, w: &mut W) {
-        write!(w, "{}", self).unwrap();
-    }
-}
-
-/// Unwrap a `lexopt::Result`, printing `"{ename}: {error}"` to stderr and
-/// returning `code` on failure.
-///
-/// `ename` is the subcommand's name (e.g. its `ENAME` const); `expr` is the
-/// result being unwrapped; `code` is the exit code returned on error (e.g.
-/// `EX_USAGE`). The `return` exits the caller's function, so this is only
-/// valid inside a `-> c_int` subcommand handler.
-#[macro_export]
-macro_rules! return_on_err {
-    ($ename:expr, $expr:expr, $code:expr) => {
-        match $expr {
-            Ok(val) => val,
-            Err(e) => {
-                beprintln!("{}: {}", $ename, e);
-                return $code;
-            }
-        }
-    };
-}
-
-pub fn lexopt_unexpected(ENAME: &(impl BDisplay + ?Sized), arg: Arg) -> c_int {
+pub fn getargs_unexpected(ENAME: &(impl BDisplay + ?Sized), arg: getargs::Opt<&[u8]>) -> c_int {
     match arg {
-        Short(c) => {
-            beprintln!(ENAME, b": unknown option -", c as u8);
-            return 2;
+        getargs::Opt::Short(c) => {
+            beprintln!(ENAME, b": unknown option -", c);
+            2
         }
-        Long(l) => {
+        getargs::Opt::Long(l) => {
             beprintln!(ENAME, b": unknown option --", l);
-            return 2;
-        }
-        Value(val) => {
-            beprintln!(ENAME, b": unexpected argument", val);
-            return 2;
+            2
         }
     }
+}
+
+////////////////////////////////////////////
+
+
+
+pub struct CByteStr(Vec<u8>);
+
+impl CByteStr {
+    #[inline]
+    pub fn new(bytes: &[u8]) -> Self {
+        debug_assert!(
+            bytes.last() != Some(&0),
+            "input slice already ends with a null byte; unexpected double null-termination"
+        );
+        let mut buf = Vec::with_capacity(bytes.len() + 1);
+        buf.extend_from_slice(bytes);
+        buf.push(0);
+        Self(buf)
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *const c_char {
+        self.0.as_ptr().cast()
+    }
+}
+
+/// Returns a `*const c_char` pointer for a slice that comes from a
+/// NUL-terminated C string. The slice itself excludes the trailing NUL
+/// (as returned by `CStr::to_bytes()`), but the underlying C string is
+/// guaranteed to be NUL-terminated, so the NUL is at `bytes.as_ptr().add(bytes.len())`.
+#[inline]
+pub fn from_after_null_terminated(bytes: &[u8]) -> *const c_char {
+    debug_assert!(
+        !bytes.is_empty(),
+        "input slice is empty; cannot verify null terminator"
+    );
+    // The slice comes from CStr::to_bytes() which excludes the NUL.
+    // The underlying C string is NUL-terminated — verify the byte one past the slice.
+    unsafe {
+        debug_assert!(
+            *bytes.as_ptr().add(bytes.len()) == 0,
+            "expected NUL byte at index {} (one past slice end)",
+            bytes.len()
+        );
+    }
+    bytes.as_ptr().cast()
 }

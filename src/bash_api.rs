@@ -127,39 +127,6 @@ impl Drop for CStringOwned {
     }
 }
 
-pub unsafe fn l_expand_string_to_string_in_quotes_owned(s: *const c_char) -> CStringOwned {
-    CStringOwned(l_expand_string_to_string_in_quotes(s))
-}
-
-///////////////////////////////////////////////////////////////////////////
-
-#[repr(transparent)]
-#[derive(Copy, Clone)]
-pub struct RawCStr<'a> {
-    ptr: *const c_char,
-    _marker: PhantomData<&'a c_char>,
-}
-
-impl<'a> RawCStr<'a> {
-    #[inline(always)]
-    pub const unsafe fn from_ptr(ptr: *const c_char) -> Self {
-        Self {
-            ptr,
-            _marker: PhantomData,
-        }
-    }
-
-    #[inline(always)]
-    pub fn as_ptr(self) -> *const c_char {
-        self.ptr
-    }
-
-    #[inline(always)]
-    pub unsafe fn to_cstr(self) -> &'a CStr {
-        CStr::from_ptr(self.ptr)
-    }
-}
-
 ///////////////////////////////////////////////////////////////////////////
 
 // --- Borrowed View (Zero Allocation) ---
@@ -189,15 +156,9 @@ impl<'a> WordListView<'a> {
         }
     }
 
-    pub fn print(&self) {
-        for it in self.iter() {
-            bprintln!(it);
-        }
-    }
-
     /// Yields `&'a OsStr` slices directly referencing C memory.
     #[inline]
-    pub fn iter_osstr(&self) -> WordListIterOsStr {
+    pub fn iter_osstr(&self) -> WordListIterOsStr<'_> {
         self.iter().map(OsStr::from_bytes)
     }
 
@@ -228,9 +189,31 @@ pub struct WordListIter<'a> {
 }
 
 impl<'a> WordListIter<'a> {
-    pub fn print(&self) {
-        for it in self.clone() {
-            bprintln!(it);
+    pub unsafe fn print(&self) {
+        for i in self.clone().into_iter() {
+            bprintln!(i);
+        }
+    }
+
+    pub unsafe fn current_cpnt(&self) -> *const c_char {
+        if self.head.is_null() {
+            return std::ptr::null();
+        }
+        let word_ptr = l_word_list_word(self.head);
+        if word_ptr.is_null() {
+            return std::ptr::null();
+        }
+        l_word_desc_string(word_ptr)
+    }
+
+    pub unsafe fn current(&self) -> Option<&'a [u8]> {
+        self.current_cpnt()
+            .as_ref()
+            .map(|v| CStr::from_ptr(v).to_bytes())
+    }
+    pub unsafe fn advance(&mut self) {
+        if !self.head.is_null() {
+            self.head = l_word_list_next(self.head);
         }
     }
 }
@@ -239,23 +222,11 @@ impl<'a> Iterator for WordListIter<'a> {
     type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
-        while !self.head.is_null() {
-            let curr = self.head;
-            unsafe {
-                self.head = l_word_list_next(curr);
-                let word_ptr = l_word_list_word(curr);
-                if word_ptr.is_null() {
-                    continue;
-                }
-                let str_ptr = l_word_desc_string(word_ptr);
-                if str_ptr.is_null() {
-                    continue;
-                }
-                let bytes = CStr::from_ptr(str_ptr).to_bytes();
-                return Some(bytes);
-            }
+        unsafe {
+            let item = self.current();
+            self.advance();
+            item
         }
-        None
     }
 }
 
@@ -302,8 +273,4 @@ impl<'a> IntoIterator for &'a WordListOwned {
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
-}
-
-pub unsafe fn l_expand_string_owned(string: *const c_char, flags: c_int) -> WordListOwned {
-    WordListOwned(expand_string(string, flags))
 }

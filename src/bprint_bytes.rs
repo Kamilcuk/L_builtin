@@ -1,7 +1,8 @@
-use core::fmt::Display;
+use std::any::Any;
 use std::ffi::c_char;
 use std::ffi::CStr;
 use std::ffi::{OsStr, OsString};
+use std::io;
 use std::io::Write;
 
 /// Trait for types that can display themselves as raw bytes to any Write.
@@ -111,6 +112,27 @@ impl BDisplay for char {
         w.write_all(bytes).ok();
     }
 }
+
+impl BDisplay for io::Error {
+    fn bwrite<W: Write>(&self, w: &mut W) {
+        w.write_all(self.to_string().as_bytes()).ok();
+    }
+}
+
+impl BDisplay for Box<dyn Any + Send> {
+    fn bwrite<W: Write>(&self, writer: &mut W) {
+        let msg = if let Some(s) = self.downcast_ref::<&str>() {
+            *s
+        } else if let Some(s) = self.downcast_ref::<String>() {
+            s.as_str()
+        } else {
+            "unknown panic payload"
+        };
+        writer.write_all(msg.as_bytes()).ok();
+    }
+}
+
+////////////////////////////////////////////
 
 pub struct ViaDisplay<'a, T: ?Sized>(pub &'a T);
 

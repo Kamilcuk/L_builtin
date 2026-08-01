@@ -1,26 +1,28 @@
 //! Lua subcommand implementation using mlua
-use crate::bash_api::{WordListIter, WordListIterOsStr, WordListOwned, WordListView, expand_string};
+use crate::bash_api::{
+    expand_string, l_expand_string_to_string_in_quotes, CStringOwned, WordListOwned, WordListView,
+};
 use crate::beprintln;
 use crate::bprint_bytes::BDisplay;
 use crate::bprintln;
 use crate::return_on_err;
-use crate::shared::{bind_shell_variable, lexopt_unexpected};
+use crate::shared::{getargs_unexpected, CByteStr};
 
-use std::ffi::{CStr, OsStr, OsString};
+use std::ffi::{c_char, CStr};
 use std::io::Write;
 use std::os::raw::c_int;
-use std::os::unix::ffi::OsStrExt;
 
-use lexopt::{prelude::*, Parser};
+use getargs::{Opt, Options};
 use mlua::{Lua, Value};
 
 use crate::bash_api::{
     array_flush, array_insert, assoc_flush, assoc_keys_to_word_list, assoc_reference,
     bind_variable, check_unbind_variable, convert_var_to_array, execute_shell_function,
     find_function, find_variable, l_array_cell, l_array_head, l_array_p, l_assoc_cell,
-    l_assoc_insert, l_assoc_p, l_element_forw, l_element_index, l_element_value,
-    l_expand_string_to_string_in_quotes_owned, l_invisible_p, l_readonly_p, l_value_cell,
-    make_new_array_variable, make_word, make_word_list, EX_USAGE, SHELL_VAR, WORD_LIST,
+    l_assoc_insert, l_assoc_p, l_element_forw, l_element_index, l_element_value, l_invisible_p,
+    l_readonly_p, l_value_cell, make_new_array_variable, make_new_assoc_variable, make_word,
+    make_word_list, EX_USAGE,
+    SHELL_VAR, WORD_LIST,
 };
 
 impl BDisplay for mlua::Error {
@@ -30,41 +32,46 @@ impl BDisplay for mlua::Error {
 }
 const ENAME: &str = "L_builtin lua";
 
+/// # Safety
 #[no_mangle]
-pub extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut list = unsafe { WordListView::from_raw(list) }.iter();
-    let mut listosstr = list.by_ref().map(OsStr::from_bytes);
-    let mut parser = Parser::from_args(&mut listosstr);
-    let mut ret_var: Option<OsString> = None;
-    while let Some(arg) = return_on_err!(ENAME, parser.next(), EX_USAGE) {
+pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
+    let mut args = unsafe { WordListView::from_raw(list) }.into_iter();
+    let mut opts = Options::new(&mut args);
+    let mut ret_var: Option<&[u8]> = None;
+    while let Some(arg) = return_on_err!(ENAME, opts.next_opt(), EX_USAGE) {
         match arg {
-            Short('v') | Long("var") => {
-                ret_var = Some(return_on_err!(ENAME, parser.value(), EX_USAGE));
+            Opt::Short(b'v') | Opt::Long(b"var") => {
+                ret_var = Some(return_on_err!(ENAME, opts.value(), EX_USAGE));
             }
-            Short('h') | Long("help") => {
+            Opt::Short(b'h') | Opt::Long(b"help") => {
                 print_lua_help();
                 return 0;
             }
-            Value(val) => {
-                let return_value = return_on_err!(ENAME, run_lua_script(&val, list), 1);
-                if let Some(var_name) = ret_var {
-                    return_on_err!(
-                        ENAME,
-                        bind_shell_variable(&var_name, return_value.into_bytes()),
-                        1
-                    );
-                }
-                return 0;
-            }
             _ => {
-                return lexopt_unexpected(ENAME, arg);
+                return getargs_unexpected(ENAME, arg);
             }
         }
     }
-    // No script was given — only options (or nothing).
-    beprintln!(ENAME, b": missing script");
-    beprintln!(b"Usage: L_builtin lua [-v VAR] <script> [args...]");
-    return 2;
+    let script = match opts.next_positional() {
+        Some(script) => script,
+        None => {
+            // No script was given — only options (or nothing).
+            beprintln!(ENAME, b": missing script");
+            beprintln!(b"Usage: L_builtin lua [-v VAR] <script> [args...]");
+            return EX_USAGE;
+        }
+    };
+    let lua = Lua::new();
+    let return_value = return_on_err!(ENAME, run_lua_script(&lua, script, args), 1);
+    if let Some(var_name) = ret_var {
+        let var_cname = CByteStr::new(var_name);
+        return_on_err!(
+            ENAME,
+            set_bash_from_lua_in(&lua, var_cname.as_ptr(), return_value, None),
+            1
+        );
+    }
+    0
 }
 
 /// Print usage to stdout (matching the `-h`/`--help` contract the tests expect).
@@ -82,12 +89,15 @@ fn print_lua_help() {
     bprintln!(b"  args...             Arguments exposed to the script via the Lua 'arg' table");
 }
 
-/// Run a Lua script and return its string result, or the underlying `mlua`
-/// error. Callers map the error to a message + exit code in one place.
-fn run_lua_script(script: &OsStr, args: WordListIter) -> Result<String, mlua::Error> {
-    let lua = Lua::new();
+/// Run a Lua script and return its result as an mlua::Value.
+/// The Lua instance must stay alive for the returned Value to remain valid.
+fn run_lua_script<'a>(
+    lua: &'a Lua,
+    script: &'a [u8],
+    args: impl Iterator<Item = &'a [u8]>,
+) -> Result<mlua::Value, mlua::Error> {
     // Register bash API functions
-    register_bash_api(&lua)?;
+    register_bash_api(lua)?;
     // Set up arg table
     let arg_table = lua.create_table()?;
     for (i, arg) in args.enumerate() {
@@ -95,11 +105,8 @@ fn run_lua_script(script: &OsStr, args: WordListIter) -> Result<String, mlua::Er
         arg_table.set(i + 1, s)?;
     }
     lua.globals().set("arg", arg_table)?;
-    // Execute the script and get the return value (similar to luaL_dostring in C)
-    let chunk = lua.load(script.as_bytes());
-    let result: mlua::Value = chunk.eval()?;
-    // Convert the return value to a string (similar to lua_tostring in C)
-    Ok(result.to_string()?)
+    // Execute the script using safe API (handles stack, errors, callbacks)
+    lua.load(script).eval()
 }
 
 /// Validate the optional index-base argument of bash.get/bash.set.
@@ -156,7 +163,8 @@ fn table_key_to_index(k: &Value) -> Result<i64, mlua::Error> {
 /// Fill (or create) the indexed array `name` from a Lua table, shifting the
 /// table's keys down by `base`. `var` is the existing variable or null.
 unsafe fn set_array_from_table(
-    name: *const std::os::raw::c_char,
+    _lua: &Lua,
+    name: *const c_char,
     var: *mut SHELL_VAR,
     table: &mlua::Table,
     base: i64,
@@ -192,12 +200,30 @@ unsafe fn set_array_from_table(
     Ok(Value::Boolean(true))
 }
 
-/// Fill the existing associative array `var` from a Lua table. Keys may be
-/// strings or numbers; both keys and values go through scalar conversion.
+/// Fill the existing associative array `var` from a Lua table, or create a new
+/// one if `var` is null. Keys may be strings or numbers; both keys and values
+/// go through scalar conversion.
 unsafe fn set_assoc_from_table(
+    name: *const c_char,
     var: *mut SHELL_VAR,
     table: &mlua::Table,
 ) -> Result<Value, mlua::Error> {
+    let var = if !var.is_null() && l_assoc_p(var) != 0 {
+        var
+    } else if !var.is_null() {
+        // Existing variable but not associative - this shouldn't happen if
+        // callers check l_assoc_p first, but handle gracefully.
+        return Err(mlua::Error::RuntimeError(
+            "variable exists but is not associative".to_string(),
+        ));
+    } else {
+        make_new_assoc_variable(name)
+    };
+    if var.is_null() {
+        return Err(mlua::Error::RuntimeError(
+            "associative array creation failed".to_string(),
+        ));
+    }
     let hash = l_assoc_cell(var);
     if hash.is_null() {
         return Err(mlua::Error::RuntimeError(
@@ -216,83 +242,130 @@ unsafe fn set_assoc_from_table(
     Ok(Value::Boolean(true))
 }
 
+// bash.get(var_name [, base]) -> string (scalar), table (array/assoc), or nil
+//
+// Indexed arrays become tables whose keys are the bash indices shifted by
+// `base` (default 1, may be 0). Sparse arrays keep their holes; no dense
+// renumbering. Associative arrays become string-keyed tables (base is
+// irrelevant).
+fn get_bash_from_lua(
+    lua: &mlua::Lua,
+    (name, base): (mlua::String, Option<i64>),
+) -> mlua::Result<mlua::Value> {
+    let name = name.as_bytes_with_nul();
+    let base = parse_base(base)?;
+    unsafe {
+        let var = find_variable(name.as_ptr().cast());
+        if var.is_null() || l_invisible_p(var) != 0 {
+            return Ok(Value::Nil);
+        }
+        if l_array_p(var) != 0 {
+            let table = lua.create_table()?;
+            let array = l_array_cell(var);
+            if !array.is_null() {
+                let head = l_array_head(array);
+                if !head.is_null() {
+                    // Circular doubly-linked list with `head` as sentinel.
+                    let mut curr = l_element_forw(head);
+                    while curr != head {
+                        let val = l_element_value(curr);
+                        let s = if val.is_null() {
+                            lua.create_string("")?
+                        } else {
+                            lua.create_string(CStr::from_ptr(val).to_bytes())?
+                        };
+                        table.set(l_element_index(curr) + base, s)?;
+                        curr = l_element_forw(curr);
+                    }
+                }
+            }
+            return Ok(Value::Table(table));
+        }
+        if l_assoc_p(var) != 0 {
+            let table = lua.create_table()?;
+            let hash = l_assoc_cell(var);
+            if !hash.is_null() {
+                for key in &WordListOwned(assoc_keys_to_word_list(hash)) {
+                    // The slice borrows the C string in place and excludes
+                    // its NUL, which is still present just past the end —
+                    // so the pointer is a valid C string for lookup.
+                    let val = assoc_reference(hash, key.as_ptr().cast());
+                    let k = lua.create_string(key)?;
+                    let v = if val.is_null() {
+                        lua.create_string("")?
+                    } else {
+                        lua.create_string(CStr::from_ptr(val).to_bytes())?
+                    };
+                    table.set(k, v)?;
+                }
+            }
+            return Ok(Value::Table(table));
+        }
+        let val = l_value_cell(var);
+        if val.is_null() {
+            Ok(Value::Nil)
+        } else {
+            Ok(Value::String(
+                lua.create_string(CStr::from_ptr(val).to_bytes())?,
+            ))
+        }
+    }
+}
+
+fn set_bash_from_lua_in(
+    lua: &Lua,
+    name: *const c_char,
+    value: mlua::Value,
+    base: Option<i64>,
+) -> mlua::Result<mlua::Value> {
+    let base = parse_base(base)?;
+    unsafe {
+        let var = find_variable(name);
+        if !var.is_null() && l_readonly_p(var) != 0 {
+            return Err(mlua::Error::RuntimeError("readonly variable".to_string()));
+        }
+        match value {
+            Value::Table(table) => {
+                // Determine if the table should be an associative array or indexed array
+                // If the variable already exists and is associative, use that.
+                // Otherwise, check if the table has any string keys.
+                let is_assoc = if !var.is_null() && l_assoc_p(var) != 0 {
+                    true
+                } else {
+                    table_has_string_keys(&table)?
+                };
+                if is_assoc {
+                    set_assoc_from_table(name, var, &table)
+                } else {
+                    set_array_from_table(lua, name, var, &table, base)
+                }
+            }
+            other => {
+                let mut bytes = scalar_to_bytes(&other)?;
+                bytes.push(0);
+                let result = bind_variable(name, bytes.as_ptr().cast(), 0);
+                Ok(Value::Boolean(!result.is_null()))
+            }
+        }
+    }
+}
+
+/// Check if a Lua table has any string keys (indicating it should be an associative array)
+fn table_has_string_keys(table: &mlua::Table) -> mlua::Result<bool> {
+    for pair in table.pairs::<Value, Value>() {
+        let (k, _) = pair?;
+        match k {
+            Value::String(_) => return Ok(true),
+            _ => {}
+        }
+    }
+    Ok(false)
+}
+
 /// Register bash API functions with Lua
 fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
     let globals = lua.globals();
-
-    // Create bash module
     let bash_module = lua.create_table()?;
-
-    // bash.get(var_name [, base]) -> string (scalar), table (array/assoc), or nil
-    //
-    // Indexed arrays become tables whose keys are the bash indices shifted by
-    // `base` (default 1, may be 0). Sparse arrays keep their holes; no dense
-    // renumbering. Associative arrays become string-keyed tables (base is
-    // irrelevant).
-    bash_module.set(
-        "get",
-        lua.create_function(|lua, (name, base): (mlua::String, Option<i64>)| {
-            let base = parse_base(base)?;
-            unsafe {
-                let name = name.as_bytes_with_nul();
-                let var = find_variable(name.as_ptr().cast());
-                if var.is_null() || l_invisible_p(var) != 0 {
-                    return Ok(Value::Nil);
-                }
-                if l_array_p(var) != 0 {
-                    let table = lua.create_table()?;
-                    let array = l_array_cell(var);
-                    if !array.is_null() {
-                        let head = l_array_head(array);
-                        if !head.is_null() {
-                            // Circular doubly-linked list with `head` as sentinel.
-                            let mut curr = l_element_forw(head);
-                            while curr != head {
-                                let val = l_element_value(curr);
-                                let s = if val.is_null() {
-                                    lua.create_string("")?
-                                } else {
-                                    lua.create_string(CStr::from_ptr(val).to_bytes())?
-                                };
-                                table.set(l_element_index(curr) + base, s)?;
-                                curr = l_element_forw(curr);
-                            }
-                        }
-                    }
-                    return Ok(Value::Table(table));
-                }
-                if l_assoc_p(var) != 0 {
-                    let table = lua.create_table()?;
-                    let hash = l_assoc_cell(var);
-                    if !hash.is_null() {
-                        for key in &WordListOwned(assoc_keys_to_word_list(hash)) {
-                            // The slice borrows the C string in place and excludes
-                            // its NUL, which is still present just past the end —
-                            // so the pointer is a valid C string for lookup.
-                            let val = assoc_reference(hash, key.as_ptr().cast());
-                            let k = lua.create_string(key)?;
-                            let v = if val.is_null() {
-                                lua.create_string("")?
-                            } else {
-                                lua.create_string(CStr::from_ptr(val).to_bytes())?
-                            };
-                            table.set(k, v)?;
-                        }
-                    }
-                    return Ok(Value::Table(table));
-                }
-                let val = l_value_cell(var);
-                if val.is_null() {
-                    Ok(Value::Nil)
-                } else {
-                    Ok(Value::String(
-                        lua.create_string(CStr::from_ptr(val).to_bytes())?,
-                    ))
-                }
-            }
-        })?,
-    )?;
-
     // bash.set(var_name, value [, base]) -> boolean
     //
     // boolean/number/string set a scalar ("true"/"false" for booleans,
@@ -300,38 +373,16 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
     // existing bash variable is associative, an indexed array otherwise
     // (table keys are shifted by `base`, default 1, may be 0). Any other Lua
     // type raises an error.
+    bash_module.set("get", lua.create_function(get_bash_from_lua)?)?;
     bash_module.set(
         "set",
         lua.create_function(
-            |_, (name, value, base): (mlua::String, Value, Option<i64>)| {
-                let base = parse_base(base)?;
-                unsafe {
-                    let name = name.as_bytes_with_nul();
-                    let var = find_variable(name.as_ptr().cast());
-                    if !var.is_null() && l_readonly_p(var) != 0 {
-                        return Err(mlua::Error::RuntimeError("readonly variable".to_string()));
-                    }
-                    match value {
-                        Value::Table(table) => {
-                            if !var.is_null() && l_assoc_p(var) != 0 {
-                                set_assoc_from_table(var, &table)
-                            } else {
-                                set_array_from_table(name.as_ptr().cast(), var, &table, base)
-                            }
-                        }
-                        other => {
-                            let mut bytes = scalar_to_bytes(&other)?;
-                            bytes.push(0);
-                            let result =
-                                bind_variable(name.as_ptr().cast(), bytes.as_ptr().cast(), 0);
-                            Ok(Value::Boolean(!result.is_null()))
-                        }
-                    }
-                }
+            |lua, (name, value, base): (mlua::String, Value, Option<i64>)| {
+                let name = name.as_bytes_with_nul();
+                set_bash_from_lua_in(lua, name.as_ptr().cast(), value, base)
             },
         )?,
     )?;
-
     // bash.unset(var_name) -> boolean
     //
     // true if the variable was removed, false if it did not exist. Raises an
@@ -349,7 +400,6 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
             }
         })?,
     )?;
-
     // bash.call(func_name, ...) -> integer
     bash_module.set(
         "call",
@@ -374,33 +424,30 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
             }
         })?,
     )?;
-
     // bash.expand(string) -> string
     bash_module.set(
         "expand",
         lua.create_function(|lua, s: mlua::String| unsafe {
             let s = s.as_bytes_with_nul();
-            let result = l_expand_string_to_string_in_quotes_owned(s.as_ptr().cast());
+            let result = CStringOwned(l_expand_string_to_string_in_quotes(s.as_ptr().cast()));
             Ok(Value::String(lua.create_string(result.to_bytes())?))
         })?,
     )?;
-
     // bash.expand_list(string) -> table
     bash_module.set(
         "expand_list",
         lua.create_function(|lua, s: mlua::String| unsafe {
             let s = s.as_bytes_with_nul();
             let table = lua.create_table()?;
-            let mut idx = 1;
-            for word in &WordListOwned(expand_string(s.as_ptr().cast(), 0)) {
-                table.set(idx, lua.create_string(word)?)?;
-                idx += 1;
+            for (idx, word) in WordListOwned(expand_string(s.as_ptr().cast(), 0))
+                .into_iter()
+                .enumerate()
+            {
+                table.set(idx + 1, lua.create_string(word)?)?;
             }
             Ok(Value::Table(table))
         })?,
     )?;
-
     globals.set("bash", bash_module)?;
-
     Ok(())
 }

@@ -9,22 +9,16 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::ffi::OsString;
-
 use getargs::Opt::{Long, Short};
 
 use crate::bash_api::{
-    c_int, l_execute_word_list, l_word_desc_string, l_word_list_next, l_word_list_word,
-    this_command_name, WordListView, EX_USAGE, WORD_LIST,
+    c_int, l_execute_word_list, this_command_name, WordListView, EX_USAGE, WORD_LIST,
 };
 use crate::bprintln;
-use crate::shared::{capture_into_variable, lexopt_unexpected};
+use crate::shared::{capture_into_variable, getargs_unexpected};
 use crate::{beprintln, return_on_err};
-use std::ffi::{c_char, CStr};
+use std::ffi::c_char;
 use std::io::Write;
-
-use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 
 // C subcommand handlers (compiled into the same .so)
 extern "C" {
@@ -109,52 +103,45 @@ unsafe fn l_builtin_unknown_subcommand(name: &[u8]) {
 ///
 /// Lives in the dispatch table with the same C ABI as every other handler;
 /// `list` starts at VAR (the dispatcher already consumed the word `capture`).
+/// # Safety
 #[no_mangle]
-pub extern "C" fn capture_subcommand(list: *mut WORD_LIST) -> c_int {
-    let Some(var_ptr) = first_word(list) else {
+pub unsafe extern "C" fn capture_subcommand(list: *mut WORD_LIST) -> c_int {
+    let mut args = WordListView::from_raw(list).into_iter();
+    // var is a slice from bash WORD_LIST; use the original C string pointer.
+    // l_word_desc_string returns a NUL-terminated C string.
+    let var_ptr = args.current_cpnt();
+    if var_ptr.is_null() {
         beprintln!(b"L_builtin capture: usage: L_builtin capture VAR <command> [args...]");
         return EX_USAGE;
     };
-    let var = OsStr::from_bytes(unsafe { CStr::from_ptr(var_ptr).to_bytes() });
-    let cmd_list = unsafe { l_word_list_next(list) };
-    if first_word(cmd_list).is_none() {
+    args.advance();
+    if args.current_cpnt().is_null() {
         beprintln!(b"L_builtin capture: missing command");
         return EX_USAGE;
     }
-    capture_into_variable("L_builtin capture", var, || unsafe {
-        l_execute_word_list(cmd_list)
+    // We need the var pointer from the first element. Since we already advanced
+    // the iterator, we need to get it from the original list.
+    // Actually, let's use find_variable with the name directly.
+    capture_into_variable("L_builtin capture", var_ptr, || unsafe {
+        l_execute_word_list(args.head)
     })
 }
 
-/// Read the first word of `list` as a C string pointer, or None if any
-/// pointer on the way is null.
-fn first_word(list: *mut WORD_LIST) -> Option<*const c_char> {
-    if list.is_null() {
-        return None;
-    }
-    let word_desc = unsafe { l_word_list_word(list) };
-    if word_desc.is_null() {
-        return None;
-    }
-    let str_ptr = unsafe { l_word_desc_string(word_desc) };
-    (!str_ptr.is_null()).then_some(str_ptr)
-}
-
+/// # Safety
 #[no_mangle]
-pub extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
-    let mut list = unsafe { WordListView::from_raw(list) }.iter();
+pub unsafe extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
+    let mut list = unsafe { WordListView::from_raw(list) }.into_iter();
     let mut opts = getargs::Options::new(&mut list);
     while let Some(opt) = return_on_err!("L_builtin", opts.next_opt(), EX_USAGE) {
-        beprintln!("HELO");
         match opt {
             Short(b'h') | Long(b"help") => {
                 unsafe { l_builtin_print_help() };
                 return 0;
             }
-            _ => {}
+            _ => return getargs_unexpected("L_builtin", opt),
         }
     }
-    let val = match list.next() {
+    let val = match opts.next_positional() {
         Some(val) => val,
         None => {
             unsafe { l_builtin_print_usage() };
@@ -170,10 +157,6 @@ pub extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
             return EX_USAGE;
         }
     };
-    beprintln!("hi");
-    unsafe { WordListView::from_raw(list.head).print() }
-    beprintln!("hi");
-    //
     // Flush C stdio before the handler so buffered bash/C output
     // cannot be reordered against direct fd writes from Rust.
     unsafe { fflush(std::ptr::null_mut()) };
@@ -182,5 +165,5 @@ pub extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
     // and Rust's stdout buffer (never flushed at exit in a cdylib).
     unsafe { fflush(std::ptr::null_mut()) };
     let _ = std::io::stdout().flush();
-    return ret;
+    ret
 }
