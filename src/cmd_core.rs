@@ -141,7 +141,7 @@ pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
         .into_iter()
         .chain(opts.into_positionals())
         .map(bytes_to_string_coerced);
-    return match capture_var {
+    match capture_var {
         None => uumain(rest),
         Some(var) => {
             // var is a slice from bash WORD_LIST; it comes from a NUL-terminated C string.
@@ -149,7 +149,7 @@ pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
             // Since we need a *const c_char, cast the slice pointer.
             capture_into_variable(ENAME, from_after_null_terminated(var), || uumain(rest))
         }
-    };
+    }
 }
 
 fn print_core_help() {

@@ -9,6 +9,7 @@ rust-version = "1.70"
 name = "l_builtin_rs"
 crate-type = ["staticlib"]
 path = "src/lib.rs"
+test = false
 
 [features]
 # Enabled by CMake when ppoll(2) is available, so the dispatch table can

@@ -189,12 +189,22 @@ pub struct WordListIter<'a> {
 }
 
 impl<'a> WordListIter<'a> {
+    /// Print all words in the list.
+    ///
+    /// # Safety
+    /// The iterator's `head` must point to valid memory or be null,
+    /// and must not be mutated by C for the duration of the iteration.
     pub unsafe fn print(&self) {
-        for i in self.clone().into_iter() {
+        for i in self.clone() {
             bprintln!(i);
         }
     }
 
+    /// Get the current word as a raw C string pointer.
+    ///
+    /// # Safety
+    /// The iterator's `head` must point to valid memory or be null,
+    /// and must not be mutated by C for the duration of the call.
     pub unsafe fn current_cpnt(&self) -> *const c_char {
         if self.head.is_null() {
             return std::ptr::null();
@@ -206,11 +216,21 @@ impl<'a> WordListIter<'a> {
         l_word_desc_string(word_ptr)
     }
 
+    /// Get the current word as a byte slice.
+    ///
+    /// # Safety
+    /// The iterator's `head` must point to valid memory or be null,
+    /// and must not be mutated by C for the duration of the call.
     pub unsafe fn current(&self) -> Option<&'a [u8]> {
         self.current_cpnt()
             .as_ref()
             .map(|v| CStr::from_ptr(v).to_bytes())
     }
+    /// Advance the iterator to the next word.
+    ///
+    /// # Safety
+    /// The iterator's `head` must point to valid memory or be null,
+    /// and must not be mutated by C for the duration of the call.
     pub unsafe fn advance(&mut self) {
         if !self.head.is_null() {
             self.head = l_word_list_next(self.head);

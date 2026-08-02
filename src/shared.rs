@@ -17,7 +17,11 @@ use crate::bprint_bytes::BDisplay;
 /// Both `name` and `value` must be NUL-terminated C strings (as returned by
 /// bash's C API). No copying or allocation is performed.
 /// Fails on readonly variables or a failed bind.
-pub fn bind_shell_variable(name: *const c_char, value: *const c_char) -> Result<(), String> {
+///
+/// # Safety
+/// `name` and `value` must be valid pointers to NUL-terminated C strings.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub unsafe fn bind_shell_variable(name: *const c_char, value: *const c_char) -> Result<(), String> {
     unsafe {
         debug_assert!(!name.is_null(), "name is null");
         debug_assert!(!value.is_null(), "value is null");
@@ -126,6 +130,7 @@ impl Memfd {
 }
 
 ////////////////////////////////////
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn capture_into_variable(ename: &str, var: *const c_char, f: impl FnOnce() -> c_int) -> c_int {
     let mut memfd = return_on_err2!(ename, "cannot capture stdout", Memfd::new(), 1);
     let result = {
@@ -140,7 +145,8 @@ pub fn capture_into_variable(ename: &str, var: *const c_char, f: impl FnOnce() -
     return_on_err2!(ename, "couldn't write to memfd", memfd.file.write(b"\0"), 1);
     let ret = return_on_err2!(ename, "captured command panicked", result, 1);
     let mmap = return_on_err2!(ename, "couldn't mmap", unsafe { Mmap::map(&memfd.file) }, 1);
-    return_on_err!(ename, bind_shell_variable(var, mmap.as_ptr().cast()), 1);
+    let res = unsafe { bind_shell_variable(var, mmap.as_ptr().cast()) };
+    return_on_err!(ename, res, 1);
     ret
 }
 

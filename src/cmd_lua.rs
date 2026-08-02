@@ -6,7 +6,7 @@ use crate::beprintln;
 use crate::bprint_bytes::BDisplay;
 use crate::bprintln;
 use crate::return_on_err;
-use crate::shared::{getargs_unexpected, CByteStr};
+use crate::shared::{from_after_null_terminated, getargs_unexpected, CByteStr};
 
 use std::ffi::{c_char, CStr};
 use std::io::Write;
@@ -21,8 +21,7 @@ use crate::bash_api::{
     find_function, find_variable, l_array_cell, l_array_head, l_array_p, l_assoc_cell,
     l_assoc_insert, l_assoc_p, l_element_forw, l_element_index, l_element_value, l_invisible_p,
     l_readonly_p, l_value_cell, make_new_array_variable, make_new_assoc_variable, make_word,
-    make_word_list, EX_USAGE,
-    SHELL_VAR, WORD_LIST,
+    make_word_list, EX_USAGE, SHELL_VAR, WORD_LIST,
 };
 
 impl BDisplay for mlua::Error {
@@ -120,41 +119,46 @@ fn parse_base(base: Option<i64>) -> Result<i64, mlua::Error> {
     }
 }
 
+enum ScalarCstr<'a> {
+    Lua(mlua::BorrowedBytes<'a>),
+    Vec(Vec<u8>),
+    Arr(&'a [u8]),
+}
+
+impl<'a> ScalarCstr<'a> {
+    pub fn as_ptr(&self) -> *const c_char {
+        let r = match self {
+            ScalarCstr::Lua(b) => b.as_ref(), // derefs BorrowedBytes to &[u8]
+            ScalarCstr::Vec(v) => v.as_slice(),
+            ScalarCstr::Arr(a) => a,
+        };
+        debug_assert!(
+            !r.is_empty() && r.last() == Some(&0),
+            "ScalarCstr slice must be non-empty and null-terminated, found: {:?}",
+            r
+        );
+        r.as_ptr().cast()
+    }
+}
+
 /// Convert a scalar Lua value to the bytes bash should store.
 ///
 /// boolean -> "true"/"false"; number -> decimal text (integral floats print
 /// without a fraction, like Lua's tostring); string -> raw bytes. Everything
 /// else is a type error, per the API contract.
-fn scalar_to_bytes(v: &Value) -> Result<Vec<u8>, mlua::Error> {
+fn scalar_to_bytes<'a>(v: &'a Value) -> Result<ScalarCstr<'a>, mlua::Error> {
     match v {
-        Value::Boolean(b) => Ok(if *b {
-            b"true".to_vec()
-        } else {
-            b"false".to_vec()
-        }),
-        Value::Integer(i) => Ok(i.to_string().into_bytes()),
-        Value::Number(n) => {
-            if n.fract() == 0.0 && n.is_finite() && n.abs() < 1e15 {
-                Ok(format!("{}", *n as i64).into_bytes())
-            } else {
-                Ok(format!("{n}").into_bytes())
-            }
-        }
-        Value::String(s) => Ok(s.as_bytes().to_vec()),
+        Value::Boolean(true) => Ok(ScalarCstr::Arr(b"true\0")),
+        Value::Boolean(false) => Ok(ScalarCstr::Arr(b"false\0")),
+        Value::Integer(i) => Ok(ScalarCstr::Vec({
+            let mut v = i.to_string().into_bytes();
+            v.push(0);
+            v
+        })),
+        Value::Number(n) => Ok(ScalarCstr::Vec(format!("{}\0", *n).into_bytes())),
+        Value::String(s) => Ok(ScalarCstr::Lua(s.as_bytes_with_nul())),
         other => Err(mlua::Error::RuntimeError(format!(
             "cannot convert Lua {} to a bash value",
-            other.type_name()
-        ))),
-    }
-}
-
-/// Read a Lua table key as a bash array index (integers only).
-fn table_key_to_index(k: &Value) -> Result<i64, mlua::Error> {
-    match k {
-        Value::Integer(i) => Ok(*i),
-        Value::Number(n) if n.fract() == 0.0 && n.is_finite() => Ok(*n as i64),
-        other => Err(mlua::Error::RuntimeError(format!(
-            "indexed array keys must be integers, got {}",
             other.type_name()
         ))),
     }
@@ -193,9 +197,7 @@ unsafe fn set_array_from_table(
     for pair in table.pairs::<Value, Value>() {
         let (k, v) = pair?;
         let idx = table_key_to_index(&k)? - base;
-        let mut bytes = scalar_to_bytes(&v)?;
-        bytes.push(0);
-        array_insert(array, idx, bytes.as_ptr().cast());
+        array_insert(array, idx, scalar_to_bytes(&v)?.as_ptr());
     }
     Ok(Value::Boolean(true))
 }
@@ -233,11 +235,11 @@ unsafe fn set_assoc_from_table(
     assoc_flush(hash);
     for pair in table.pairs::<Value, Value>() {
         let (k, v) = pair?;
-        let mut key = scalar_to_bytes(&k)?;
-        key.push(0);
-        let mut val = scalar_to_bytes(&v)?;
-        val.push(0);
-        l_assoc_insert(hash, key.as_ptr().cast(), val.as_ptr().cast());
+        l_assoc_insert(
+            hash,
+            scalar_to_bytes(&k)?.as_ptr(),
+            scalar_to_bytes(&v)?.as_ptr(),
+        );
     }
     Ok(Value::Boolean(true))
 }
@@ -269,11 +271,11 @@ fn get_bash_from_lua(
                     let mut curr = l_element_forw(head);
                     while curr != head {
                         let val = l_element_value(curr);
-                        let s = if val.is_null() {
-                            lua.create_string("")?
+                        let s = lua.create_string(if val.is_null() {
+                            b""
                         } else {
-                            lua.create_string(CStr::from_ptr(val).to_bytes())?
-                        };
+                            CStr::from_ptr(val).to_bytes()
+                        })?;
                         table.set(l_element_index(curr) + base, s)?;
                         curr = l_element_forw(curr);
                     }
@@ -289,13 +291,13 @@ fn get_bash_from_lua(
                     // The slice borrows the C string in place and excludes
                     // its NUL, which is still present just past the end —
                     // so the pointer is a valid C string for lookup.
-                    let val = assoc_reference(hash, key.as_ptr().cast());
+                    let val = assoc_reference(hash, from_after_null_terminated(key));
                     let k = lua.create_string(key)?;
-                    let v = if val.is_null() {
-                        lua.create_string("")?
+                    let v = lua.create_string(if val.is_null() {
+                        b""
                     } else {
-                        lua.create_string(CStr::from_ptr(val).to_bytes())?
-                    };
+                        CStr::from_ptr(val).to_bytes()
+                    })?;
                     table.set(k, v)?;
                 }
             }
@@ -332,7 +334,7 @@ fn set_bash_from_lua_in(
                 let is_assoc = if !var.is_null() && l_assoc_p(var) != 0 {
                     true
                 } else {
-                    table_has_string_keys(&table)?
+                    table_has_non_integer_keys(&table)?
                 };
                 if is_assoc {
                     set_assoc_from_table(name, var, &table)
@@ -341,9 +343,7 @@ fn set_bash_from_lua_in(
                 }
             }
             other => {
-                let mut bytes = scalar_to_bytes(&other)?;
-                bytes.push(0);
-                let result = bind_variable(name, bytes.as_ptr().cast(), 0);
+                let result = bind_variable(name, scalar_to_bytes(&other)?.as_ptr(), 0);
                 Ok(Value::Boolean(!result.is_null()))
             }
         }
@@ -351,16 +351,30 @@ fn set_bash_from_lua_in(
 }
 
 /// Check if a Lua table has any string keys (indicating it should be an associative array)
-fn table_has_string_keys(table: &mlua::Table) -> mlua::Result<bool> {
+fn table_has_non_integer_keys(table: &mlua::Table) -> mlua::Result<bool> {
     for pair in table.pairs::<Value, Value>() {
         let (k, _) = pair?;
         match k {
-            Value::String(_) => return Ok(true),
-            _ => {}
+            Value::Integer(_) => continue,
+            Value::Number(n) if n.fract() == 0.0 => continue, // integral float like 1.0
+            _ => return Ok(true),
         }
     }
     Ok(false)
 }
+
+/// Read a Lua table key as a bash array index (integers only).
+fn table_key_to_index(k: &Value) -> Result<i64, mlua::Error> {
+    match k {
+        Value::Integer(i) => Ok(*i),
+        Value::Number(n) if n.fract() == 0.0 => Ok(*n as i64),
+        other => Err(mlua::Error::RuntimeError(format!(
+            "indexed array keys must be integers, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
 
 /// Register bash API functions with Lua
 fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {

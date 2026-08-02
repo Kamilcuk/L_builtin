@@ -132,7 +132,7 @@ pub unsafe extern "C" fn capture_subcommand(list: *mut WORD_LIST) -> c_int {
 pub unsafe extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
     let mut list = unsafe { WordListView::from_raw(list) }.into_iter();
     let mut opts = getargs::Options::new(&mut list);
-    while let Some(opt) = return_on_err!("L_builtin", opts.next_opt(), EX_USAGE) {
+    if let Some(opt) = return_on_err!("L_builtin", opts.next_opt(), EX_USAGE) {
         match opt {
             Short(b'h') | Long(b"help") => {
                 unsafe { l_builtin_print_help() };
