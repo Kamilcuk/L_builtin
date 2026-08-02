@@ -6,7 +6,7 @@ use std::io::{self, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::raw::{c_char, c_int};
 
-use memmap2::Mmap;
+use memmap2::{Mmap, MmapMut};
 
 use crate::bash_api::{bind_variable, find_variable, l_readonly_p};
 use crate::beprintln;
@@ -129,9 +129,37 @@ impl Memfd {
     }
 }
 
+pub fn trim_trailing_newlines_in_zero_terminated_array_place(bytes: &mut [u8]) {
+    debug_assert!(
+        !bytes.is_empty() && bytes.last() == Some(&0),
+        "array must be non-empty and null-terminated, found: {:?}",
+        bytes
+    );
+    let orig_len = bytes.len() - 1;
+    let mut i = orig_len;
+    while i > 0 {
+        if bytes[i - 1] == b'\n' {
+            i -= 1;
+            if i > 0 && bytes[i - 1] == b'\r' {
+                i -= 1;
+            }
+        } else {
+            break;
+        }
+    }
+    if i < orig_len {
+        bytes[i] = b'\0';
+    }
+}
+
 ////////////////////////////////////
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn capture_into_variable(ename: &str, var: *const c_char, f: impl FnOnce() -> c_int) -> c_int {
+pub fn capture_into_variable(
+    ename: &str,
+    var: *const c_char,
+    trimnewlines: bool,
+    f: impl FnOnce() -> c_int,
+) -> c_int {
     let mut memfd = return_on_err2!(ename, "cannot capture stdout", Memfd::new(), 1);
     let result = {
         let _guard = return_on_err2!(
@@ -142,9 +170,17 @@ pub fn capture_into_variable(ename: &str, var: *const c_char, f: impl FnOnce() -
         );
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
     };
-    return_on_err2!(ename, "couldn't write to memfd", memfd.file.write(b"\0"), 1);
     let ret = return_on_err2!(ename, "captured command panicked", result, 1);
-    let mmap = return_on_err2!(ename, "couldn't mmap", unsafe { Mmap::map(&memfd.file) }, 1);
+    return_on_err2!(ename, "couldn't write to memfd", memfd.file.write(b"\0"), 1);
+    let mut mmap = return_on_err2!(
+        ename,
+        "couldn't mmap",
+        unsafe { MmapMut::map_mut(&memfd.file) },
+        1
+    );
+    if trimnewlines {
+        trim_trailing_newlines_in_zero_terminated_array_place(&mut mmap)
+    }
     let res = unsafe { bind_shell_variable(var, mmap.as_ptr().cast()) };
     return_on_err!(ename, res, 1);
     ret
@@ -221,8 +257,6 @@ pub fn getargs_unexpected(ENAME: &(impl BDisplay + ?Sized), arg: getargs::Opt<&[
 }
 
 ////////////////////////////////////////////
-
-
 
 pub struct CByteStr(Vec<u8>);
 

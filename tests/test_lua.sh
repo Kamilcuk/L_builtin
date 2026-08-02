@@ -38,8 +38,8 @@ _L_test_lua_missing_script() {
 
 _L_test_lua_help_as_script_arg() {
     local out
-    out=$(L_builtin lua "print(arg[1])" -- --help)
-    L_unittest_eq "$out" "--help"
+    out=$(L_builtin lua "print(arg[1])" --help)
+    L_unittest_eq "$out" '--help'
 }
 
 _L_test_lua_many_args() {

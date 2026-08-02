@@ -122,7 +122,7 @@ pub unsafe extern "C" fn capture_subcommand(list: *mut WORD_LIST) -> c_int {
     // We need the var pointer from the first element. Since we already advanced
     // the iterator, we need to get it from the original list.
     // Actually, let's use find_variable with the name directly.
-    capture_into_variable("L_builtin capture", var_ptr, || unsafe {
+    capture_into_variable("L_builtin capture", var_ptr, false, || unsafe {
         l_execute_word_list(args.head)
     })
 }

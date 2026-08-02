@@ -147,7 +147,7 @@ pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
             // var is a slice from bash WORD_LIST; it comes from a NUL-terminated C string.
             // We can use it directly by treating it as a C string (the NUL is just past the slice).
             // Since we need a *const c_char, cast the slice pointer.
-            capture_into_variable(ENAME, from_after_null_terminated(var), || uumain(rest))
+            capture_into_variable(ENAME, from_after_null_terminated(var), false, || uumain(rest))
         }
     }
 }

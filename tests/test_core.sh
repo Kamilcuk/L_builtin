@@ -7,7 +7,7 @@ _L_test_core_dirname() {
 _L_test_core_capture_var() {
     local myvar
     L_builtin core -v myvar dirname /a/b/c
-    L_unittest_eq "$myvar" "/a/b"
+    L_unittest_eq "$myvar" $'/a/b\n'
 }
 
 _L_test_core_capture_var_multiline() {
@@ -15,7 +15,7 @@ _L_test_core_capture_var_multiline() {
     printf -v expected 'Cargo.toml'
     ( cd "${_L_TEST_ROOT:-.}" || exit
       L_builtin core -v out ls Cargo.toml
-      L_unittest_eq "$out" "$expected"
+      L_unittest_eq "$out" $'Cargo.toml\n'
     )
 }
 
@@ -37,14 +37,14 @@ _L_test_core_capture_exit_code() {
 _L_test_core_capture_empty_output() {
     local myvar=preexisting
     L_builtin core -v myvar dirname ""
-    L_unittest_eq "$myvar" "."
+    L_unittest_eq "$myvar" $'.\n'
 }
 
 _L_test_core_capture_overwrite() {
     local myvar
     L_builtin core -v myvar dirname /a/b
     L_builtin core -v myvar dirname /x/y
-    L_unittest_eq "$myvar" "/x"
+    L_unittest_eq "$myvar" $'/x\n'
 }
 
 _L_test_core_unknown_subcommand() {
@@ -67,13 +67,13 @@ _L_test_core_capture_readonly_var() {
 _L_test_capture_subcommand() {
     local myvar
     L_builtin capture myvar L_builtin core dirname /a/b/c
-    L_unittest_eq "$myvar" "/a/b"
+    L_unittest_eq "$myvar" $'/a/b\n'
 }
 
 _L_test_capture_subcommand_lua() {
     local myvar
     L_builtin capture myvar L_builtin lua "print('from lua')"
-    L_unittest_eq "$myvar" "from lua"
+    L_unittest_eq "$myvar" $'from lua\n'
 }
 
 _L_test_capture_missing_var() {
@@ -98,7 +98,7 @@ _L_test_capture_no_stdout_leak() {
 _L_test_capture_builtin_echo() {
     local myvar
     L_builtin capture myvar echo hello
-    L_unittest_eq "$myvar" "hello"
+    L_unittest_eq "$myvar" $'hello\n'
 }
 
 _L_test_capture_builtin_printf() {
@@ -110,7 +110,7 @@ _L_test_capture_builtin_printf() {
 _L_test_capture_builtin_pwd() {
     local myvar
     L_builtin capture myvar pwd
-    L_unittest_eq "$myvar" "$PWD"
+    L_unittest_eq "$myvar" "$PWD"$'\n'
 }
 
 _L_test_capture_builtin_exit_code() {
@@ -140,7 +140,7 @@ _L_test_capture_function() {
     _L_capture_testfunc() { echo "func output"; }
     local myvar
     L_builtin capture myvar _L_capture_testfunc
-    L_unittest_eq "$myvar" "func output"
+    L_unittest_eq "$myvar" $'func output\n'
     unset -f _L_capture_testfunc
 }
 
@@ -148,7 +148,7 @@ _L_test_capture_function_args() {
     _L_capture_testargs() { echo "n=$# args=$*"; }
     local myvar
     L_builtin capture myvar _L_capture_testargs a b c
-    L_unittest_eq "$myvar" "n=3 args=a b c"
+    L_unittest_eq "$myvar" $'n=3 args=a b c\n'
     unset -f _L_capture_testargs
 }
 
@@ -157,7 +157,7 @@ _L_test_capture_function_exit_code() {
     local myvar= ret=0
     L_builtin capture myvar _L_capture_testret || ret=$?
     L_unittest_eq "$ret" 7
-    L_unittest_eq "$myvar" "out"
+    L_unittest_eq "$myvar" $'out\n'
     unset -f _L_capture_testret
 }
 
@@ -166,7 +166,7 @@ _L_test_capture_function_sets_variable() {
     _L_capture_setter() { _L_capture_side=set_by_func; echo done; }
     local myvar _L_capture_side=
     L_builtin capture myvar _L_capture_setter
-    L_unittest_eq "$myvar" "done"
+    L_unittest_eq "$myvar" $'done\n'
     L_unittest_eq "$_L_capture_side" "set_by_func"
     unset -f _L_capture_setter
 }
@@ -176,7 +176,7 @@ _L_test_capture_function_sets_variable() {
 _L_test_capture_external_command() {
     local myvar
     L_builtin capture myvar /bin/echo external
-    L_unittest_eq "$myvar" "external"
+    L_unittest_eq "$myvar" $'external\n'
 }
 
 _L_test_capture_external_path_lookup() {
@@ -202,25 +202,25 @@ _L_test_capture_command_not_found() {
 _L_test_capture_preserves_whitespace_arg() {
     local myvar
     L_builtin capture myvar echo "a  b   c"
-    L_unittest_eq "$myvar" "a  b   c"
+    L_unittest_eq "$myvar" $'a  b   c\n'
 }
 
 _L_test_capture_no_glob_expansion() {
     local myvar
     L_builtin capture myvar echo '*'
-    L_unittest_eq "$myvar" "*"
+    L_unittest_eq "$myvar" $'*\n'
 }
 
 _L_test_capture_no_reexpansion() {
     local myvar
     L_builtin capture myvar echo '$HOME'
-    L_unittest_eq "$myvar" '$HOME'
+    L_unittest_eq "$myvar" $'$HOME\n'
 }
 
 _L_test_capture_arg_with_single_quote() {
     local myvar
     L_builtin capture myvar echo "it's"
-    L_unittest_eq "$myvar" "it's"
+    L_unittest_eq "$myvar" $'it\'s\n'
 }
 
 _L_test_capture_empty_arg() {
@@ -234,15 +234,13 @@ _L_test_capture_empty_arg() {
 _L_test_capture_multiline_output() {
     local myvar
     L_builtin capture myvar printf 'l1\nl2\nl3\n'
-    L_unittest_eq "$myvar" "l1
-l2
-l3"
+    L_unittest_eq "$myvar" $'l1\nl2\nl3\n'
 }
 
 _L_test_capture_strips_trailing_newlines() {
     local myvar
     L_builtin capture myvar printf 'x\n\n\n'
-    L_unittest_eq "$myvar" "x"
+    L_unittest_eq "$myvar" $'x\n\n\n'
 }
 
 _L_test_capture_empty_output() {
@@ -257,7 +255,7 @@ _L_test_capture_stderr_not_captured() {
     local myvar= errfile
     errfile=$(mktemp)
     L_builtin capture myvar sh -c 'echo out; echo err >&2' 2>"$errfile"
-    L_unittest_eq "$myvar" "out"
+    L_unittest_eq "$myvar" $'out\n'
     L_unittest_eq "$(<"$errfile")" "err"
     rm -f "$errfile"
 }
@@ -266,7 +264,7 @@ _L_test_capture_overwrite() {
     local myvar
     L_builtin capture myvar echo first
     L_builtin capture myvar echo second
-    L_unittest_eq "$myvar" "second"
+    L_unittest_eq "$myvar" $'second\n'
 }
 
 _L_test_capture_readonly_var() {
