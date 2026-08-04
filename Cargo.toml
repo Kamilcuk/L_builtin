@@ -15,6 +15,9 @@ test = false
 # Enabled by CMake when ppoll(2) is available, so the dispatch table can
 # include the ppoll subcommand in sync with the C build.
 ppoll = []
+# Enabled by CMake when bash version < 4.3 (40300), to disable bash.call
+# which uses l_execute_command_string on older bash.
+bash_lt_4_3 = []
 
 [dependencies]
 thiserror = "1.0"

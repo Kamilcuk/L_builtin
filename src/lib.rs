@@ -7,13 +7,13 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-pub mod bash_alloc;
-pub mod bash_api;
-pub mod bprint_bytes;
-pub mod cmd_core;
-pub mod cmd_lua;
-pub mod dispatch;
-pub mod shared;
+pub(crate) mod bash_alloc;
+pub(crate) mod bash_api;
+pub(crate) mod bprint_bytes;
+pub(crate) mod cmd_core;
+pub(crate) mod cmd_lua;
+pub(crate) mod dispatch;
+pub(crate) mod shared;
 
 /// Route all Rust allocations through bash's allocator, so the whole process
 /// shares one heap regardless of how bash was configured. See `bash_alloc`.

@@ -7,7 +7,28 @@ endif()
 
 project(L_builtin C)
 
-add_compile_options(-std=gnu99)
+###############################################################################
+
+# Bash source path (for internal headers like stdc.h, flags.h, etc.)
+set(BASH_SOURCE "" CACHE PATH "Path to compiled Bash source tree")
+if(NOT BASH_SOURCE)
+    message(FATAL_ERROR "BASH_SOURCE must be set to the path of bash source code")
+endif()
+if(NOT IS_DIRECTORY "${BASH_SOURCE}")
+    message(FATAL_ERROR "BASH_SOURCE is not a directory: ${BASH_SOURCE}")
+endif()
+
+# Determine bash version from BASH_SOURCE/version.h
+file(READ "${BASH_SOURCE}/version.h" VERSION_H_CONTENT)
+string(REGEX REPLACE ".*version ([0-9]+)[.]([0-9]+)[.]([0-9]+).*" "\\1" BASH_VERSION "${VERSION_H_CONTENT}")
+math(EXPR L_BASH_VERSION "(${CMAKE_MATCH_1} * 10000) + (${CMAKE_MATCH_2} * 100) + ${CMAKE_MATCH_3}")
+
+if(L_BASH_VERSION LESS 10000 OR L_BASH_VERSION GREATER 100000)
+    message(FATAL_ERROR "Invalid bash version: ${L_BASH_VERSION} (expected 10000-100000, e.g., 501000 for 5.1)")
+endif()
+message(STATUS "Determined Bash version: ${L_BASH_VERSION}, using headers: ${BASH_SOURCE}")
+
+###############################################################################
 
 # Corrosion FetchContent
 include(FetchContent)
@@ -31,6 +52,13 @@ else()
     set(L_BUILTIN_RS_FEATURES "")
 endif()
 
+# Enable bash_lt_4_3 feature when bash version < 4.3 (40300)
+# This disables bash.call which uses l_execute_command_string on older bash
+if(L_BASH_VERSION LESS 40300)
+    message(STATUS "Bash version < 4.3, enabling bash_lt_4_3 feature (disables bash.call)")
+    list(APPEND L_BUILTIN_RS_FEATURES bash_lt_4_3)
+endif()
+
 # Define the Rust crate for Corrosion
 corrosion_import_crate(
     MANIFEST_PATH ${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml
@@ -38,48 +66,9 @@ corrosion_import_crate(
     FEATURES ${L_BUILTIN_RS_FEATURES}
 )
 
-set(BASH_INC "/usr/include/bash" CACHE PATH "Path to bash headers")
+###############################################################################
 
-if(EXISTS "${BASH_INC}/version.h")
-    file(READ "${BASH_INC}/version.h" VERSION_H_CONTENT)
-    string(REGEX MATCH "#define DISTVERSION \"([0-9]+\\.[0-9]+)\"" _ "${VERSION_H_CONTENT}")
-    set(BASH_VER "${CMAKE_MATCH_1}")
-endif()
-
-if(NOT BASH_VER)
-    execute_process(
-        COMMAND bash -c "echo -n \$BASH_VERSION"
-        OUTPUT_VARIABLE RAW_BASH_VER
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    string(REGEX MATCH "^([0-9]+\\.[0-9]+)" _ "${RAW_BASH_VER}")
-    set(BASH_VER "${CMAKE_MATCH_1}")
-endif()
-
-message(STATUS "Determined Bash version: ${BASH_VER}")
-
-string(REGEX MATCH "^([0-9]+)" _ "${BASH_VER}")
-set(BASH_MAJOR_VERSION "${CMAKE_MATCH_1}")
-add_definitions(-DBASH_MAJOR_VERSION=${BASH_MAJOR_VERSION})
-
-if(NOT BASH_VER STREQUAL "3.2" AND NOT BASH_VER STREQUAL "5.2" AND NOT BASH_VER STREQUAL "5.3")
-    message(WARNING "
-#####################################################################
-# WARNING: Bash version ${BASH_VER} is UNTESTED!
-# This project is officially tested and optimized only for:
-# - Bash 3.2
-# - Bash 5.3
-# Use at your own risk.
-#####################################################################
-")
-endif()
-
-set(BASH_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../tmp/bash" CACHE PATH "Path to bash source")
-
-message(STATUS "Using bash includes from: ${BASH_INC}")
-message(STATUS "Using bash fallback source from: ${BASH_SRC}")
-
-set(C_SOURCES
+add_library(L_builtin MODULE
     src/L_builtin.c
     src/lseek.c
     src/poll.c
@@ -88,34 +77,20 @@ set(C_SOURCES
     src/net.c
     src/bash_api.c
 )
-
-set(INC_DIRS
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${BASH_INC}
-    ${BASH_INC}/include
-    ${BASH_INC}/builtins
-    ${BASH_SRC}
-    ${BASH_SRC}/include
-    ${BASH_SRC}/builtins
-)
-
-set(LIBS
-    pthread
-    dl
-    m
-    rt
-)
-
-add_library(L_builtin MODULE ${C_SOURCES})
 set_target_properties(L_builtin PROPERTIES
     PREFIX ""
     SUFFIX ".so"
     OUTPUT_NAME "L_builtin"
 )
-target_compile_definitions(L_builtin PRIVATE HAVE_CONFIG_H SHELL)
-target_include_directories(L_builtin PRIVATE ${INC_DIRS})
-target_link_libraries(L_builtin PRIVATE ${LIBS} ${L_BUILTIN_RS_TARGETS})
+target_compile_definitions(L_builtin PRIVATE HAVE_CONFIG_H SHELL L_BASH_VERSION=${L_BASH_VERSION})
+target_include_directories(L_builtin PRIVATE
+    ${BASH_SOURCE}
+    ${BASH_SOURCE}/include
+    ${BASH_SOURCE}/builtins
+)
+target_link_libraries(L_builtin PRIVATE pthread dl m rt ${L_BUILTIN_RS_TARGETS})
+set_target_properties(L_builtin PROPERTIES C_STANDARD 99 C_EXTENSIONS ON)
+add_dependencies(L_builtin ${L_BUILTIN_RS_TARGETS})
 
 # Export only L_builtin_struct (the symbol bash dlsym()s); hide everything
 # else so no symbol in this module can collide/interpose with bash's
@@ -124,7 +99,7 @@ set(VERSION_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/src/L_builtin.map)
 target_link_options(L_builtin PRIVATE -Wl,--version-script=${VERSION_SCRIPT})
 set_target_properties(L_builtin PROPERTIES LINK_DEPENDS ${VERSION_SCRIPT})
 
-add_dependencies(L_builtin ${L_BUILTIN_RS_TARGETS})
+###############################################################################
 
 if(L_DEV)
     if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
@@ -136,5 +111,11 @@ if(L_DEV)
             ${CMAKE_CURRENT_BINARY_DIR}/compile_commands.json
             ${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json
         COMMENT "Creating symlink to compile_commands.json"
+    )
+    add_custom_command(TARGET L_builtin POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+            $<TARGET_FILE:L_builtin>
+            ${CMAKE_SOURCE_DIR}/L_builtin.so
+        COMMENT "Creating symlink to L_builtin.so"
     )
 endif()

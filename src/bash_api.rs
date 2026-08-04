@@ -1,55 +1,59 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
-use std::ffi::{CStr, OsStr};
+use std::ffi::{c_void, CStr, OsStr};
 use std::iter::Map;
 use std::marker::PhantomData;
-pub use std::ops::Deref;
-pub use std::os::raw::{c_char, c_int, c_void};
+pub(crate) use std::ops::Deref;
+pub(crate) use std::os::raw::{c_char, c_int};
 use std::os::unix::ffi::OsStrExt;
+use std::sync::OnceLock;
 
 use crate::{beprintln, bprintln};
 
 // Bash exit-code macros (from shell.h)
-pub const EX_USAGE: c_int = 258; /* syntax error in usage */
-pub const EX_NOTFOUND: c_int = 127; /* command not found */
-pub const EXECUTION_SUCCESS: c_int = 0;
-pub const EXECUTION_FAILURE: c_int = 1;
+pub(crate) const EX_USAGE: c_int = 258; /* syntax error in usage */
+pub(crate) const EX_NOTFOUND: c_int = 127; /* command not found */
+pub(crate) const EXECUTION_SUCCESS: c_int = 0;
+pub(crate) const EXECUTION_FAILURE: c_int = 1;
 
 // Opaque type representing Bash's internal SHELL_VAR structure
 #[repr(C)]
-pub struct SHELL_VAR {
+pub(crate) struct SHELL_VAR {
     _private: [u8; 0],
 }
 
 // Opaque types for Bash internal structures
 #[repr(C)]
-pub struct ARRAY {
+pub(crate) struct ARRAY {
     _private: [u8; 0],
 }
 
 #[repr(C)]
-pub struct ARRAY_ELEMENT {
+pub(crate) struct ARRAY_ELEMENT {
     _private: [u8; 0],
 }
 
 #[repr(C)]
-pub struct HASH_TABLE {
+pub(crate) struct HASH_TABLE {
     _private: [u8; 0],
 }
 
 #[repr(C)]
-pub struct WORD_DESC {
+pub(crate) struct WORD_DESC {
     _private: [u8; 0],
 }
 
 #[repr(C)]
-pub struct WORD_LIST {
+pub(crate) struct WORD_LIST {
     _private: [u8; 0],
 }
 
 extern "C" {
     pub static mut this_command_name: *mut c_char;
+    pub fn l_xmalloc(size: usize) -> *mut c_void;
+    pub fn l_xrealloc(ptr: *mut c_void, size: usize) -> *mut c_void;
+    pub fn l_xfree(ptr: *mut c_void);
     pub fn find_variable(name: *const c_char) -> *mut SHELL_VAR;
     pub fn l_value_cell(var: *mut SHELL_VAR) -> *mut c_char;
     pub fn l_readonly_p(var: *mut SHELL_VAR) -> c_int;
@@ -76,7 +80,7 @@ extern "C" {
     pub fn assoc_reference(hash: *mut HASH_TABLE, key: *const c_char) -> *mut c_char;
     /// Prints bash's own error and returns -2 for readonly/non-unsettable
     /// variables; otherwise unbinds and returns unbind_variable's status.
-    pub fn check_unbind_variable(name: *const c_char) -> c_int;
+    pub fn l_check_unbind_variable(name: *const c_char) -> c_int;
     pub fn make_word(string: *const c_char) -> *mut WORD_DESC;
     pub fn make_word_list(word: *mut WORD_DESC, list: *mut WORD_LIST) -> *mut WORD_LIST;
     pub fn execute_shell_function(var: *mut SHELL_VAR, args: *mut WORD_LIST) -> c_int;
@@ -84,30 +88,24 @@ extern "C" {
     pub fn expand_string_to_string(string: *const c_char, quoted: c_int) -> *mut c_char;
     pub fn expand_string(string: *const c_char, flags: c_int) -> *mut WORD_LIST;
     pub fn l_expand_string_to_string_in_quotes(string: *const c_char) -> *mut c_char;
-
-    // Minimal C shim functions for struct field dereferencing
     pub fn l_array_head(array: *mut ARRAY) -> *mut ARRAY_ELEMENT;
     pub fn l_element_forw(element: *mut ARRAY_ELEMENT) -> *mut ARRAY_ELEMENT;
     pub fn l_element_value(element: *mut ARRAY_ELEMENT) -> *mut c_char;
     pub fn l_element_index(element: *mut ARRAY_ELEMENT) -> i64;
-    /// Insert into an associative array; key and value are both copied.
     pub fn l_assoc_insert(hash: *mut HASH_TABLE, key: *const c_char, value: *const c_char)
         -> c_int;
     pub fn l_word_list_next(list: *mut WORD_LIST) -> *mut WORD_LIST;
     pub fn l_word_list_word(list: *mut WORD_LIST) -> *mut WORD_DESC;
     pub fn l_word_desc_string(word: *mut WORD_DESC) -> *mut c_char;
-
-    /// Execute a word list as a single shell command line (words are
-    /// single-quoted before joining) and return its exit status.
-    pub fn l_execute_word_list(list: *mut WORD_LIST) -> c_int;
-    pub fn xfree(pnt: *mut c_void);
+    #[cfg(not(feature = "bash_lt_4_3"))]
+    pub fn l_execute_command_string(cmd: *const c_char) -> c_int;
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
 /// RAII wrapper for C strings that need to be freed with `free()`
 #[repr(transparent)]
-pub struct CStringOwned(pub *mut c_char);
+pub(crate) struct CStringOwned(pub *mut c_char);
 
 impl CStringOwned {
     #[inline]
@@ -123,7 +121,7 @@ impl CStringOwned {
 impl Drop for CStringOwned {
     #[inline]
     fn drop(&mut self) {
-        unsafe { xfree(self.0 as *mut c_void) };
+        unsafe { l_xfree(self.0 as *mut c_void) };
     }
 }
 
@@ -135,12 +133,12 @@ impl Drop for CStringOwned {
 ///
 /// Ties the lifetime `'a` to the caller's stack frame or parent handle.
 #[derive(Copy, Clone)]
-pub struct WordListView<'a> {
+pub(crate) struct WordListView<'a> {
     pub head: *mut WORD_LIST,
     _marker: PhantomData<&'a WORD_LIST>,
 }
 
-pub type WordListIterOsStr<'a> = Map<WordListIter<'a>, fn(&[u8]) -> &OsStr>;
+pub(crate) type WordListIterOsStr<'a> = Map<WordListIter<'a>, fn(&[u8]) -> &OsStr>;
 
 impl<'a> WordListView<'a> {
     /// Construct a view from a raw `*mut WORD_LIST`.
@@ -183,7 +181,7 @@ impl<'a> IntoIterator for WordListView<'a> {
 }
 
 #[derive(Clone)]
-pub struct WordListIter<'a> {
+pub(crate) struct WordListIter<'a> {
     pub head: *mut WORD_LIST,
     _marker: PhantomData<&'a WORD_LIST>,
 }
@@ -254,7 +252,7 @@ impl<'a> Iterator for WordListIter<'a> {
 
 /// RAII wrapper for a `WORD_LIST` freed via `dispose_words`.
 #[repr(transparent)]
-pub struct WordListOwned(pub *mut WORD_LIST);
+pub(crate) struct WordListOwned(pub *mut WORD_LIST);
 
 impl WordListOwned {
     /// Borrow this owned list as a `WordListView<'a>`.

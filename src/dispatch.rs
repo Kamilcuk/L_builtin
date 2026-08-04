@@ -11,14 +11,18 @@
 
 use getargs::Opt::{Long, Short};
 
-use crate::bash_api::{
-    c_int, l_execute_word_list, this_command_name, WordListView, EX_USAGE, WORD_LIST,
-};
+use crate::bash_api::{c_int, this_command_name, WordListView, EX_USAGE, WORD_LIST};
 use crate::bprintln;
+#[cfg(not(feature = "bash_lt_4_3"))]
 use crate::shared::{capture_into_variable, getargs_unexpected};
+#[cfg(feature = "bash_lt_4_3")]
+use crate::shared::getargs_unexpected;
 use crate::{beprintln, return_on_err};
 use std::ffi::c_char;
 use std::io::Write;
+
+#[cfg(not(feature = "bash_lt_4_3"))]
+use crate::bash_api::l_execute_command_string;
 
 // C subcommand handlers (compiled into the same .so)
 extern "C" {
@@ -63,6 +67,7 @@ const SUBCOMMAND_TABLE: &[(&[u8], SubcommandFn)] = &crate::shared::sort_by_byte_
     (b"sleep", sleep_subcommand),
     (b"core", crate::cmd_core::l_core_subcommand),
     (b"lua", crate::cmd_lua::l_lua_subcommand),
+    #[cfg(not(feature = "bash_lt_4_3"))]
     (b"capture", capture_subcommand),
 ]);
 unsafe fn l_builtin_print_help() {
@@ -93,6 +98,27 @@ unsafe fn l_builtin_unknown_subcommand(name: &[u8]) {
     }
 }
 
+#[cfg(not(feature = "bash_lt_4_3"))]
+fn build_eval_command<'a>(args: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    for (i, word) in args.enumerate() {
+        if i > 0 {
+            buf.push(b' ');
+        }
+        buf.push(b'\'');
+        for &b in word {
+            if b == b'\'' {
+                buf.extend_from_slice(b"'\\''");
+            } else {
+                buf.push(b);
+            }
+        }
+        buf.push(b'\'');
+    }
+    buf.push(b'\0');
+    buf
+}
+
 /// `capture VAR <command> [args...]`: run the command with stdout captured
 /// into VAR (memfd redirection).
 ///
@@ -104,6 +130,7 @@ unsafe fn l_builtin_unknown_subcommand(name: &[u8]) {
 /// Lives in the dispatch table with the same C ABI as every other handler;
 /// `list` starts at VAR (the dispatcher already consumed the word `capture`).
 /// # Safety
+#[cfg(not(feature = "bash_lt_4_3"))]
 #[no_mangle]
 pub unsafe extern "C" fn capture_subcommand(list: *mut WORD_LIST) -> c_int {
     let mut args = WordListView::from_raw(list).into_iter();
@@ -119,11 +146,9 @@ pub unsafe extern "C" fn capture_subcommand(list: *mut WORD_LIST) -> c_int {
         beprintln!(b"L_builtin capture: missing command");
         return EX_USAGE;
     }
-    // We need the var pointer from the first element. Since we already advanced
-    // the iterator, we need to get it from the original list.
-    // Actually, let's use find_variable with the name directly.
+    let cmd = build_eval_command(args);
     capture_into_variable("L_builtin capture", var_ptr, false, || unsafe {
-        l_execute_word_list(args.head)
+        l_execute_command_string(cmd.as_ptr().cast())
     })
 }
 

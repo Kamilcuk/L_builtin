@@ -6,7 +6,7 @@ use std::io::{self, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::raw::{c_char, c_int};
 
-use memmap2::{Mmap, MmapMut};
+use memmap2::MmapMut;
 
 use crate::bash_api::{bind_variable, find_variable, l_readonly_p};
 use crate::beprintln;
@@ -21,7 +21,7 @@ use crate::bprint_bytes::BDisplay;
 /// # Safety
 /// `name` and `value` must be valid pointers to NUL-terminated C strings.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub unsafe fn bind_shell_variable(name: *const c_char, value: *const c_char) -> Result<(), String> {
+pub(crate) unsafe fn bind_shell_variable(name: *const c_char, value: *const c_char) -> Result<(), String> {
     unsafe {
         debug_assert!(!name.is_null(), "name is null");
         debug_assert!(!value.is_null(), "value is null");
@@ -83,7 +83,7 @@ struct RedirectStdout {
 impl RedirectStdout {
     pub fn new(target: &File) -> io::Result<Self> {
         flush_stdout_buffers();
-        let saved_fd = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 10) };
+        let saved_fd = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 256) };
         if saved_fd < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -108,13 +108,13 @@ impl Drop for RedirectStdout {
     }
 }
 
-pub fn flush_stdout_buffers() {
+pub(crate) fn flush_stdout_buffers() {
     let _ = io::stdout().flush();
     unsafe { libc::fflush(std::ptr::null_mut()) };
 }
 
 ////////////////////////////////////
-pub struct Memfd {
+pub(crate) struct Memfd {
     file: File,
 }
 
@@ -129,7 +129,7 @@ impl Memfd {
     }
 }
 
-pub fn trim_trailing_newlines_in_zero_terminated_array_place(bytes: &mut [u8]) {
+pub(crate) fn trim_trailing_newlines_in_zero_terminated_array_place(bytes: &mut [u8]) {
     debug_assert!(
         !bytes.is_empty() && bytes.last() == Some(&0),
         "array must be non-empty and null-terminated, found: {:?}",
@@ -154,7 +154,7 @@ pub fn trim_trailing_newlines_in_zero_terminated_array_place(bytes: &mut [u8]) {
 
 ////////////////////////////////////
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn capture_into_variable(
+pub(crate) fn capture_into_variable(
     ename: &str,
     var: *const c_char,
     trimnewlines: bool,
@@ -189,7 +189,7 @@ pub fn capture_into_variable(
 ////////////////////////////////////
 
 /// Lexicographic `a < b` for byte slices, usable in const context.
-pub const fn bytes_lt(a: &[u8], b: &[u8]) -> bool {
+pub(crate) const fn bytes_lt(a: &[u8], b: &[u8]) -> bool {
     let min = if a.len() < b.len() { a.len() } else { b.len() };
     let mut i = 0;
     while i < min {
@@ -206,7 +206,7 @@ pub const fn bytes_lt(a: &[u8], b: &[u8]) -> bool {
 /// Insertion sort; runs entirely in const evaluation, so the resulting
 /// table is stored pre-sorted in the binary and can be binary-searched at
 /// runtime.
-pub const fn sort_by_byte_key<T: Copy, const N: usize>(
+pub(crate) const fn sort_by_byte_key<T: Copy, const N: usize>(
     mut arr: [(&'static [u8], T); N],
 ) -> [(&'static [u8], T); N] {
     let mut i = 1;
@@ -243,7 +243,7 @@ impl BDisplay for getargs::Opt<&[u8]> {
     fn bwrite<W: Write>(&self, _w: &mut W) {}
 }
 
-pub fn getargs_unexpected(ENAME: &(impl BDisplay + ?Sized), arg: getargs::Opt<&[u8]>) -> c_int {
+pub(crate) fn getargs_unexpected(ENAME: &(impl BDisplay + ?Sized), arg: getargs::Opt<&[u8]>) -> c_int {
     match arg {
         getargs::Opt::Short(c) => {
             beprintln!(ENAME, b": unknown option -", c);
@@ -258,11 +258,11 @@ pub fn getargs_unexpected(ENAME: &(impl BDisplay + ?Sized), arg: getargs::Opt<&[
 
 ////////////////////////////////////////////
 
-pub struct CByteStr(Vec<u8>);
+pub(crate) struct CByteStr(Vec<u8>);
 
 impl CByteStr {
     #[inline]
-    pub fn new(bytes: &[u8]) -> Self {
+    pub(crate) fn new(bytes: &[u8]) -> Self {
         debug_assert!(
             bytes.last() != Some(&0),
             "input slice already ends with a null byte; unexpected double null-termination"
@@ -274,7 +274,7 @@ impl CByteStr {
     }
 
     #[inline]
-    pub fn as_ptr(&self) -> *const c_char {
+    pub(crate) fn as_ptr(&self) -> *const c_char {
         self.0.as_ptr().cast()
     }
 }
@@ -284,7 +284,7 @@ impl CByteStr {
 /// (as returned by `CStr::to_bytes()`), but the underlying C string is
 /// guaranteed to be NUL-terminated, so the NUL is at `bytes.as_ptr().add(bytes.len())`.
 #[inline]
-pub fn from_after_null_terminated(bytes: &[u8]) -> *const c_char {
+pub(crate) fn from_after_null_terminated(bytes: &[u8]) -> *const c_char {
     debug_assert!(
         !bytes.is_empty(),
         "input slice is empty; cannot verify null terminator"

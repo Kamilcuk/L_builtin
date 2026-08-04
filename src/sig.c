@@ -15,6 +15,9 @@
 #include "trap.h"
 #include "unwind_prot.h"
 #include "L_builtin.h"
+#include "bash_api.h"
+
+#undef free
 
 /* Missing extern declarations from Bash headers */
 extern sigset_t top_level_mask;
@@ -140,6 +143,18 @@ int sigmask_subcommand(WORD_LIST *list)
   return (EXECUTION_SUCCESS);
 }
 
+static COMMAND *L_make_bare_simple_command(void)
+{
+#ifndef L_BASH_VERSION
+#error
+#endif
+#if L_BASH_VERSION > 50300
+  return make_bare_simple_command(0); // line_number not used in our call
+#else
+  return make_bare_simple_command();
+#endif
+}
+
 int sigunmask_subcommand(WORD_LIST *list)
 {
   sigset_t set, old, unblocked;
@@ -194,9 +209,9 @@ int sigunmask_subcommand(WORD_LIST *list)
   unwind_protect_mem((char *)&top_level_mask, sizeof(sigset_t));
   top_level_mask = newmask;
 
-  sigset_t *pold = (sigset_t *)xmalloc(sizeof(sigset_t));
+  sigset_t *pold = l_xmalloc(sizeof(sigset_t));
   *pold = old;
-  add_unwind_protect(xfree, pold);
+  add_unwind_protect(l_xfree, pold);
   add_unwind_protect(restore_process_sigmask, pold);
 
   if (sigprocmask(SIG_SETMASK, &newmask, NULL) < 0) {
@@ -223,15 +238,10 @@ int sigunmask_subcommand(WORD_LIST *list)
 
   run_pending_traps();
 
-  int result;
-#if defined(BASH_MAJOR_VERSION) && BASH_MAJOR_VERSION < 5
-  COMMAND *cmd = make_bare_simple_command();
-#else
-  COMMAND *cmd = make_bare_simple_command(line_number);
-#endif
+  COMMAND *cmd = L_make_bare_simple_command();
   cmd->value.Simple->words = copy_word_list(list);
 
-  result = execute_command(cmd);
+  int result = execute_command(cmd);
 
   dispose_command(cmd);
 

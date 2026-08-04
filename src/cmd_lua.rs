@@ -1,12 +1,13 @@
 //! Lua subcommand implementation using mlua
 use crate::bash_api::{
-    expand_string, l_expand_string_to_string_in_quotes, CStringOwned, WordListOwned, WordListView,
+    expand_string, l_check_unbind_variable, l_expand_string_to_string_in_quotes, CStringOwned,
+    WordListOwned, WordListView,
 };
 use crate::beprintln;
 use crate::bprint_bytes::BDisplay;
-use crate::bprintln;
 use crate::return_on_err;
 use crate::shared::{from_after_null_terminated, getargs_unexpected, CByteStr};
+use crate::{bprintln};
 
 use std::ffi::{c_char, CStr};
 use std::io::Write;
@@ -17,16 +18,31 @@ use mlua::{Lua, Value};
 
 use crate::bash_api::{
     array_flush, array_insert, assoc_flush, assoc_keys_to_word_list, assoc_reference,
-    bind_variable, check_unbind_variable, convert_var_to_array, execute_shell_function,
-    find_function, find_variable, l_array_cell, l_array_head, l_array_p, l_assoc_cell,
-    l_assoc_insert, l_assoc_p, l_element_forw, l_element_index, l_element_value, l_invisible_p,
-    l_readonly_p, l_value_cell, make_new_array_variable, make_new_assoc_variable, make_word,
-    make_word_list, EX_USAGE, SHELL_VAR, WORD_LIST,
+    bind_variable, convert_var_to_array, find_variable,
+    l_array_cell, l_array_head, l_array_p, l_assoc_cell, l_assoc_insert, l_assoc_p, l_element_forw,
+    l_element_index, l_element_value, l_invisible_p, l_readonly_p, l_value_cell,
+    make_new_array_variable, make_new_assoc_variable, EX_USAGE,
+    SHELL_VAR, WORD_LIST,
 };
+
+#[cfg(not(feature = "bash_lt_4_3"))]
+use crate::bash_api::l_execute_command_string;
+
+impl BDisplay for mlua::BorrowedBytes<'_> {
+    fn bwrite<W: Write + ?Sized>(&self, w: &mut W) {
+        w.write_all(self).ok();
+    }
+}
+
+impl BDisplay for mlua::String {
+    fn bwrite<W: Write + ?Sized>(&self, w: &mut W) {
+        w.write_all(self.as_bytes().as_ref()).ok();
+    }
+}
 
 impl BDisplay for mlua::Error {
     fn bwrite<W: Write + ?Sized>(&self, w: &mut W) {
-        w.write_all(self.to_string().as_bytes()).unwrap();
+        w.write_all(self.to_string().as_bytes()).ok();
     }
 }
 const ENAME: &str = "L_builtin lua";
@@ -375,7 +391,6 @@ fn table_key_to_index(k: &Value) -> Result<i64, mlua::Error> {
     }
 }
 
-
 /// Register bash API functions with Lua
 fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
     let globals = lua.globals();
@@ -403,39 +418,38 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
     // error for readonly variables (bash also prints its own diagnostic).
     bash_module.set(
         "unset",
-        lua.create_function(|_, name: mlua::String| unsafe {
-            let name = name.as_bytes_with_nul();
-            match check_unbind_variable(name.as_ptr().cast()) {
+        lua.create_function(|_, sname: mlua::String| unsafe {
+            let name = sname.as_bytes_with_nul();
+            match l_check_unbind_variable(name.as_ptr().cast()) {
+                10000 => Err(mlua::Error::RuntimeError(format!(
+                    "cannot unset: readonly: {}",
+                    sname.display()
+                ))),
+                10001 => Err(mlua::Error::RuntimeError(format!(
+                    "{}: cannot unset",
+                    sname.display()
+                ))),
                 0 => Ok(Value::Boolean(true)),
-                -2 => Err(mlua::Error::RuntimeError(
-                    "cannot unset variable".to_string(),
-                )),
-                _ => Ok(Value::Boolean(false)),
+                -1 => Ok(Value::Boolean(false)),
+                err => Err(mlua::Error::RuntimeError(format!(
+                    "{}: cannot unset variable: {}",
+                    sname.display(),
+                    err
+                ))),
             }
         })?,
     )?;
-    // bash.call(func_name, ...) -> integer
+    // bash.eval(command_string) -> integer
+    //
+    // Executes the command string using bash's parser (like eval).
+    // Disabled on bash < 4.3 due to missing l_execute_command_string.
+    #[cfg(not(feature = "bash_lt_4_3"))]
     bash_module.set(
-        "call",
-        lua.create_function(|_lua, args: mlua::Variadic<mlua::String>| {
-            unsafe {
-                let Some(name) = args.first() else {
-                    return Err(mlua::Error::RuntimeError("no function name".to_string()));
-                };
-                let func = find_function(name.as_bytes_with_nul().as_ptr().cast());
-                if func.is_null() {
-                    return Err(mlua::Error::RuntimeError("function not found".to_string()));
-                }
-                // execute_shell_function consumes the list head as $0 and the
-                // rest as positional parameters; make_word_list prepends, so
-                // build the list back to front from the full argument vector.
-                let mut list = WordListOwned::default();
-                for s in args.iter().rev() {
-                    let word = make_word(s.as_bytes_with_nul().as_ptr().cast());
-                    list.0 = make_word_list(word, list.0);
-                }
-                Ok(Value::Integer(execute_shell_function(func, list.0) as i64))
-            }
+        "eval",
+        lua.create_function(|_lua, cmd: mlua::String| unsafe {
+            let cmd = cmd.as_bytes_with_nul();
+            let result = l_execute_command_string(cmd.as_ptr().cast());
+            Ok(Value::Integer(result as i64))
         })?,
     )?;
     // bash.expand(string) -> string

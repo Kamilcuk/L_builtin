@@ -1,160 +1,324 @@
-# L_lib.sh C Builtins
+# L_builtin
 
-A collection of high-performance, loadable C builtins designed to extend Bash with advanced OS-level capabilities.
+A collection of loadable C/Rust builtins designed to extend Bash with OS-level capabilities.
 
-## Overview
+These builtins are compiled into a shared library (`L_builtin.so`) which can be dynamically loaded into Bash using the `enable` command. They provide abstractions for file operations, signal masking, polling, Lua integration, networking, and core utilities via Rust/uutils.
 
-These builtins are compiled into a shared library (`L_builtin.so`) which can be dynamically loaded into Bash using the `enable` command. They provide low-overhead abstractions for file operations, signal masking, high-precision polling, Lua integration, and advanced networking.
+## Quick Reference
 
----
+```bash
+# Load once per session
+enable -f ./build/L_builtin.so L_builtin
 
-## Subcommands Reference
+# Help
+L_builtin -h
+L_builtin <subcommand> -h
 
-All subcommands are executed through the main entry point: `L_builtin <subcommand> [options] [args]`.
+# File/Process
+L_builtin lseek -v pos 3 1024 CUR
+L_builtin pipe fds
+L_builtin sleep 0.05
+
+# Signals
+L_builtin sigmask -s SIGUSR1
+L_builtin sigunmask -s SIGUSR1 cmd
+
+# Polling
+L_builtin poll -t 1000 -v ready 0:r 1:w
+L_builtin ppoll -t 1000 -v ready -u SIGINT 0:r
+
+# Networking
+L_builtin listen -p port listen_fd 0.0.0.0 0
+L_builtin accept client addr listen_fd
+L_builtin connect client_fd 1.2.3.4 80
+L_builtin send -f hex -v n fd "deadbeef"
+L_builtin recv -f hex -v data -n fd 4096
+L_builtin shutdown fd WR
+
+# Lua
+L_builtin lua -v out 'bash.setvar("X", "y"); return 42'
+
+# Core utils
+L_builtin core ls -la
+L_builtin core stat file.txt
+
+# Capture
+L_builtin capture var echo hello
+```
+
+## Quick Start
+
+### Prerequisites (Build)
+- Bash development headers (`/usr/include/bash/version.h` etc.)
+- CMake >= 3.16
+- Rust >= 1.70 (with `cargo`)
+- clang (for C compilation)
+
+### Prerequisites (Run)
+- Bash (any version with `enable -f` support)
+- `L_builtin.so` (built artifact)
+
+### Build
+```bash
+make build
+# or manually:
+cmake -S . -B build -DL_DEV=1
+cmake --build build
+```
+Creates `build/L_builtin.so`.
+
+### Load into Bash
+```bash
+# Interactive session with builtin loaded
+make sh
+
+# Or manually:
+enable -f ./build/L_builtin.so L_builtin
+```
+
+### Run Tests
+```bash
+make test
+```
+This compiles the module, runs all modular test files in `tests/`, and executes style checks, formatting validation, and static analysis.
+
+## Features
 
 ### File & Process Utilities
+| Command | Description |
+|---------|-------------|
+| `lseek` | Reposition read/write file offset with `SEEK_SET`/`SEEK_CUR`/`SEEK_END` |
+| `pipe` | Create a uni-directional data channel (stores FDs in array) |
+| `sleep` | Sub-second sleep (microsecond resolution) |
 
-#### `lseek`
-Reposition read/write file offset.
+### Signal & Event Management
+| Command | Description |
+|---------|-------------|
+| `sigmask` | Block or unblock signal delivery; print current mask |
+| `sigunmask` | Temporarily unblock signals and execute a command |
+| `poll` / `ppoll` | Wait for multiple file descriptors to become ready for I/O |
+
+### Embedded Lua (via mlua + LuaJIT)
+| Command | Description |
+|---------|-------------|
+| `lua` | Execute inline LuaJIT code within the Bash process; exposes a `bash` table for shell interaction |
+
+### Networking
+| Command | Description |
+|---------|-------------|
+| `listen` | Create a listening TCP socket (ephemeral port support) |
+| `accept` | Accept a new connection on a listening socket |
+| `connect` | Establish an outgoing TCP connection |
+| `shutdown` | Semi-close a full-duplex TCP socket (`RD`, `WR`, `RDWR`) |
+| `send` | Transmit raw or hex-encoded data over a socket |
+| `recv` | Receive up to N bytes (raw or hex-encoded; non-blocking option) |
+
+### Core Utilities (via Rust/uutils)
+| Command | Description |
+|---------|-------------|
+| `core ls` | `ls` implementation |
+| `core stat` | File status display |
+
+### Miscellaneous
+| Command | Description |
+|---------|-------------|
+| `capture` | Run a command with stdout captured into a variable |
+
+## Usage Examples
+
+### Sleep
+```bash
+L_builtin sleep 0.001  # 1 millisecond
+```
+
+### Create and Use a Pipe
+```bash
+L_builtin pipe mypipe
+echo "hello" >&${mypipe[1]}
+read -r line <&${mypipe[0]}
+echo "Received: $line"
+```
+
+### Signal Masking
+```bash
+# Block SIGUSR1
+L_builtin sigmask -s SIGUSR1
+# Run command with SIGUSR1 unblocked
+L_builtin sigunmask -s SIGUSR1 my_command
+```
+
+### Poll Multiple FDs
+```bash
+L_builtin poll -t 5000 -v ready_fds 3:r 4:w 5:p
+# ready_fds contains entries like "3:r" when fd 3 is readable
+```
+
+### TCP Networking
+```bash
+# Server
+L_builtin listen -p port_var listen_fd 127.0.0.1 0
+echo "Listening on port $port_var"
+L_builtin accept client_fd addr_var listen_fd
+L_builtin send -v sent client_fd "Hello from server"
+L_builtin shutdown client_fd WR
+
+# Client
+L_builtin connect client_fd 127.0.0.1 $port_var
+L_builtin recv -v data client_fd 1024
+echo "Received: $data"
+```
+
+### Embedded Lua
+```bash
+L_builtin lua -v result '
+  local bash = require("bash")
+  bash.setvar("MY_VAR", "from lua")
+  return "lua done"
+'
+echo "Result: $result"
+echo "MY_VAR=$MY_VAR"
+```
+
+### Core Utilities (Rust/uutils)
+```bash
+L_builtin core ls -la /tmp
+L_builtin core stat /etc/passwd
+```
+
+### Capture Command Output
+```bash
+L_builtin capture output_var echo "hello world"
+echo "Captured: $output_var"
+```
+
+## Troubleshooting
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `enable: cannot enable L_builtin: no such builtin` | Module not loaded | Run `enable -f ./build/L_builtin.so L_builtin` |
+| `L_builtin: command not found` | Builtin not enabled | Same as above |
+| `symbol lookup error: L_builtin_struct` | Bash version mismatch | Rebuild with matching Bash headers (`-DBASH_INC=...`) |
+| `ppoll: subcommand not found` | `ppoll(2)` unavailable on system | CMake auto-disables; use `poll` instead |
+| `lua: module 'bash' not found` | Rust feature not compiled | Ensure `mlua` feature enabled (default) |
+| `core: subcommand not found` | uutils crates not built | Check Cargo.toml dependencies fetched |
+
+**Debug build** (with symbols, no LTO):
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+```
+
+## Subcommand Reference
+
+All subcommands are executed through the main entry point:
+```bash
+L_builtin <subcommand> [options] [args]
+```
+
+Use `L_builtin <subcommand> -h` for per-command help.
+
+### `lseek`
 ```bash
 L_builtin lseek [-v var] fd offset [whence]
 ```
-- **Options:**
-  - `-v VAR`: Store the new offset in the shell variable `VAR`.
-- **whence:** `0` (or `SET`), `1` (or `CUR`), `2` (or `END`).
+- `-v VAR`: Store new offset in shell variable `VAR`
+- `whence`: `0`/`SET` (default), `1`/`CUR`, `2`/`END`
 
-#### `pipe`
-Create a uni-directional data channel.
+### `pipe`
 ```bash
 L_builtin pipe ARRAY
 ```
-- Creates a pipe and stores the read file descriptor in `ARRAY[0]` and the write end in `ARRAY[1]`.
+Stores read FD in `ARRAY[0]`, write FD in `ARRAY[1]`.
 
-#### `sleep`
-High-precision sub-second sleep.
+### `sleep`
 ```bash
 L_builtin sleep SECONDS
 ```
-- Accepts floating-point durations for microsecond-level precision (e.g. `L_builtin sleep 0.05`).
+Floating-point duration (microsecond precision).
 
----
-
-### Signal & Event Management
-
-#### `sigmask`
-Block or unblock signal delivery.
+### `sigmask`
 ```bash
 L_builtin sigmask [-s sigspec] [-u sigspec] [sigspec ...]
 ```
-- Without options, prints the current signal mask.
-- `-s`: Block signal.
-- `-u`: Unblock signal.
+- No args: print current mask
+- `-s`: Block signal
+- `-u`: Unblock signal
 
-#### `sigunmask`
-Temporarily unblock signals and execute a command.
+### `sigunmask`
 ```bash
 L_builtin sigunmask -s sigspec cmd [args...]
 ```
+Temporarily unblock `sigspec` and execute `cmd`.
 
-#### `poll` / `ppoll`
-Wait for multiple file descriptors to become ready for I/O.
+### `poll` / `ppoll`
 ```bash
 L_builtin poll [-t TIMEOUT] [-v ARRAY_VAR] [FD[:EVENTS] ...]
 L_builtin ppoll [-t TIMEOUT] [-v ARRAY_VAR] [-u SIGSPEC] [FD[:EVENTS] ...]
 ```
-- **Events:** `r` (read), `w` (write), `p` (priority).
-- Results are populated into `ARRAY_VAR` as `FD:REVENTS`.
+- `EVENTS`: `r` (read), `w` (write), `p` (priority)
+- `ppoll`: additionally `-u SIGSPEC` to unblock signal during wait
+- Results in `ARRAY_VAR` as `FD:REVENTS`
 
----
-
-### Embedded Lua
-
-#### `lua`
-Execute inline LuaJIT code within the Bash process.
+### `lua`
 ```bash
 L_builtin lua [-v VAR] SCRIPT [args...]
 ```
-- Exposes a global `bash` table to access shell variables, arrays, call shell functions, and perform expansions.
+- Exposes global `bash` table: `bash.getvar`, `bash.setvar`, `bash.call`, `bash.expand`, `bash.array`
+- Script args available in `arg` table
 
----
-
-### Low-Overhead Networking
-
-#### `listen`
-Create a listening TCP socket.
+### `listen`
 ```bash
 L_builtin listen [-p PORT_VAR] LISTENFD_VAR [IP] [PORT]
 ```
-- **Defaults:** `IP` defaults to `127.0.0.1`, `PORT` defaults to `0` (ephemeral port allocation).
-- **Options:**
-  - `-p PORT_VAR`: Store the actual dynamically bound port number (required if port is `0`).
+- Defaults: IP=`127.0.0.1`, PORT=`0` (ephemeral)
+- `-p PORT_VAR`: Store actual bound port (required for PORT=0)
 
-#### `accept`
-Accept a new connection on a listening socket.
+### `accept`
 ```bash
 L_builtin accept CLIENTFD_VAR ADDR_VAR LISTENFD
 ```
-- Stores the client socket descriptor in `CLIENTFD_VAR` and the client's `IP:PORT` in `ADDR_VAR`.
+Stores client FD in `CLIENTFD_VAR`, client `IP:PORT` in `ADDR_VAR`.
 
-#### `connect`
-Establish an outgoing TCP connection.
+### `connect`
 ```bash
 L_builtin connect CLIENTFD_VAR IP PORT
 ```
 
-#### `shutdown`
-Semi-close a full-duplex TCP socket.
+### `shutdown`
 ```bash
 L_builtin shutdown FD [how]
 ```
-- **how:** `RD` (0), `WR` (1), or `RDWR` (2).
+- `how`: `RD` (0), `WR` (1), `RDWR` (2) - default `RDWR`
 
-#### `send`
-Transmit raw or encoded data over a socket.
+### `send`
 ```bash
 L_builtin send [-f format] [-v SENT_VAR] FD DATA
 ```
-- **Options:**
-  - `-f raw`: Send raw characters (default).
-  - `-f hex`: Decode hexadecimal string and transmit binary safely.
-  - `-v SENT_VAR`: Store the number of bytes successfully sent.
+- `-f raw` (default): Send raw bytes
+- `-f hex`: Decode hex string, send binary
+- `-v SENT_VAR`: Store bytes sent
 
-#### `recv`
-Receive up to `SIZE` bytes from a socket.
+### `recv`
 ```bash
 L_builtin recv [-f format] [-v RECV_VAR] [-n] FD SIZE
 ```
-- **Options:**
-  - `-f raw`: Store received raw bytes (null-byte unsafe) (default).
-  - `-f hex`: Store received bytes as hexadecimal string (null-byte safe).
-  - `-n`: Non-blocking receive (MSG_DONTWAIT). Returns immediately with empty string if no data is available.
+- `-f raw` (default): Store raw bytes (null-unsafe)
+- `-f hex`: Store as hex string (null-safe)
+- `-n`: Non-blocking (`MSG_DONTWAIT`)
 
----
-
-## Build, Format, & Static Analysis
-
-All orchestration is managed via the top-level `Makefile` inside the `builtin/` directory.
-
-### Build the Loadable Module
+### `core`
 ```bash
-make build
+L_builtin core ls [args...]
+L_builtin core stat [args...]
 ```
-Creates `build/L_builtin.so`.
+Embeds Rust coreutils (uutils) implementations.
 
-### Run the Test Suite
+### `capture`
 ```bash
-make test
+L_builtin capture VAR cmd [args...]
 ```
-Compiles and runs all modular test files inside `tests/` and automatically executes style checks, formatting, and static analysis.
+Run `cmd`, capture stdout into `VAR`.
 
-### Code Formatting
-```bash
-make format         # In-place format
-make check-format   # Dry-run validation
-```
+## License
 
-### Static Analysis
-```bash
-make tidy           # Runs clang-tidy (zero-warning strict)
-make cppcheck       # Runs cppcheck static analyzer
-```
+This project is licensed under the GNU General Public License v3.0 - see [LICENSE](LICENSE) for details.

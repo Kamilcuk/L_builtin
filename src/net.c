@@ -18,6 +18,8 @@
 #include "bashgetopt.h"
 #include "L_builtin.h"
 
+#undef free
+
 static unsigned char *hex_decode(const char *hex, size_t *out_len)
 {
   size_t len = strlen(hex);

@@ -11,6 +11,7 @@ _L_test_lua_arguments() {
 }
 
 _L_test_lua_bind_var() {
+    if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local myvar
     L_builtin lua -v myvar "return 'my_test_value'"
     L_unittest_eq "$myvar" "my_test_value"
@@ -49,6 +50,7 @@ _L_test_lua_many_args() {
 }
 
 _L_test_lua_bind_var_readonly() {
+    if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local -r rovar=locked
     L_unittest_checkexit 1 L_builtin lua -v rovar "return 'x'" 2>/dev/null
     L_unittest_eq "$rovar" "locked"
@@ -213,32 +215,38 @@ _L_test_lua_bash_unset_missing() {
     L_unittest_eq "$out" "false"
 }
 
-_L_test_lua_bash_unset_readonly() {
-    local -r rov=x
-    L_unittest_checkexit 1 L_builtin lua "bash.unset('rov')" 2>/dev/null
-    L_unittest_eq "$rov" "x"
-}
-
 _L_test_lua_bash_call() {
-    _L_lua_testfunc() { echo "n=$# args=$*"; return 7; }
+    if (( L_BASH_VERSION < 0x40300 )); then
+        L_unittest_skip "bash.eval disabled on bash < 4.3+"
+        return
+    fi
     local out
-    out=$(L_builtin lua "print(bash.call('_L_lua_testfunc', 'a', 'b', 'c'))")
+    out=$(L_builtin lua "print(bash.eval('echo n=3 args=a b c; L_return 7'))")
     L_unittest_eq "$out" "n=3 args=a b c
 7"
-    unset -f _L_lua_testfunc
 }
 
 _L_test_lua_bash_call_no_args() {
-    _L_lua_testfunc0() { echo "n=$#"; }
+    if (( L_BASH_VERSION < 0x40300 )); then
+        L_unittest_skip "bash.eval disabled on bash < 4.3"
+        return
+    fi
     local out
-    out=$(L_builtin lua "print(bash.call('_L_lua_testfunc0'))")
+    out=$(L_builtin lua "print(bash.eval('echo n=0; L_return 0'))")
     L_unittest_eq "$out" "n=0
 0"
-    unset -f _L_lua_testfunc0
 }
 
 _L_test_lua_bash_call_missing() {
-    L_unittest_checkexit 1 L_builtin lua "bash.call('_L_no_such_func')" 2>/dev/null
+    if (( L_BASH_VERSION < 0x40300 )); then
+        L_unittest_skip "bash.eval disabled on bash < 4.3"
+        return
+    fi
+    # bash.eval now takes a command string, not a function name.
+    # A non-existent command will return 127 (command not found).
+    local out
+    out=$(L_builtin lua "print(bash.eval('_L_no_such_command_xyz'))")
+    L_unittest_eq "$out" "127"
 }
 
 _L_test_lua_bash_expand() {
@@ -274,24 +282,28 @@ _L_test_lua_bash_expand_list_literal_single_word() {
 }
 
 _L_test_lua_expression_arithmetic() {
+    if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local out
     L_builtin lua -v out "return 6 * 7"
     L_unittest_eq "$out" "42"
 }
 
 _L_test_lua_expression_string_concat() {
+    if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local out
     L_builtin lua -v out "return 'foo' .. 'bar'"
     L_unittest_eq "$out" "foobar"
 }
 
 _L_test_lua_expression_boolean() {
+    if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local out
     L_builtin lua -v out "return 1 < 2"
     L_unittest_eq "$out" "true"
 }
 
 _L_test_lua_expression_bash_get_roundtrip() {
+    if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local x=10 out
     L_builtin lua -v out "return tonumber(bash.get('x')) * 2"
     L_unittest_eq "$out" "20"

@@ -17,6 +17,11 @@
 #include "sig.h"
 #include "trap.h"
 #include "L_builtin.h"
+#include "bash_api.h"
+
+#undef free
+#undef xmalloc
+#undef xrealloc
 
 static short parse_events(const char *s)
 {
@@ -128,7 +133,7 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
 
   struct pollfd *pfds = NULL;
   if (nfds > 0) {
-    pfds = (struct pollfd *)xmalloc(nfds * sizeof(struct pollfd));
+    pfds = (struct pollfd *)l_xmalloc(nfds * sizeof(struct pollfd));
     l = list;
     for (int i = 0; i < nfds; i++, l = l->next) {
       char *s = l->word->word;
@@ -159,7 +164,7 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
     if (sigprocmask(SIG_BLOCK, NULL, &current_mask) < 0) {
       builtin_error("sigprocmask: %s", strerror(errno));
       if (pfds)
-        free(pfds);
+        l_xfree(pfds);
       return (EXECUTION_FAILURE);
     }
     new_mask = current_mask;
@@ -180,7 +185,7 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
     if (v && !array_p(v)) {
       builtin_error("%s: not an indexed array", ret_var);
       if (pfds)
-        free(pfds);
+        l_xfree(pfds);
       return (EXECUTION_FAILURE);
     }
     if (!v)
@@ -188,7 +193,7 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
     if (!v) {
       builtin_error("%s: cannot create array", ret_var);
       if (pfds)
-        free(pfds);
+        l_xfree(pfds);
       return (EXECUTION_FAILURE);
     }
     ARRAY *a = array_cell(v);
@@ -207,7 +212,7 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
   }
 
   if (pfds)
-    free(pfds);
+    l_xfree(pfds);
   return (ret >= 0 ? EXECUTION_SUCCESS : EXECUTION_FAILURE);
 }
 
