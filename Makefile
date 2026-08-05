@@ -137,10 +137,14 @@ term: build
 # Hardcoded version list
 BASH_VERSIONS := 4.0 4.1 4.2 4.3 4.4 5.0 5.1 5.2 5.3
 
+.PHONY: _test tes-tall test-all-all build-all bash-build-all
+# Run test, but also run bash exe version, so I see what failed.
+_test:
+	$(MAKE) test || { $(BASH_EXE) --version; exit 1; }
 test-all:
-	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) test$(NL))
+	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) _test$(NL))
 test-all-all: bash_version_resolved
-	$(foreach I,$(BASH_RESOLVED_ALL_VERSIONS),$(MAKE) BASH=$(I) test$(NL))
+	$(foreach I,$(BASH_RESOLVED_ALL_VERSIONS),$(MAKE) BASH=$(I) _test$(NL))
 build-all:
 	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) build$(NL))
 bash-build-all:

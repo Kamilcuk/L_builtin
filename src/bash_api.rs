@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
-use std::ffi::{c_void, CStr, OsStr};
+use std::ffi::{c_void, CStr, OsStr, OsString};
 use std::iter::Map;
 use std::marker::PhantomData;
 pub(crate) use std::ops::Deref;
 pub(crate) use std::os::raw::{c_char, c_int};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::OsStringExt;
 use std::sync::OnceLock;
 
 use crate::{beprintln, bprintln};
@@ -138,7 +139,11 @@ pub(crate) struct WordListView<'a> {
     _marker: PhantomData<&'a WORD_LIST>,
 }
 
-pub(crate) type WordListIterOsStr<'a> = Map<WordListIter<'a>, fn(&[u8]) -> &OsStr>;
+pub(crate) type WordListIterOsString<'a> = Map<WordListIter<'a>, fn(&[u8]) -> OsString>;
+
+fn bytes_to_ostring(s: &[u8]) -> OsString {
+    OsString::from_vec(s.to_vec())
+}
 
 impl<'a> WordListView<'a> {
     /// Construct a view from a raw `*mut WORD_LIST`.
@@ -156,8 +161,8 @@ impl<'a> WordListView<'a> {
 
     /// Yields `&'a OsStr` slices directly referencing C memory.
     #[inline]
-    pub fn iter_osstr(&self) -> WordListIterOsStr<'_> {
-        self.iter().map(OsStr::from_bytes)
+    pub fn iter_osstring(&self) -> WordListIterOsString<'_> {
+        self.iter().map(bytes_to_ostring)
     }
 
     /// Creates an iterator yielding `&'a OsStr` slices directly referencing C memory.
@@ -292,3 +297,30 @@ impl<'a> IntoIterator for &'a WordListOwned {
         self.iter()
     }
 }
+
+///////////////////////////////////////////////////////////
+
+// pub(crate) struct BashGetopt();
+// impl BashGetopt {
+// pub fn new() { reset_internal_getopt(); BashGetopt{} }
+//     pub fn getopt(list: *mut WORD_LIST, spec: *const c_char) -> u8 {
+//      internal_getopt(list, spec)
+//     }
+// }
+// reset_internal_getopt();
+// while ((opt = internal_getopt(list, "v:h")) != -1) {
+//   switch (opt) {
+//   case 'v':
+//     ret_var = list_optarg;
+//     break;
+//   case 'h':
+//   case GETOPT_HELP:
+//     builtin_usage();
+//     return (EX_USAGE);
+//   default:
+//     builtin_usage();
+//     return (EX_USAGE);
+//   }
+// }
+// list = loptend;
+//

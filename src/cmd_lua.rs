@@ -3,26 +3,23 @@ use crate::bash_api::{
     expand_string, l_check_unbind_variable, l_expand_string_to_string_in_quotes, CStringOwned,
     WordListOwned, WordListView,
 };
-use crate::beprintln;
 use crate::bprint_bytes::BDisplay;
-use crate::return_on_err;
-use crate::shared::{from_after_null_terminated, getargs_unexpected, CByteStr};
-use crate::{bprintln};
+use crate::shared::from_after_null_terminated;
+use crate::{bash_getopt, beprintln};
+use crate::{bprintln, return_on_err};
 
 use std::ffi::{c_char, CStr};
 use std::io::Write;
 use std::os::raw::c_int;
 
-use getargs::{Opt, Options};
 use mlua::{Lua, Value};
 
 use crate::bash_api::{
     array_flush, array_insert, assoc_flush, assoc_keys_to_word_list, assoc_reference,
-    bind_variable, convert_var_to_array, find_variable,
-    l_array_cell, l_array_head, l_array_p, l_assoc_cell, l_assoc_insert, l_assoc_p, l_element_forw,
-    l_element_index, l_element_value, l_invisible_p, l_readonly_p, l_value_cell,
-    make_new_array_variable, make_new_assoc_variable, EX_USAGE,
-    SHELL_VAR, WORD_LIST,
+    bind_variable, convert_var_to_array, find_variable, l_array_cell, l_array_head, l_array_p,
+    l_assoc_cell, l_assoc_insert, l_assoc_p, l_element_forw, l_element_index, l_element_value,
+    l_invisible_p, l_readonly_p, l_value_cell, make_new_array_variable, make_new_assoc_variable,
+    EX_USAGE, SHELL_VAR, WORD_LIST,
 };
 
 #[cfg(not(feature = "bash_lt_4_3"))]
@@ -47,27 +44,30 @@ impl BDisplay for mlua::Error {
 }
 const ENAME: &str = "L_builtin lua";
 
+fn print_lua_help() {
+    bprintln!(
+        b"\
+Usage: L_builtin lua [-v VAR] <script> [args...]
+
+Run a Lua script in-process, with access to a bash.* API.
+
+Options:
+  -v VAR, --var VAR    Bind the script's return value to shell variable VAR
+  -h, --help          Show this help and exit
+
+Arguments:
+  script              Lua script: inline code, or a file path
+  args...             Arguments exposed to the script via the Lua 'arg' table
+"
+    );
+}
+
 /// # Safety
 #[no_mangle]
 pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut args = unsafe { WordListView::from_raw(list) }.into_iter();
-    let mut opts = Options::new(&mut args);
-    let mut ret_var: Option<&[u8]> = None;
-    while let Some(arg) = return_on_err!(ENAME, opts.next_opt(), EX_USAGE) {
-        match arg {
-            Opt::Short(b'v') | Opt::Long(b"var") => {
-                ret_var = Some(return_on_err!(ENAME, opts.value(), EX_USAGE));
-            }
-            Opt::Short(b'h') | Opt::Long(b"help") => {
-                print_lua_help();
-                return 0;
-            }
-            _ => {
-                return getargs_unexpected(ENAME, arg);
-            }
-        }
-    }
-    let script = match opts.next_positional() {
+    let (opts, args) = bash_getopt!(list, print_lua_help, [], [v]);
+    let mut args = unsafe { WordListView::from_raw(args) }.into_iter();
+    let script = match args.next() {
         Some(script) => script,
         None => {
             // No script was given — only options (or nothing).
@@ -78,30 +78,14 @@ pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
     };
     let lua = Lua::new();
     let return_value = return_on_err!(ENAME, run_lua_script(&lua, script, args), 1);
-    if let Some(var_name) = ret_var {
-        let var_cname = CByteStr::new(var_name);
+    if let Some(var_name) = opts.v {
         return_on_err!(
             ENAME,
-            set_bash_from_lua_in(&lua, var_cname.as_ptr(), return_value, None),
+            set_bash_from_lua_in(&lua, var_name, return_value, None),
             1
         );
     }
     0
-}
-
-/// Print usage to stdout (matching the `-h`/`--help` contract the tests expect).
-fn print_lua_help() {
-    bprintln!(b"Usage: L_builtin lua [-v VAR] <script> [args...]");
-    bprintln!(b"");
-    bprintln!(b"Run a Lua script in-process, with access to a bash.* API.");
-    bprintln!(b"");
-    bprintln!(b"Options:");
-    bprintln!(b"  -v VAR, --var VAR   Bind the script's return value to shell variable VAR");
-    bprintln!(b"  -h, --help          Show this help and exit");
-    bprintln!(b"");
-    bprintln!(b"Arguments:");
-    bprintln!(b"  script              Lua script: inline code, or a file path");
-    bprintln!(b"  args...             Arguments exposed to the script via the Lua 'arg' table");
 }
 
 /// Run a Lua script and return its result as an mlua::Value.

@@ -9,15 +9,14 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use getargs::Opt::{Long, Short};
 
 use crate::bash_api::{c_int, this_command_name, WordListView, EX_USAGE, WORD_LIST};
-use crate::bprintln;
-#[cfg(not(feature = "bash_lt_4_3"))]
-use crate::shared::{capture_into_variable, getargs_unexpected};
 #[cfg(feature = "bash_lt_4_3")]
 use crate::shared::getargs_unexpected;
-use crate::{beprintln, return_on_err};
+#[cfg(not(feature = "bash_lt_4_3"))]
+use crate::shared::capture_into_variable;
+use crate::{bash_getopt, bprintln};
+use crate::beprintln;
 use std::ffi::c_char;
 use std::io::Write;
 
@@ -155,19 +154,10 @@ pub unsafe extern "C" fn capture_subcommand(list: *mut WORD_LIST) -> c_int {
 /// # Safety
 #[no_mangle]
 pub unsafe extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
-    let mut list = unsafe { WordListView::from_raw(list) }.into_iter();
-    let mut opts = getargs::Options::new(&mut list);
-    if let Some(opt) = return_on_err!("L_builtin", opts.next_opt(), EX_USAGE) {
-        match opt {
-            Short(b'h') | Long(b"help") => {
-                unsafe { l_builtin_print_help() };
-                return 0;
-            }
-            _ => return getargs_unexpected("L_builtin", opt),
-        }
-    }
-    let val = match opts.next_positional() {
-        Some(val) => val,
+    let (_, args) = bash_getopt!(list, l_builtin_print_help, [], []);
+    let mut list = unsafe { WordListView::from_raw(args) }.into_iter();
+    let first = match list.next() {
+        Some(first) => first,
         None => {
             unsafe { l_builtin_print_usage() };
             return EX_USAGE;
@@ -175,10 +165,10 @@ pub unsafe extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
     };
     // Find the handler for this subcommand name (table is sorted at compile
     // time, so binary search applies).
-    let subcommand = match SUBCOMMAND_TABLE.binary_search_by(|(n, _)| n.cmp(&val)) {
+    let subcommand = match SUBCOMMAND_TABLE.binary_search_by(|(n, _)| n.cmp(&first)) {
         Ok(i) => SUBCOMMAND_TABLE[i].1,
         Err(_) => {
-            unsafe { l_builtin_unknown_subcommand(val) };
+            unsafe { l_builtin_unknown_subcommand(first) };
             return EX_USAGE;
         }
     };

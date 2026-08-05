@@ -21,7 +21,10 @@ use crate::bprint_bytes::BDisplay;
 /// # Safety
 /// `name` and `value` must be valid pointers to NUL-terminated C strings.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub(crate) unsafe fn bind_shell_variable(name: *const c_char, value: *const c_char) -> Result<(), String> {
+pub(crate) unsafe fn bind_shell_variable(
+    name: *const c_char,
+    value: *const c_char,
+) -> Result<(), String> {
     unsafe {
         debug_assert!(!name.is_null(), "name is null");
         debug_assert!(!value.is_null(), "value is null");
@@ -243,7 +246,10 @@ impl BDisplay for getargs::Opt<&[u8]> {
     fn bwrite<W: Write>(&self, _w: &mut W) {}
 }
 
-pub(crate) fn getargs_unexpected(ENAME: &(impl BDisplay + ?Sized), arg: getargs::Opt<&[u8]>) -> c_int {
+pub(crate) fn getargs_unexpected(
+    ENAME: &(impl BDisplay + ?Sized),
+    arg: getargs::Opt<&[u8]>,
+) -> c_int {
     match arg {
         getargs::Opt::Short(c) => {
             beprintln!(ENAME, b": unknown option -", c);

@@ -442,10 +442,11 @@ int recv_subcommand(WORD_LIST *list)
   char *recv_var = NULL;
   char *format = "raw";
   int non_blocking = 0;
+  int interruptible = 0;
   int opt;
 
   reset_internal_getopt();
-  while ((opt = internal_getopt(list, "f:v:nh")) != -1) {
+  while ((opt = internal_getopt(list, "f:v:nih")) != -1) {
     switch (opt) {
     case 'f':
       format = list_optarg;
@@ -455,6 +456,9 @@ int recv_subcommand(WORD_LIST *list)
       break;
     case 'n':
       non_blocking = 1;
+      break;
+    case 'i':
+      interruptible = 1;
       break;
     case 'h':
     case GETOPT_HELP:
@@ -487,15 +491,24 @@ int recv_subcommand(WORD_LIST *list)
   }
 
   int flags = non_blocking ? MSG_DONTWAIT : 0;
-  ssize_t received = recv(fd, buf, size, flags);
-  if (received < 0) {
+  ssize_t received;
+  while ((received = recv(fd, buf, size, flags)) < 0) {
+    if (errno == EINTR) {
+      if (interruptible) {
+        free(buf);
+        builtin_error("recv failed: Interrupted system call");
+        return (EXECUTION_FAILURE);
+      }
+      /* Interrupted by signal, retry the recv call */
+      continue;
+    }
     if (non_blocking && (errno == EAGAIN || errno == EWOULDBLOCK)) {
       received = 0;
-    } else {
-      free(buf);
-      builtin_error("recv failed: %s", strerror(errno));
-      return (EXECUTION_FAILURE);
+      break;
     }
+    free(buf);
+    builtin_error("recv failed: %s", strerror(errno));
+    return (EXECUTION_FAILURE);
   }
 
   buf[received] = '\0';
@@ -536,10 +549,14 @@ int sleep_subcommand(WORD_LIST *list)
 {
   double seconds;
   int opt;
+  int interruptible = 0;
 
   reset_internal_getopt();
-  while ((opt = internal_getopt(list, "h")) != -1) {
+  while ((opt = internal_getopt(list, "ih")) != -1) {
     switch (opt) {
+    case 'i':
+      interruptible = 1;
+      break;
     case 'h':
     case GETOPT_HELP:
       builtin_usage();
@@ -567,6 +584,10 @@ int sleep_subcommand(WORD_LIST *list)
   ts.tv_nsec = (long)((seconds - ts.tv_sec) * 1e9);
 
   while (nanosleep(&ts, &ts) == -1 && errno == EINTR) {
+    if (interruptible) {
+      builtin_error("sleep failed: Interrupted system call");
+      return (EXECUTION_FAILURE);
+    }
     /* Continue sleeping if interrupted by signal */
   }
 
@@ -657,7 +678,7 @@ char *send_doc[] = {
 char *recv_doc[] = {
   "Receive bytes from a socket.",
   "",
-  "L_builtin recv [-f format] [-v RECV_VAR] [-n] FD SIZE",
+  "L_builtin recv [-f format] [-v RECV_VAR] [-n] [-i] FD SIZE",
   "",
   "Receive up to SIZE bytes from the socket file descriptor FD.",
   "Supported formats (-f):",
@@ -667,6 +688,9 @@ char *recv_doc[] = {
   "If -n is provided, the recv call will be non-blocking. If no data is currently",
   "available, it will return success immediately with an empty string.",
   "",
+  "If -i is provided, the recv call will not automatically retry on signal interruption",
+  "(EINTR). Instead, it will fail with an error. By default, recv retries on EINTR.",
+  "",
   "Exit Status:",
   "Returns success unless recv fails or variable binding fails.",
   (char *)NULL
@@ -675,10 +699,13 @@ char *recv_doc[] = {
 char *sleep_doc[] = {
   "High-precision sub-second sleep.",
   "",
-  "L_builtin sleep SECONDS",
+  "L_builtin sleep [-i] SECONDS",
   "",
   "Sleep for the specified number of SECONDS. SECONDS can be a floating-point",
   "number to request sub-second/microsecond-level precision.",
+  "",
+  "If -i is provided, the sleep will not automatically retry on signal interruption",
+  "(EINTR). Instead, it will fail with an error. By default, sleep retries on EINTR.",
   "",
   "Exit Status:",
   "Returns success unless sleep fails.",
