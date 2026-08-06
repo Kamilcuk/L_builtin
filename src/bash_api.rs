@@ -2,10 +2,12 @@
 #![allow(unused_imports)]
 
 use std::ffi::{c_void, CStr, OsStr, OsString};
+use std::fmt;
+use std::fmt::Display;
 use std::iter::Map;
 use std::marker::PhantomData;
-pub(crate) use std::ops::Deref;
-pub(crate) use std::os::raw::{c_char, c_int};
+pub use std::ops::Deref;
+pub use std::os::raw::{c_char, c_int};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::ffi::OsStringExt;
 use std::sync::OnceLock;
@@ -13,40 +15,38 @@ use std::sync::OnceLock;
 use crate::{beprintln, bprintln};
 
 // Bash exit-code macros (from shell.h)
-pub(crate) const EX_USAGE: c_int = 258; /* syntax error in usage */
-pub(crate) const EX_NOTFOUND: c_int = 127; /* command not found */
-pub(crate) const EXECUTION_SUCCESS: c_int = 0;
-pub(crate) const EXECUTION_FAILURE: c_int = 1;
+pub const EX_USAGE: c_int = 258; /* syntax error in usage */
+pub const EX_NOTFOUND: c_int = 127; /* command not found */
+pub const EXECUTION_SUCCESS: c_int = 0;
+pub const EXECUTION_FAILURE: c_int = 1;
 
-// Opaque type representing Bash's internal SHELL_VAR structure
 #[repr(C)]
-pub(crate) struct SHELL_VAR {
-    _private: [u8; 0],
-}
-
-// Opaque types for Bash internal structures
-#[repr(C)]
-pub(crate) struct ARRAY {
+pub struct SHELL_VAR {
     _private: [u8; 0],
 }
 
 #[repr(C)]
-pub(crate) struct ARRAY_ELEMENT {
+pub struct ARRAY {
     _private: [u8; 0],
 }
 
 #[repr(C)]
-pub(crate) struct HASH_TABLE {
+pub struct ARRAY_ELEMENT {
     _private: [u8; 0],
 }
 
 #[repr(C)]
-pub(crate) struct WORD_DESC {
+pub struct HASH_TABLE {
     _private: [u8; 0],
 }
 
 #[repr(C)]
-pub(crate) struct WORD_LIST {
+pub struct WORD_DESC {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct WORD_LIST {
     _private: [u8; 0],
 }
 
@@ -106,7 +106,7 @@ extern "C" {
 
 /// RAII wrapper for C strings that need to be freed with `free()`
 #[repr(transparent)]
-pub(crate) struct CStringOwned(pub *mut c_char);
+pub struct CStringOwned(pub *mut c_char);
 
 impl CStringOwned {
     #[inline]
@@ -128,122 +128,108 @@ impl Drop for CStringOwned {
 
 ///////////////////////////////////////////////////////////////////////////
 
-// --- Borrowed View (Zero Allocation) ---
+/// Wrapper to track lifetimes of char pointers.
+#[repr(transparent)]
+pub struct Cpnt<'a>(pub *mut c_char, pub PhantomData<&'a c_char>);
 
-/// Zero-copy, non-owning view over a C `WORD_LIST`.
-///
-/// Ties the lifetime `'a` to the caller's stack frame or parent handle.
-#[derive(Copy, Clone)]
-pub(crate) struct WordListView<'a> {
-    pub head: *mut WORD_LIST,
-    _marker: PhantomData<&'a WORD_LIST>,
+impl<'a> Cpnt<'a> {
+    pub const fn new(ptr: *mut c_char) -> Self {
+        Self(ptr, PhantomData)
+    }
+    pub unsafe fn to_bytes(&self) -> &'a [u8] {
+        CStr::from_ptr(self.0).to_bytes()
+    }
+    pub const fn as_ptr(&self) -> *mut c_char {
+        self.0
+    }
 }
 
-pub(crate) type WordListIterOsString<'a> = Map<WordListIter<'a>, fn(&[u8]) -> OsString>;
-
-fn bytes_to_ostring(s: &[u8]) -> OsString {
-    OsString::from_vec(s.to_vec())
+impl<'a> fmt::Display for Cpnt<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_null() {
+            return write!(f, "(null)");
+        }
+        unsafe {
+            let bytes = self.to_bytes();
+            let text = String::from_utf8_lossy(bytes);
+            write!(f, "{text}")
+        }
+    }
 }
+
+///////////////////////////////////////////////////////////////////////////
+/// WORD_LIST utilities
+
+#[repr(transparent)]
+pub struct WordListView<'a>(*mut WORD_LIST, PhantomData<&'a WORD_LIST>);
+
+#[repr(transparent)]
+#[derive(Clone)]
+pub struct WordListIterCpnt<'a>(*mut WORD_LIST, PhantomData<&'a WORD_LIST>);
+
+pub type WordListIterBytes<'a> = Map<WordListIterCpnt<'a>, fn(Cpnt<'a>) -> &'a [u8]>;
+
+pub type WordListIterOsString<'a> = Map<WordListIterBytes<'a>, fn(&[u8]) -> OsString>;
 
 impl<'a> WordListView<'a> {
-    /// Construct a view from a raw `*mut WORD_LIST`.
-    ///
-    /// # Safety
-    /// `head` must point to valid memory or be null, and must not be mutated by C
-    /// for the duration of `'a`.
-    #[inline]
     pub unsafe fn from_raw(head: *mut WORD_LIST) -> Self {
-        Self {
-            head,
-            _marker: PhantomData,
-        }
+        Self(head, PhantomData)
     }
-
-    /// Yields `&'a OsStr` slices directly referencing C memory.
-    #[inline]
+    pub fn iter(&self) -> WordListIterCpnt<'a> {
+        WordListIterCpnt(self.0, PhantomData)
+    }
+    pub fn iter_bytes(&self) -> WordListIterBytes<'_> {
+        self.iter().map(|c| unsafe { c.to_bytes() })
+    }
     pub fn iter_osstring(&self) -> WordListIterOsString<'_> {
-        self.iter().map(bytes_to_ostring)
+        self.iter_bytes().map(|s| OsString::from_vec(s.to_vec()))
     }
-
-    /// Creates an iterator yielding `&'a OsStr` slices directly referencing C memory.
-    #[inline]
-    pub fn iter(&self) -> WordListIter<'a> {
-        WordListIter {
-            head: self.head,
-            _marker: PhantomData,
-        }
+    pub const fn as_ptr(&self) -> *mut WORD_LIST {
+        self.0
+    }
+    pub unsafe fn current(&self) -> Option<Cpnt<'a>> {
+        self.iter().current()
     }
 }
 
 impl<'a> IntoIterator for WordListView<'a> {
-    type Item = &'a [u8];
-    type IntoIter = WordListIter<'a>;
-
-    #[inline]
+    type Item = Cpnt<'a>;
+    type IntoIter = WordListIterCpnt<'a>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct WordListIter<'a> {
-    pub head: *mut WORD_LIST,
-    _marker: PhantomData<&'a WORD_LIST>,
-}
-
-impl<'a> WordListIter<'a> {
-    /// Print all words in the list.
-    ///
-    /// # Safety
-    /// The iterator's `head` must point to valid memory or be null,
-    /// and must not be mutated by C for the duration of the iteration.
+impl<'a> WordListIterCpnt<'a> {
     pub unsafe fn print(&self) {
         for i in self.clone() {
-            bprintln!(i);
+            println!("{i}");
         }
     }
-
-    /// Get the current word as a raw C string pointer.
-    ///
-    /// # Safety
-    /// The iterator's `head` must point to valid memory or be null,
-    /// and must not be mutated by C for the duration of the call.
-    pub unsafe fn current_cpnt(&self) -> *const c_char {
-        if self.head.is_null() {
-            return std::ptr::null();
+    pub unsafe fn current(&self) -> Option<Cpnt<'a>> {
+        if !self.0.is_null() {
+            let word_ptr = l_word_list_word(self.0);
+            if !word_ptr.is_null() {
+                let pnt = l_word_desc_string(word_ptr);
+                if !pnt.is_null() {
+                    return Some(Cpnt::new(pnt));
+                }
+            }
         }
-        let word_ptr = l_word_list_word(self.head);
-        if word_ptr.is_null() {
-            return std::ptr::null();
-        }
-        l_word_desc_string(word_ptr)
+        None
     }
-
-    /// Get the current word as a byte slice.
-    ///
-    /// # Safety
-    /// The iterator's `head` must point to valid memory or be null,
-    /// and must not be mutated by C for the duration of the call.
-    pub unsafe fn current(&self) -> Option<&'a [u8]> {
-        self.current_cpnt()
-            .as_ref()
-            .map(|v| CStr::from_ptr(v).to_bytes())
-    }
-    /// Advance the iterator to the next word.
-    ///
-    /// # Safety
-    /// The iterator's `head` must point to valid memory or be null,
-    /// and must not be mutated by C for the duration of the call.
     pub unsafe fn advance(&mut self) {
-        if !self.head.is_null() {
-            self.head = l_word_list_next(self.head);
+        if !self.0.is_null() {
+            self.0 = l_word_list_next(self.0);
         }
+    }
+    pub const fn as_ptr(&self) -> *mut WORD_LIST {
+        self.0
     }
 }
 
-impl<'a> Iterator for WordListIter<'a> {
-    type Item = &'a [u8];
-
+impl<'a> Iterator for WordListIterCpnt<'a> {
+    type Item = Cpnt<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         unsafe {
             let item = self.current();
@@ -253,22 +239,14 @@ impl<'a> Iterator for WordListIter<'a> {
     }
 }
 
-// --- Owned RAII Container ---
-
-/// RAII wrapper for a `WORD_LIST` freed via `dispose_words`.
 #[repr(transparent)]
-pub(crate) struct WordListOwned(pub *mut WORD_LIST);
+pub struct WordListOwned(pub *mut WORD_LIST);
 
 impl WordListOwned {
-    /// Borrow this owned list as a `WordListView<'a>`.
-    #[inline]
     pub fn as_view(&self) -> WordListView<'_> {
         unsafe { WordListView::from_raw(self.0) }
     }
-
-    /// Yields a zero-copy iterator over the owned list's elements.
-    #[inline]
-    pub fn iter(&self) -> WordListIter<'_> {
+    pub fn iter(&self) -> WordListIterCpnt<'_> {
         self.as_view().iter()
     }
 }
@@ -280,7 +258,6 @@ impl Default for WordListOwned {
 }
 
 impl Drop for WordListOwned {
-    #[inline]
     fn drop(&mut self) {
         if !self.0.is_null() {
             unsafe { dispose_words(self.0) }
@@ -289,38 +266,9 @@ impl Drop for WordListOwned {
 }
 
 impl<'a> IntoIterator for &'a WordListOwned {
-    type Item = &'a [u8];
-    type IntoIter = WordListIter<'a>;
-
-    #[inline]
+    type Item = Cpnt<'a>;
+    type IntoIter = WordListIterCpnt<'a>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
-
-///////////////////////////////////////////////////////////
-
-// pub(crate) struct BashGetopt();
-// impl BashGetopt {
-// pub fn new() { reset_internal_getopt(); BashGetopt{} }
-//     pub fn getopt(list: *mut WORD_LIST, spec: *const c_char) -> u8 {
-//      internal_getopt(list, spec)
-//     }
-// }
-// reset_internal_getopt();
-// while ((opt = internal_getopt(list, "v:h")) != -1) {
-//   switch (opt) {
-//   case 'v':
-//     ret_var = list_optarg;
-//     break;
-//   case 'h':
-//   case GETOPT_HELP:
-//     builtin_usage();
-//     return (EX_USAGE);
-//   default:
-//     builtin_usage();
-//     return (EX_USAGE);
-//   }
-// }
-// list = loptend;
-//

@@ -7,5 +7,6 @@
 extern void *l_xmalloc(size_t size);
 extern void *l_xrealloc(void *ptr, size_t size);
 extern void l_xfree(void *ptr);
+extern char *l_strdup(const char *p);
 
 #endif /* L_BUILTIN_BASH_API_H */

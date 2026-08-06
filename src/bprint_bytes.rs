@@ -35,6 +35,7 @@ impl BDisplay for str {
         w.write_all(self.as_bytes()).ok();
     }
 }
+
 impl BDisplay for String {
     fn bwrite<W: Write>(&self, w: &mut W) {
         w.write_all(self.as_bytes()).ok();
@@ -273,7 +274,7 @@ macro_rules! bformatln {
 /// Internal helper macro to lock a standard stream and write.
 #[macro_export]
 #[doc(hidden)]
-macro_rules! __bprint_impl {
+macro_rules! bprint_impl {
     ($target:expr) => {};
     ($target:expr, $($tt:tt)+) => {{
         let mut w = $target.lock();
@@ -285,7 +286,7 @@ macro_rules! __bprint_impl {
 #[macro_export]
 macro_rules! bprint {
     ($($tt:tt)*) => {
-        $crate::__bprint_impl!(::std::io::stdout(), $($tt)*);
+        $crate::bprint_impl!(::std::io::stdout(), $($tt)*);
     };
 }
 
@@ -293,7 +294,7 @@ macro_rules! bprint {
 #[macro_export]
 macro_rules! beprint {
     ($($tt:tt)*) => {
-        $crate::__bprint_impl!(::std::io::stderr(), $($tt)*);
+        $crate::bprint_impl!(::std::io::stderr(), $($tt)*);
     };
 }
 
@@ -301,7 +302,7 @@ macro_rules! beprint {
 #[macro_export]
 macro_rules! bprintln {
     ($($tt:tt)*) => {
-        $crate::__bprint_impl!(::std::io::stdout(), $($tt)*, b"\n");
+        $crate::bprint_impl!(::std::io::stdout(), $($tt)*, b"\n");
     };
 }
 
@@ -309,7 +310,7 @@ macro_rules! bprintln {
 #[macro_export]
 macro_rules! beprintln {
     ($($tt:tt)*) => {
-        $crate::__bprint_impl!(::std::io::stderr(), $($tt)*, b"\n");
+        $crate::bprint_impl!(::std::io::stderr(), $($tt)*, b"\n");
     };
 }
 

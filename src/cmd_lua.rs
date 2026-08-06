@@ -4,7 +4,6 @@ use crate::bash_api::{
     WordListOwned, WordListView,
 };
 use crate::bprint_bytes::BDisplay;
-use crate::shared::from_after_null_terminated;
 use crate::{bash_getopt, beprintln};
 use crate::{bprintln, return_on_err};
 
@@ -46,7 +45,7 @@ const ENAME: &str = "L_builtin lua";
 
 fn print_lua_help() {
     bprintln!(
-        b"\
+        "\
 Usage: L_builtin lua [-v VAR] <script> [args...]
 
 Run a Lua script in-process, with access to a bash.* API.
@@ -66,13 +65,14 @@ Arguments:
 #[no_mangle]
 pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
     let (opts, args) = bash_getopt!(list, print_lua_help, [], [v]);
-    let mut args = unsafe { WordListView::from_raw(args) }.into_iter();
+    let store = unsafe { WordListView::from_raw(args) };
+    let mut args = store.iter_bytes();
     let script = match args.next() {
         Some(script) => script,
         None => {
             // No script was given — only options (or nothing).
-            beprintln!(ENAME, b": missing script");
-            beprintln!(b"Usage: L_builtin lua [-v VAR] <script> [args...]");
+            beprintln!(ENAME, ": missing script");
+            beprintln!("Usage: L_builtin lua [-v VAR] <script> [args...]");
             return EX_USAGE;
         }
     };
@@ -288,11 +288,8 @@ fn get_bash_from_lua(
             let hash = l_assoc_cell(var);
             if !hash.is_null() {
                 for key in &WordListOwned(assoc_keys_to_word_list(hash)) {
-                    // The slice borrows the C string in place and excludes
-                    // its NUL, which is still present just past the end —
-                    // so the pointer is a valid C string for lookup.
-                    let val = assoc_reference(hash, from_after_null_terminated(key));
-                    let k = lua.create_string(key)?;
+                    let val = assoc_reference(hash, key.as_ptr());
+                    let k = lua.create_string(key.to_bytes())?;
                     let v = lua.create_string(if val.is_null() {
                         b""
                     } else {
@@ -455,7 +452,7 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
                 .into_iter()
                 .enumerate()
             {
-                table.set(idx + 1, lua.create_string(word)?)?;
+                table.set(idx + 1, lua.create_string(word.to_bytes())?)?;
             }
             Ok(Value::Table(table))
         })?,

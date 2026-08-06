@@ -3,6 +3,7 @@
 # Version to build (from BASH=5.1 or default to system)
 BASH ?= system
 BUILD_DIR ?= build
+SHELL = bash
 
 define NL
 
@@ -75,7 +76,8 @@ bash-build: $(BASH_EXE)
 
 ###############################################################################
 # ---- L_builtin targets ----
-CMAKE_FLAGS = -D L_DEV=1 -D CMAKE_BUILD_TYPE=Debug
+CMAKE_BUILD_TYPE = Debug
+CMAKE_FLAGS = -D L_DEV=1 -D CMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 BUILD = $(BUILD_DIR)/$(BASH)/build/
 $(BUILD)/L_builtin.so: $(BASH_SOURCE)/bash $(wildcard src/*) ./CMakeLists.txt
 	cmake -S . -B $(BUILD) $(CMAKE_FLAGS) \
@@ -85,9 +87,11 @@ build: $(BUILD)/L_builtin.so
 TESTARGS ?= -Pn
 test: build
 	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh $(BUILD)/L_builtin.so $(ARGS) $(TESTARGS)
-releasebuild: $(BUILD)/L_builtin.so
-	$(MAKE) BUILD=$(BUILD_DIR)/release-$(BASH) build CMAKE_FLAGS = -D CMAKE_BUILD_TYPE=Release
-.PHONY: build test release-build
+release-build:
+	$(MAKE) CMAKE_BUILD_TYPE=Release BUILD=$(BUILD_DIR)/$(BASH)/release build
+release-test:
+	$(MAKE) CMAKE_BUILD_TYPE=Release BUILD=$(BUILD_DIR)/$(BASH)/release test
+.PHONY: build test release-build release-test
 
 ###############################################################################
 # --- Additional targets ---
@@ -126,8 +130,12 @@ bash-clean:
 clean:
 	rm -rf $(BUILD)
 
-term: build
-	bash --init-file <(echo 'enable -f ./$(BUILD)/L_builtin.so L_builtin')
+build/init.bash: build
+	echo 'enable -f ./$(BUILD)/L_builtin.so L_builtin' > $@
+term: build/init.bash
+	bash --init-file build/init.bash $(ARGS)
+gdb: build
+	,gdbbatchrun bash -c "enable -f ./$(BUILD)/L_builtin.so L_builtin && L_builtin $(ARGS)"
 
 .PHONY: all build release test check rust-checks format check-format tidy cppcheck clean sh
 

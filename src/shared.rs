@@ -10,7 +10,6 @@ use memmap2::MmapMut;
 
 use crate::bash_api::{bind_variable, find_variable, l_readonly_p};
 use crate::beprintln;
-use crate::bprint_bytes::BDisplay;
 
 /// Bind `value` to the shell variable `name`.
 ///
@@ -45,13 +44,6 @@ pub(crate) unsafe fn bind_shell_variable(
     Ok(())
 }
 
-/// Unwrap a `getargs::Result`, printing `"{ename}: {error}"` to stderr and
-/// returning `code` on failure.
-///
-/// `ename` is the subcommand's name (e.g. its `ENAME` const); `expr` is the
-/// result being unwrapped; `code` is the exit code returned on error (e.g.
-/// `EX_USAGE`). The `return` exits the caller's function, so this is only
-/// valid inside a `-> c_int` subcommand handler.
 #[macro_export]
 macro_rules! return_on_err {
     ($ename:expr, $expr:expr, $code:expr) => {
@@ -117,6 +109,7 @@ pub(crate) fn flush_stdout_buffers() {
 }
 
 ////////////////////////////////////
+
 pub(crate) struct Memfd {
     file: File,
 }
@@ -156,6 +149,7 @@ pub(crate) fn trim_trailing_newlines_in_zero_terminated_array_place(bytes: &mut 
 }
 
 ////////////////////////////////////
+
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn capture_into_variable(
     ename: &str,
@@ -187,122 +181,4 @@ pub(crate) fn capture_into_variable(
     let res = unsafe { bind_shell_variable(var, mmap.as_ptr().cast()) };
     return_on_err!(ename, res, 1);
     ret
-}
-
-////////////////////////////////////
-
-/// Lexicographic `a < b` for byte slices, usable in const context.
-pub(crate) const fn bytes_lt(a: &[u8], b: &[u8]) -> bool {
-    let min = if a.len() < b.len() { a.len() } else { b.len() };
-    let mut i = 0;
-    while i < min {
-        if a[i] != b[i] {
-            return a[i] < b[i];
-        }
-        i += 1;
-    }
-    a.len() < b.len()
-}
-
-/// Sort an array of `(byte-key, value)` pairs by key at compile time.
-///
-/// Insertion sort; runs entirely in const evaluation, so the resulting
-/// table is stored pre-sorted in the binary and can be binary-searched at
-/// runtime.
-pub(crate) const fn sort_by_byte_key<T: Copy, const N: usize>(
-    mut arr: [(&'static [u8], T); N],
-) -> [(&'static [u8], T); N] {
-    let mut i = 1;
-    while i < N {
-        let item = arr[i];
-        let mut j = i;
-        while j > 0 && bytes_lt(item.0, arr[j - 1].0) {
-            arr[j] = arr[j - 1];
-            j -= 1;
-        }
-        arr[j] = item;
-        i += 1;
-    }
-    arr
-}
-
-impl BDisplay for getargs::Error<&[u8]> {
-    fn bwrite<W: Write>(&self, w: &mut W) {
-        match self {
-            getargs::Error::RequiresValue(opt) => {
-                w.write_all(b"option requires a value: ").unwrap();
-                opt.bwrite(w);
-            }
-            getargs::Error::DoesNotRequireValue(opt) => {
-                w.write_all(b"option does not require a value: ").unwrap();
-                opt.bwrite(w);
-            }
-            &_ => {}
-        }
-    }
-}
-
-impl BDisplay for getargs::Opt<&[u8]> {
-    fn bwrite<W: Write>(&self, _w: &mut W) {}
-}
-
-pub(crate) fn getargs_unexpected(
-    ENAME: &(impl BDisplay + ?Sized),
-    arg: getargs::Opt<&[u8]>,
-) -> c_int {
-    match arg {
-        getargs::Opt::Short(c) => {
-            beprintln!(ENAME, b": unknown option -", c);
-            2
-        }
-        getargs::Opt::Long(l) => {
-            beprintln!(ENAME, b": unknown option --", l);
-            2
-        }
-    }
-}
-
-////////////////////////////////////////////
-
-pub(crate) struct CByteStr(Vec<u8>);
-
-impl CByteStr {
-    #[inline]
-    pub(crate) fn new(bytes: &[u8]) -> Self {
-        debug_assert!(
-            bytes.last() != Some(&0),
-            "input slice already ends with a null byte; unexpected double null-termination"
-        );
-        let mut buf = Vec::with_capacity(bytes.len() + 1);
-        buf.extend_from_slice(bytes);
-        buf.push(0);
-        Self(buf)
-    }
-
-    #[inline]
-    pub(crate) fn as_ptr(&self) -> *const c_char {
-        self.0.as_ptr().cast()
-    }
-}
-
-/// Returns a `*const c_char` pointer for a slice that comes from a
-/// NUL-terminated C string. The slice itself excludes the trailing NUL
-/// (as returned by `CStr::to_bytes()`), but the underlying C string is
-/// guaranteed to be NUL-terminated, so the NUL is at `bytes.as_ptr().add(bytes.len())`.
-#[inline]
-pub(crate) fn from_after_null_terminated(bytes: &[u8]) -> *const c_char {
-    debug_assert!(
-        !bytes.is_empty(),
-        "input slice is empty; cannot verify null terminator"
-    );
-    // The slice comes from CStr::to_bytes() which excludes the NUL.
-    // The underlying C string is NUL-terminated — verify the byte one past the slice.
-    unsafe {
-        debug_assert!(
-            *bytes.as_ptr().add(bytes.len()) == 0,
-            "expected NUL byte at index {} (one past slice end)",
-            bytes.len()
-        );
-    }
-    bytes.as_ptr().cast()
 }

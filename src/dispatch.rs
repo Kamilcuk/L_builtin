@@ -9,14 +9,10 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-
 use crate::bash_api::{c_int, this_command_name, WordListView, EX_USAGE, WORD_LIST};
-#[cfg(feature = "bash_lt_4_3")]
-use crate::shared::getargs_unexpected;
-#[cfg(not(feature = "bash_lt_4_3"))]
+use crate::intlookup::IntLookup128;
 use crate::shared::capture_into_variable;
-use crate::{bash_getopt, bprintln};
-use crate::beprintln;
+use crate::{bash_getopt, beprintln, bprintln, intlookup};
 use std::ffi::c_char;
 use std::io::Write;
 
@@ -39,36 +35,38 @@ extern "C" {
     fn send_subcommand(list: *mut WORD_LIST) -> c_int;
     fn recv_subcommand(list: *mut WORD_LIST) -> c_int;
     fn sleep_subcommand(list: *mut WORD_LIST) -> c_int;
+    fn l_cmd_ext(list: *mut WORD_LIST) -> c_int;
     fn fflush(stream: *mut core::ffi::c_void) -> c_int;
     pub static L_builtin_doc: [*const c_char; 0];
 }
 
 type SubcommandFn = unsafe extern "C" fn(*mut WORD_LIST) -> c_int;
 
-/// Dispatch table: subcommand name -> handler.
-///
-/// Sorted by name at compile time (`sort_by_byte_key` is a const fn), so
-/// lookups can use binary search.
-const SUBCOMMAND_TABLE: &[(&[u8], SubcommandFn)] = &crate::shared::sort_by_byte_key([
-    (b"lseek" as &[u8], lseek_subcommand as SubcommandFn),
-    (b"poll", poll_subcommand),
+const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
+    ("lseek", lseek_subcommand),
+    ("poll", poll_subcommand),
     #[cfg(feature = "ppoll")]
-    (b"ppoll", ppoll_subcommand),
-    (b"sigmask", sigmask_subcommand),
-    (b"sigunmask", sigunmask_subcommand),
-    (b"pipe", pipe_subcommand),
-    (b"listen", listen_subcommand),
-    (b"accept", accept_subcommand),
-    (b"connect", connect_subcommand),
-    (b"shutdown", shutdown_subcommand),
-    (b"send", send_subcommand),
-    (b"recv", recv_subcommand),
-    (b"sleep", sleep_subcommand),
-    (b"core", crate::cmd_core::l_core_subcommand),
-    (b"lua", crate::cmd_lua::l_lua_subcommand),
+    ("ppoll", ppoll_subcommand),
+    ("sigmask", sigmask_subcommand),
+    ("sigunmask", sigunmask_subcommand),
+    ("pipe", pipe_subcommand),
+    ("listen", listen_subcommand),
+    ("accept", accept_subcommand),
+    ("connect", connect_subcommand),
+    ("shutdown", shutdown_subcommand),
+    ("send", send_subcommand),
+    ("recv", recv_subcommand),
+    ("sleep", sleep_subcommand),
+    ("core", crate::cmd_core::l_core_subcommand),
+    ("lua", crate::cmd_lua::l_lua_subcommand),
+    ("ext", l_cmd_ext),
     #[cfg(not(feature = "bash_lt_4_3"))]
-    (b"capture", capture_subcommand),
-]);
+    ("capture", l_capture_subcommand),
+];
+
+const SUBCOMMAND_TABLE: IntLookup128<SubcommandFn, { SUBCOMMAND_ENTRIES.len() }> =
+    intlookup!(&SUBCOMMAND_ENTRIES);
+
 unsafe fn l_builtin_print_help() {
     let mut p = L_builtin_doc.as_ptr();
     while !(*p).is_null() {
@@ -80,7 +78,7 @@ unsafe fn l_builtin_print_help() {
 unsafe fn l_builtin_print_usage() {
     let cmd_name = this_command_name;
     if !cmd_name.is_null() && *cmd_name != 0 {
-        bprintln!(cmd_name, b": usage:");
+        bprintln!(cmd_name, ": usage:");
     }
     let doc_array = L_builtin_doc.as_ptr();
     let short_doc_ptr = *doc_array.add(2);
@@ -91,9 +89,9 @@ unsafe fn l_builtin_print_usage() {
 unsafe fn l_builtin_unknown_subcommand(name: &[u8]) {
     let cmd_name = this_command_name;
     if !cmd_name.is_null() && *cmd_name != 0 {
-        beprintln!(cmd_name, b": unknown subcommand:", name);
+        beprintln!(cmd_name, ": unknown subcommand:", name);
     } else {
-        beprintln!(b"unknown subcommand:", name);
+        beprintln!("unknown subcommand:", name);
     }
 }
 
@@ -131,43 +129,51 @@ fn build_eval_command<'a>(args: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
 /// # Safety
 #[cfg(not(feature = "bash_lt_4_3"))]
 #[no_mangle]
-pub unsafe extern "C" fn capture_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe extern "C" fn l_capture_subcommand(list: *mut WORD_LIST) -> c_int {
     let mut args = WordListView::from_raw(list).into_iter();
     // var is a slice from bash WORD_LIST; use the original C string pointer.
     // l_word_desc_string returns a NUL-terminated C string.
-    let var_ptr = args.current_cpnt();
-    if var_ptr.is_null() {
-        beprintln!(b"L_builtin capture: usage: L_builtin capture VAR <command> [args...]");
-        return EX_USAGE;
+    let var_ptr = match args.next() {
+        None => {
+            beprintln!(b"L_builtin capture: usage: L_builtin capture VAR <command> [args...]");
+            return EX_USAGE;
+        }
+        Some(v) => v,
     };
-    args.advance();
-    if args.current_cpnt().is_null() {
+    if args.current().is_none() {
         beprintln!(b"L_builtin capture: missing command");
         return EX_USAGE;
     }
-    let cmd = build_eval_command(args);
-    capture_into_variable("L_builtin capture", var_ptr, false, || unsafe {
+    l_capture_output(var_ptr.as_ptr().cast(), args.as_ptr())
+}
+
+#[cfg(not(feature = "bash_lt_4_3"))]
+#[no_mangle]
+pub unsafe extern "C" fn l_capture_output(var: *const c_char, list: *mut WORD_LIST) -> c_int {
+    let args = WordListView::from_raw(list).into_iter();
+    let cmd = build_eval_command(args.map(|c| unsafe { c.to_bytes() }));
+    assert!(!cmd.is_empty());
+    capture_into_variable("L_builtin capture", var, false, || unsafe {
         l_execute_command_string(cmd.as_ptr().cast())
     })
 }
 
-/// # Safety
 #[no_mangle]
 pub unsafe extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
     let (_, args) = bash_getopt!(list, l_builtin_print_help, [], []);
-    let mut list = unsafe { WordListView::from_raw(args) }.into_iter();
+    let view = unsafe { WordListView::from_raw(args) };
+    let mut list = view.into_iter();
     let first = match list.next() {
-        Some(first) => first,
+        Some(first) => first.to_bytes(),
         None => {
             unsafe { l_builtin_print_usage() };
             return EX_USAGE;
         }
     };
-    // Find the handler for this subcommand name (table is sorted at compile
-    // time, so binary search applies).
-    let subcommand = match SUBCOMMAND_TABLE.binary_search_by(|(n, _)| n.cmp(&first)) {
-        Ok(i) => SUBCOMMAND_TABLE[i].1,
-        Err(_) => {
+    // Find the handler for this subcommand name using intlookup's packed table.
+    let subcommand = match SUBCOMMAND_TABLE.lookup(first) {
+        Some(f) => f,
+        None => {
             unsafe { l_builtin_unknown_subcommand(first) };
             return EX_USAGE;
         }
@@ -175,7 +181,7 @@ pub unsafe extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
     // Flush C stdio before the handler so buffered bash/C output
     // cannot be reordered against direct fd writes from Rust.
     unsafe { fflush(std::ptr::null_mut()) };
-    let ret = unsafe { subcommand(list.head) };
+    let ret = unsafe { subcommand(list.as_ptr()) };
     // Flush both layers after the handler: C stdio (C/Lua handlers)
     // and Rust's stdout buffer (never flushed at exit in a cdylib).
     unsafe { fflush(std::ptr::null_mut()) };

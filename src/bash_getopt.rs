@@ -1,12 +1,16 @@
 use crate::bash_api::{c_char, c_int, WORD_LIST};
 
+pub const GETOPT_HELP: c_int = -99;
 extern "C" {
-    pub(crate) fn internal_getopt(list: *mut WORD_LIST, optstring: *const c_char) -> c_int;
-    pub(crate) fn reset_internal_getopt();
-    pub(crate) static mut list_optarg: *mut c_char;
-    pub(crate) static mut loptend: *mut WORD_LIST;
+    pub fn internal_getopt(list: *mut WORD_LIST, optstring: *const c_char) -> c_int;
+    pub fn reset_internal_getopt();
+    pub static mut list_optarg: *mut c_char;
+    pub static mut loptend: *mut WORD_LIST;
 }
 
+/// Takes WORD_LIST, a function printing help message, and then flag letters and options letters.
+/// Returns an object that for flag letters have the letters as members as bool
+/// and for options letters has those letters as Option<*c_char>.
 #[macro_export]
 macro_rules! bash_getopt {
     (
@@ -17,7 +21,8 @@ macro_rules! bash_getopt {
     ) => {{
         const OPTSTRING: &[u8] = concat!(
             $( stringify!($flag), )*
-            $( stringify!($opt), ":" ),*
+            $( stringify!($opt), ":", )*
+            "h\0",
         ).as_bytes();
         struct ParsedOpts {
             $( pub $flag: bool, )*
@@ -37,7 +42,7 @@ macro_rules! bash_getopt {
             match c {
                 -1 => break,
                 c if c == b'h' as std::os::raw::c_int => { $help_fn(); return 0; }
-                -99 => { $help_fn(); return 2; },
+                $crate::bash_getopt::GETOPT_HELP => { $help_fn(); return 2; },
                 $(
                     c if c == stringify!($flag).as_bytes()[0] as std::os::raw::c_int => {
                         parsed.$flag = true;

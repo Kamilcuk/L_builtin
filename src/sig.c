@@ -17,8 +17,6 @@
 #include "L_builtin.h"
 #include "bash_api.h"
 
-#undef free
-
 /* Missing extern declarations from Bash headers */
 extern sigset_t top_level_mask;
 extern int pending_traps[NSIG];

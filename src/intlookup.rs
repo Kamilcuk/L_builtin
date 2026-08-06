@@ -1,236 +1,229 @@
-use core::ffi::c_char;
+// Integer-keyed compile-time lookup table
+// Packs byte strings into integers (u32/u64/u128) for O(log N) const lookup.
 
-// 1. CONST KEY LENGTH CALCULATION
-pub(crate) const fn max_key_len<T: Copy, const N: usize>(arr: &[(&'static [u8], T); N]) -> usize {
-    let mut max = 0;
-    let mut i = 0;
-    while i < N {
-        if arr[i].0.len() > max {
-            max = arr[i].0.len();
-        }
-        i += 1;
+#![allow(unused)]
+
+use std::marker::PhantomData;
+
+///////////////////////////////////////////////////
+
+struct ConstRange {
+    start: usize,
+    end: usize,
+}
+
+impl ConstRange {
+    const fn new(start: usize, end: usize) -> Self {
+        assert!(end > start);
+        Self { start, end }
     }
+
+    const fn next(&mut self) -> Option<usize> {
+        if self.start < self.end {
+            let current = self.start;
+            self.start += 1;
+            Some(current)
+        } else {
+            None
+        }
+    }
+}
+
+///////////////////////////////////////////////////
+
+/// Given an array of str and something, return the longest str length.
+const fn keys_max_bits<T>(arr: &[(&str, T)]) -> usize {
+    assert!(arr.len() != 0, "Array length is 0");
+    let mut max = 0;
+    let mut range = ConstRange::new(0, arr.len());
+    while let Some(i) = range.next() {
+        let len = arr[i].0.len();
+        if len > max {
+            max = len;
+        }
+    }
+    assert!(max != 0, "Max key length is 0");
     max
 }
 
-// 2. CONCRETE CONST PACKING FUNCTIONS (No Traits)
-pub(crate) const fn pack_u32(bytes: &[u8]) -> u32 {
-    let mut val = 0u32;
-    let mut i = 0;
-    while i < bytes.len() {
-        val |= (bytes[i] as u32) << ((3 - i) * 8);
-        i += 1;
+/// Given an array of str and something, return the best type width to represent them.
+pub const fn key_type_bits<T>(arr: &[(&str, T)]) -> usize {
+    match keys_max_bits(arr) {
+        0..=4 => 32,
+        0..=8 => 64,
+        0..=16 => 128,
+        _ => panic!("Key exceeds maximum supported length of 16 bytes or 128 bits"),
     }
-    val
 }
 
-pub(crate) const fn pack_u64(bytes: &[u8]) -> u64 {
-    let mut val = 0u64;
-    let mut i = 0;
-    while i < bytes.len() {
-        val |= (bytes[i] as u64) << ((7 - i) * 8);
-        i += 1;
-    }
-    val
-}
+///////////////////////////////////////////////////
 
-pub(crate) const fn pack_u128(bytes: &[u8]) -> u128 {
-    let mut val = 0u128;
-    let mut i = 0;
-    while i < bytes.len() {
-        val |= (bytes[i] as u128) << ((15 - i) * 8);
-        i += 1;
-    }
-    val
-}
+pub struct KeyBits<const BITS: usize, T, const N: usize>(PhantomData<T>);
 
-/////////////////////////////////////////////////////////////////////
+macro_rules! define_functions {
+    ($IntLookupN:ident, $T:ty, $BITS:literal) => {
 
-// 3. CONCRETE CONST ARRAY PACKERS & SORTING (No Traits)
-macro_rules! generate_pack_and_sort_fns {
-    ($($ty:ident, $pack_fn:ident, $sort_fn:ident, $pack_arr_fn:ident);* $(;)?) => {
-        $(
-            pub(crate) const fn $pack_arr_fn<T: Copy, const N: usize>(
-                arr: &[(&'static [u8], T); N],
-            ) -> [($ty, T); N] {
-                let mut packed = [(0 as $ty, arr[0].1); N];
-                let mut i = 0;
-                while i < N {
-                    packed[i] = ($pack_fn(arr[i].0), arr[i].1);
-                    i += 1;
+        impl<T: Copy, const N: usize> KeyBits<$BITS, T, N> {
+            pub const fn build(self, keys: &[(&str, T)]) -> $IntLookupN<T, N> {
+                $IntLookupN::new(keys)
+            }
+        }
+
+        /// Represents two arrays - array of keys and connected array of user values.
+        pub struct $IntLookupN<V, const N: usize>(pub [$T; N], pub [V; N]);
+
+        impl<V: Copy, const N: usize> $IntLookupN<V, N> {
+
+            /// Pack bytes into an integer $N.
+            const fn pack(bytes: &[u8]) -> $T {
+                let size = std::mem::size_of::<$T>();
+                assert!(
+                    bytes.len() <= size,
+                    concat!(
+                        "Key length exceeds maximum byte capacity of destination integer type '",
+                        stringify!($T),
+                        "'. Consider using a greater type."
+                    )
+                );
+                assert!(!bytes.is_empty(), "Key cannot be empty");
+                let mut val = 0 as $T;
+                let mut range = ConstRange::new(0, bytes.len());
+                while let Some(i) = range.next() {
+                    val |= (bytes[i] as $T) << ((size - 1 - i) * 8);
                 }
-                packed
+                val
             }
 
-            pub(crate) const fn $sort_fn<T: Copy, const N: usize>(
-                mut arr: [($ty, T); N],
-            ) -> [($ty, T); N] {
-                let mut i = 1;
-                while i < N {
-                    let item = arr[i];
+            /// Given an array of tuples, unpack it into two arrays.
+            pub const fn new(arr: &[(&str, V)]) -> Self {
+                assert!(
+                    arr.len() == N,
+                    "Slice length does not match array const generic parameter N"
+                );
+                let size = std::mem::size_of::<$T>();
+                let max_len = keys_max_bits(arr);
+                assert!(
+                    max_len <= size,
+                    concat!(
+                        "Key length exceeds integer capacity: max key size requires a larger type than '",
+                        stringify!($T),
+                        "'"
+                    )
+                );
+                let min_required_len = match size {
+                    16 => 9, // u128 requires at least 1 key > 8 bytes (otherwise u64 works)
+                    8  => 5, // u64 requires at least 1 key > 4 bytes (otherwise u32 works)
+                    _  => 0, // u32 is our minimum size, so 0..=4 bytes is optimal
+                };
+                assert!(
+                    max_len >= min_required_len,
+                    concat!(
+                        "Suboptimal key type '",
+                        stringify!($T),
+                        "': all keys fit in a smaller integer type"
+                    )
+                );
+                let mut keys = [0 as $T; N];
+                let mut vals = [arr[0].1; N];
+                let mut range = ConstRange::new(0, N);
+                while let Some(i) = range.next() {
+                    keys[i] = Self::pack(arr[i].0.as_bytes());
+                    vals[i] = arr[i].1;
+                }
+                let mut v = Self(keys, vals);
+                v.sort();
+                v
+            }
+
+            /// Sort arrays for binary search lookup.
+            const fn sort(&mut self) {
+                let mut range = ConstRange::new(0, N);
+                while let Some(i) = range.next() {
+                    let key = self.0[i];
+                    let val = self.1[i];
                     let mut j = i;
-                    while j > 0 && item.0 < arr[j - 1].0 {
-                        arr[j] = arr[j - 1];
+                    while j > 0 {
+                        let prev_key = self.0[j - 1];
+                        assert!(
+                            key != prev_key,
+                            "Duplicate key detected in intlookup table"
+                        );
+                        if key >= prev_key {
+                            break;
+                        }
+                        self.0[j] = self.0[j - 1];
+                        self.1[j] = self.1[j - 1];
                         j -= 1;
                     }
-                    arr[j] = item;
-                    i += 1;
+                    self.0[j] = key;
+                    self.1[j] = val;
                 }
-                arr
             }
-        )*
-    };
-}
 
-generate_pack_and_sort_fns!(
-    u32, pack_u32, sort_packed_u32, pack_array_u32;
-    u64, pack_u64, sort_packed_u64, pack_array_u64;
-    u128, pack_u128, sort_packed_u128, pack_array_u128;
-);
-
-/////////////////////////////////////////////////////////////////////
-
-// 4. UNIFIED ENUM FOR MULTI-WIDTH MACRO RETURN
-#[derive(Copy, Clone)]
-pub enum PackedTable<T: Copy, const N: usize> {
-    U32([(u32, T); N]),
-    U64([(u64, T); N]),
-    U128([(u128, T); N]),
-}
-
-#[inline]
-pub const fn build_u32<T: Copy, const N: usize>(
-    keys: &[(&'static [u8], T); N],
-) -> PackedTable<T, N> {
-    PackedTable::U32(sort_packed_u32(pack_array_u32(keys)))
-}
-
-#[inline]
-pub const fn build_u64<T: Copy, const N: usize>(
-    keys: &[(&'static [u8], T); N],
-) -> PackedTable<T, N> {
-    PackedTable::U64(sort_packed_u64(pack_array_u64(keys)))
-}
-
-#[inline]
-pub const fn build_u128<T: Copy, const N: usize>(
-    keys: &[(&'static [u8], T); N],
-) -> PackedTable<T, N> {
-    PackedTable::U128(sort_packed_u128(pack_array_u128(keys)))
-}
-
-
-
-// 5. CONST MACRO DISPATCHER (Pure Const evaluation using if/else inside macro block)
-macro_rules! pack_and_sort {
-    ($keys:expr) => {{
-        const MAX_LEN: usize = $crate::intlookup::max_key_len($keys);
-        if MAX_LEN <= 4 {
-            $crate::intlookup::build_u32($keys)
-        } else if MAX_LEN <= 8 {
-            $crate::intlookup::build_u64($keys)
-        } else if MAX_LEN <= 16 {
-            $crate::intlookup::build_u128($keys)
-        } else {
-            panic!("Key exceeds maximum supported length of 16 bytes");
-        }
-    }};
-}
-
-// 6. RUNTIME & LOOKUP LOGIC (Traits can be used here at runtime, non-const)
-#[inline]
-pub unsafe fn bytes_from_c_str<'a>(ptr: *const c_char, max_len: usize) -> &'a [u8] {
-    let mut len = 0;
-    while len < max_len {
-        let byte = *ptr.add(len) as u8;
-        if byte == 0 {
-            break;
-        }
-        len += 1;
-    }
-    core::slice::from_raw_parts(ptr as *const u8, len)
-}
-
-macro_rules! impl_const_binary_search {
-    ($fn_name:ident, $key_ty:ty) => {
-        pub const fn $fn_name<T: Copy, const N: usize>(
-            table: &[($key_ty, T); N],
-            target: $key_ty,
-        ) -> Option<T> {
-            let mut left = 0;
-            let mut right = N;
-            while left < right {
-                let mid = left + (right - left) / 2;
-                let (k, v) = table[mid];
-                if k == target {
-                    return Some(v);
-                } else if k < target {
-                    left = mid + 1;
+            /// Find key in array of keys and return associated user value.
+            pub fn lookup(&self, key: &[u8]) -> Option<V> {
+                // If key is longer then all keys, nothing we can do anyway.
+                let size = std::mem::size_of::<$T>();
+                if key.len() > size {
+                    return None;
+                }
+                let target = Self::pack(key);
+                // Linear scan for small arrays could be vectorized.
+                if N <= 16 {
+                    self.lookup_linear(target)
                 } else {
-                    right = mid;
+                    self.lookup_binary_search(target)
                 }
             }
-            None
+
+            fn lookup_linear(&self, target: $T) -> Option<V> {
+                for i in 0..N {
+                    if self.0[i] == target {
+                        return Some(self.1[i]);
+                    }
+                }
+                None
+            }
+
+            fn lookup_binary_search(&self, target: $T) -> Option<V> {
+                let mut base = 0;
+                let mut size = N;
+                while size > 1 {
+                    let half = size / 2;
+                    let mid = base + half;
+                    base = if self.0[mid] <= target { mid } else { base };
+                    size -= half;
+                }
+                if self.0[base] == target {
+                    Some(self.1[base])
+                } else {
+                    None
+                }
+            }
+
+
         }
+
     };
 }
 
-// Generate const binary search functions for your packed types
-impl_const_binary_search!(binary_search_u32, u32);
-impl_const_binary_search!(binary_search_u64, u64);
-impl_const_binary_search!(binary_search_u128, u128);
+define_functions!(IntLookup32, u32, 32);
+define_functions!(IntLookup64, u64, 64);
+define_functions!(IntLookup128, u128, 128);
 
-impl<T: Copy, const N: usize> PackedTable<T, N> {
-    #[inline]
-    pub fn lookup_slice(&self, key: &[u8]) -> Option<T> {
-        match self {
-            PackedTable::U32(table) => {
-                if key.len() > 4 {
-                    return None;
-                }
-                binary_search_u32(table, pack_u32(key))
-            }
-            PackedTable::U64(table) => {
-                if key.len() > 8 {
-                    return None;
-                }
-                binary_search_u64(table, pack_u64(key))
-            }
-            PackedTable::U128(table) => {
-                if key.len() > 16 {
-                    return None;
-                }
-                binary_search_u128(table, pack_u128(key))
-            }
-        }
-    }
+///////////////////////////////////////////////////
+
+pub const fn infer_bits<const BITS: usize, T, const N: usize>(
+    _keys: &[(&str, T)],
+) -> KeyBits<BITS, T, N> {
+    KeyBits(PhantomData)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Opt {
-    Help,
-    Verbose,
-    Version,
-}
-
-// 1. Compile-time generation:
-// - Calculates max key length ("--version" = 9 bytes)
-// - Selects `PackedTable::U128`
-// - Packs keys into u128 integers (big-endian)
-// - Sorts the array at compile time
-pub static OPTIONS: PackedTable<Opt, 3> = pack_and_sort!([
-    (b"-h", Opt::Help),
-    (b"-v", Opt::Verbose),
-    (b"--version", Opt::Version),
-]);
-
-fn main() {
-    // 2. O(log N) lookup matching against packed u128 integers
-    assert_eq!(OPTIONS.lookup_slice(b"-h"), Some(Opt::Help));
-    assert_eq!(OPTIONS.lookup_slice(b"-v"), Some(Opt::Verbose));
-    assert_eq!(OPTIONS.lookup_slice(b"--version"), Some(Opt::Version));
-
-    // Exceeds table width or non-existent key returns None
-    assert_eq!(OPTIONS.lookup_slice(b"--nonexistent-flag"), None);
-    assert_eq!(OPTIONS.lookup_slice(b"-x"), None);
+#[macro_export]
+macro_rules! intlookup {
+    ($ARR:expr) => {{
+        const N: usize = $ARR.len();
+        const BITS: usize = $crate::intlookup::key_type_bits($ARR);
+        $crate::intlookup::infer_bits::<BITS, _, N>($ARR).build($ARR)
+    }};
 }
