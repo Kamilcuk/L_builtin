@@ -12,7 +12,7 @@ pub(crate) mod bash_api;
 pub(crate) mod bprint_bytes;
 pub(crate) mod cmd_core;
 pub(crate) mod cmd_lua;
-pub(crate) mod dispatch;
+pub(crate) mod entrypoint;
 pub(crate) mod shared;
 pub(crate) mod bash_getopt;
 pub(crate) mod intlookup;

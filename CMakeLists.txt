@@ -110,14 +110,7 @@ generate_bash_builtins_gen(
 
 ###############################################################################
 
-# Corrosion FetchContent
-include(FetchContent)
-FetchContent_Declare(
-    Corrosion
-    GIT_REPOSITORY https://github.com/corrosion-rs/corrosion.git
-    GIT_TAG v0.6.1
-)
-FetchContent_MakeAvailable(Corrosion)
+add_subdirectory(third_party/corrosion)
 
 # Detect optional syscalls so we can enable the matching Cargo features.
 include(CheckSymbolExists)
@@ -148,6 +141,13 @@ corrosion_import_crate(
 
 ###############################################################################
 
+add_library(boost_preprocessor INTERFACE)
+target_include_directories(boost_preprocessor INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/boost_preprocessor/include"
+)
+
+###############################################################################
+
 add_library(L_builtin MODULE
     ./src/L_builtin.c
     ./src/lseek.c
@@ -164,14 +164,26 @@ set_target_properties(L_builtin PROPERTIES
     SUFFIX ".so"
     OUTPUT_NAME "L_builtin"
 )
-target_compile_definitions(L_builtin PRIVATE HAVE_CONFIG_H SHELL L_BASH_VERSION=${L_BASH_VERSION})
+target_compile_definitions(L_builtin PRIVATE
+    HAVE_CONFIG_H
+    SHELL
+    L_BASH_VERSION=${L_BASH_VERSION}
+    _GNU_SOURCE=1
+)
 target_include_directories(L_builtin PRIVATE
     ${BASH_SOURCE}
     ${BASH_SOURCE}/include
     ${BASH_SOURCE}/builtins
     "${CMAKE_CURRENT_BINARY_DIR}/generated_c"
 )
-target_link_libraries(L_builtin PRIVATE pthread dl m rt ${L_BUILTIN_RS_TARGETS})
+target_link_libraries(L_builtin PRIVATE
+    pthread
+    dl
+    m
+    rt
+    boost_preprocessor
+    ${L_BUILTIN_RS_TARGETS}
+)
 set_target_properties(L_builtin PROPERTIES C_STANDARD 99 C_EXTENSIONS ON)
 add_dependencies(L_builtin ${L_BUILTIN_RS_TARGETS})
 

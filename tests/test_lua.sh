@@ -13,7 +13,7 @@ _L_test_lua_arguments() {
 _L_test_lua_bind_var() {
     if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local myvar
-    L_builtin lua -v myvar "return 'my_test_value'"
+    L_builtin -v myvar lua "print('my_test_value')"
     L_unittest_eq "$myvar" "my_test_value"
 }
 
@@ -22,15 +22,15 @@ _L_test_lua_help_short() {
     out=$(L_builtin lua -h)
     L_unittest_checkexit 0 L_builtin lua -h
     L_unittest_contains "$out" "Usage:"
-    L_unittest_contains "$out" "--var"
+    L_unittest_contains "$out" "-h, --help"
 }
 
 _L_test_lua_help_long() {
     local out
-    out=$(L_builtin lua --help)
-    L_unittest_checkexit 0 L_builtin lua --help
+    out=$(L_builtin lua -h)
+    L_unittest_checkexit 0 L_builtin lua -h
     L_unittest_contains "$out" "Usage:"
-    L_unittest_contains "$out" "--var"
+    L_unittest_contains "$out" "-h, --help"
 }
 
 _L_test_lua_missing_script() {
@@ -52,7 +52,7 @@ _L_test_lua_many_args() {
 _L_test_lua_bind_var_readonly() {
     if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local -r rovar=locked
-    L_unittest_checkexit 1 L_builtin lua -v rovar "return 'x'" 2>/dev/null
+    L_unittest_checkexit 1 L_builtin -v rovar lua "print('x')" 2>/dev/null
     L_unittest_eq "$rovar" "locked"
 }
 
@@ -284,28 +284,28 @@ _L_test_lua_bash_expand_list_literal_single_word() {
 _L_test_lua_expression_arithmetic() {
     if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local out
-    L_builtin lua -v out "return 6 * 7"
+    L_builtin -v out lua "print(6 * 7)"
     L_unittest_eq "$out" "42"
 }
 
 _L_test_lua_expression_string_concat() {
     if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local out
-    L_builtin lua -v out "return 'foo' .. 'bar'"
+    L_builtin -v out lua "print('foo' .. 'bar')"
     L_unittest_eq "$out" "foobar"
 }
 
 _L_test_lua_expression_boolean() {
     if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local out
-    L_builtin lua -v out "return 1 < 2"
+    L_builtin -v out lua "print(1 < 2)"
     L_unittest_eq "$out" "true"
 }
 
 _L_test_lua_expression_bash_get_roundtrip() {
     if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local x=10 out
-    L_builtin lua -v out "return tonumber(bash.get('x')) * 2"
+    L_builtin -v out lua "print(tonumber(bash.get('x')) * 2)"
     L_unittest_eq "$out" "20"
 }
 

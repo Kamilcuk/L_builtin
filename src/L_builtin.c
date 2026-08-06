@@ -4,10 +4,14 @@
 #include "shell.h"
 #include "L_builtin.h"
 
-char *L_builtin_doc[] = {
+const char *L_builtin_doc[] = {
   "L_lib helper builtins.",
   "",
-  "L_builtin <subcommand> [options] [args]",
+  "L_builtin [-v VAR] <subcommand> [options] [args]",
+  "",
+  "Options:",
+  "  -v VAR   Capture stdout of the subcommand into shell variable VAR",
+  "           (trailing newlines stripped, like $(...))",
   "",
   "Available subcommands:",
   "  lseek      Reposition file offset",
@@ -35,9 +39,9 @@ char *L_builtin_doc[] = {
 
 struct builtin L_builtin_struct = {
   "L_builtin",
-  L_builtin_builtin,
+  l_entrypoint,
   BUILTIN_ENABLED,
-  L_builtin_doc,
+  (void *)L_builtin_doc,
   "L_builtin <subcommand> [options] [args]",
   0
 };

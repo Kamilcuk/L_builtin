@@ -7,8 +7,8 @@ struct word_list;
 #define GETOPT_HELP -99
 #endif
 
-/* Top-level entry point, implemented in Rust (src/dispatch.rs). */
-extern int L_builtin_builtin(struct word_list *list);
+/* Top-level entry point, implemented in Rust (src/entrypoint.rs). */
+extern int l_entrypoint(struct word_list *list);
 
 int lseek_subcommand(struct word_list *list);
 int poll_subcommand(struct word_list *list);

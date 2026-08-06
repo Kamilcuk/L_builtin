@@ -45,13 +45,9 @@ const UU_DISPATCH_TABLE: IntLookup64<UuMain, { UU_DISPATCH_ENTRIES.len() }> = in
 fn print_core_help() {
     bprintln!(
         b"\
-L_builtin core [-v VAR] <subcommand> [options] [args]
+L_builtin core <subcommand> [options] [args]
 
 Core utilities via uutils/coreutils
-
-Options:
-    -v VAR   Capture stdout of the subcommand into shell variable VAR
-            (trailing newlines stripped, like $(...))
 
 Available subcommands:
     ls       List directory contents
@@ -69,14 +65,14 @@ Use 'L_builtin core <subcommand> -h' for more information.
 /// is safe
 #[no_mangle]
 pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (opts, args) = bash_getopt!(list, print_core_help, [], [v]);
+    let (_, args) = bash_getopt!(list, print_core_help, [], []);
     let view = unsafe { WordListView::from_raw(args) };
     let val = match view.iter().current() {
         Some(val) => val.to_bytes(),
         None => {
             // No subcommand was given — only options (or nothing).
             beprintln!(ENAME, b": missing subcommand");
-            beprintln!(b"Usage: L_builtin core [-v VAR] <subcommand> [args...]");
+            beprintln!(b"Usage: L_builtin core <subcommand> [args...]");
             beprintln!(b"Available: ls, stat, dirname, rm");
             return EX_NOTFOUND;
         }
@@ -89,8 +85,5 @@ pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
         }
     };
     let rest: UuArgs = view.iter_osstring();
-    match opts.v {
-        Some(var) => capture_into_variable(ENAME, var, false, || uumain(rest)),
-        None => uumain(rest),
-    }
+    uumain(rest)
 }

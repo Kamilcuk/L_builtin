@@ -46,12 +46,11 @@ const ENAME: &str = "L_builtin lua";
 fn print_lua_help() {
     bprintln!(
         "\
-Usage: L_builtin lua [-v VAR] <script> [args...]
+Usage: L_builtin lua <script> [args...]
 
 Run a Lua script in-process, with access to a bash.* API.
 
 Options:
-  -v VAR, --var VAR    Bind the script's return value to shell variable VAR
   -h, --help          Show this help and exit
 
 Arguments:
@@ -64,7 +63,7 @@ Arguments:
 /// # Safety
 #[no_mangle]
 pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (opts, args) = bash_getopt!(list, print_lua_help, [], [v]);
+    let (opts, args) = bash_getopt!(list, print_lua_help, [], []);
     let store = unsafe { WordListView::from_raw(args) };
     let mut args = store.iter_bytes();
     let script = match args.next() {
@@ -78,13 +77,6 @@ pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
     };
     let lua = Lua::new();
     let return_value = return_on_err!(ENAME, run_lua_script(&lua, script, args), 1);
-    if let Some(var_name) = opts.v {
-        return_on_err!(
-            ENAME,
-            set_bash_from_lua_in(&lua, var_name, return_value, None),
-            1
-        );
-    }
     0
 }
 

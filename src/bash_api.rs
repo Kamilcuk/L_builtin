@@ -50,6 +50,28 @@ pub struct WORD_LIST {
     _private: [u8; 0],
 }
 
+/// The `struct builtin` definition from Bash's builtins.h has not changed in
+/// the past 10 years (since Bash 4.4, 2016). Its fields remain:
+/// - char *name
+/// - sh_builtin_func_t *function
+/// - int flags
+/// - char * const *long_doc
+/// - const char *short_doc
+/// - char *handle
+///
+/// Only the `flags` bitmask has been extended with new capabilities:
+/// - LOCALVAR_BUILTIN (0x40) added in Bash 4.4 (2016)
+/// - ARRAYREF_BUILTIN (0x80) added in Bash 5.2 (2021)
+#[repr(C)]
+pub struct Builtin {
+    pub name: *mut c_char,
+    pub function: Option<unsafe extern "C" fn(*mut WORD_LIST) -> c_int>,
+    pub flags: c_int,
+    pub long_doc: *const *const c_char,
+    pub short_doc: *const c_char,
+    pub handle: *mut c_char,
+}
+
 extern "C" {
     pub static mut this_command_name: *mut c_char;
     pub fn l_xmalloc(size: usize) -> *mut c_void;

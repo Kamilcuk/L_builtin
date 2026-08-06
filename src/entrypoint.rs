@@ -1,6 +1,6 @@
 //! Top-level L_builtin dispatch (Rust entry point called by bash)
 //!
-//! Bash calls `L_builtin_builtin` directly. This function reads the
+//! Bash calls `l_entrypoint` directly. This function reads the
 //! subcommand name (first word), prints help on `-h`/`--help`, looks the
 //! subcommand up in a dispatch table, and calls the appropriate handler with
 //! the word list advanced past the subcommand name.
@@ -37,7 +37,8 @@ extern "C" {
     fn sleep_subcommand(list: *mut WORD_LIST) -> c_int;
     fn l_cmd_ext(list: *mut WORD_LIST) -> c_int;
     fn fflush(stream: *mut core::ffi::c_void) -> c_int;
-    pub static L_builtin_doc: [*const c_char; 0];
+    #[link_name = "L_builtin_doc"]
+    static L_BUILTIN_DOC: [*const c_char; 0];
 }
 
 type SubcommandFn = unsafe extern "C" fn(*mut WORD_LIST) -> c_int;
@@ -68,7 +69,7 @@ const SUBCOMMAND_TABLE: IntLookup128<SubcommandFn, { SUBCOMMAND_ENTRIES.len() }>
     intlookup!(&SUBCOMMAND_ENTRIES);
 
 unsafe fn l_builtin_print_help() {
-    let mut p = L_builtin_doc.as_ptr();
+    let mut p = L_BUILTIN_DOC.as_ptr();
     while !(*p).is_null() {
         bprintln!(*p);
         p = p.add(1);
@@ -80,7 +81,7 @@ unsafe fn l_builtin_print_usage() {
     if !cmd_name.is_null() && *cmd_name != 0 {
         bprintln!(cmd_name, ": usage:");
     }
-    let doc_array = L_builtin_doc.as_ptr();
+    let doc_array = L_BUILTIN_DOC.as_ptr();
     let short_doc_ptr = *doc_array.add(2);
     if !short_doc_ptr.is_null() {
         bprintln!(short_doc_ptr);
@@ -159,8 +160,9 @@ pub unsafe extern "C" fn l_capture_output(var: *const c_char, list: *mut WORD_LI
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
-    let (_, args) = bash_getopt!(list, l_builtin_print_help, [], []);
+pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
+    // Parse top-level options (-v VAR) before dispatching to subcommand
+    let (opts, args) = bash_getopt!(list, l_builtin_print_help, [], [v]);
     let view = unsafe { WordListView::from_raw(args) };
     let mut list = view.into_iter();
     let first = match list.next() {
@@ -181,7 +183,12 @@ pub unsafe extern "C" fn L_builtin_builtin(list: *mut WORD_LIST) -> c_int {
     // Flush C stdio before the handler so buffered bash/C output
     // cannot be reordered against direct fd writes from Rust.
     unsafe { fflush(std::ptr::null_mut()) };
-    let ret = unsafe { subcommand(list.as_ptr()) };
+    let ret = if let Some(var) = opts.v {
+        // -v VAR was provided: capture subcommand stdout into VAR
+        capture_into_variable("L_builtin", var, true, || unsafe { subcommand(list.as_ptr()) })
+    } else {
+        unsafe { subcommand(list.as_ptr()) }
+    };
     // Flush both layers after the handler: C stdio (C/Lua handlers)
     // and Rust's stdout buffer (never flushed at exit in a cdylib).
     unsafe { fflush(std::ptr::null_mut()) };
