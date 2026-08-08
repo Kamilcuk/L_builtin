@@ -5,44 +5,28 @@ RUN set -x && \
             git make gcc bison yacc libncurses5-dev libreadline-dev \
             cmake clang clang-format clang-tidy cppcheck \
             curl wget ca-certificates \
+            autoconf \
       && \
       rm -rf /var/lib/apt/lists/*
 
-# Stage: Build all Bash versions (cached layer - rebuild only when bash.git changes)
 FROM base AS bash-builder
-WORKDIR /bash
-RUN git clone --bare https://git.savannah.gnu.org/git/bash.git bash.git
-COPY bash.sh .
+WORKDIR /src
 RUN set -x && \
       mkdir -vp build && \
-      mv -v bash.git build/bash.git && \
-      ./bash.sh all && \
-      cd .. && \
-      rm -rf /bash
+      git clone --branch master --single-branch --bare https://git.savannah.gnu.org/git/bash.git build/bash.git
+COPY --parents Makefile.bash scripts/resolve-bash-version.sh .
+ARG BASHES="5.0 5.3"
+ENV BASHES=${BASHES}
+RUN set -x && for BASH in $BASHES; do make -f Makefile.bash bash-dockerfile BASH=$BASH; done
 
-# Pre-build all versions
-
-# Stage: CI runner - uses pre-built bash versions
-FROM base AS ci-runner
-COPY --from=bash-builder /opt/bash /opt/bash
-WORKDIR /src
-
-# Copy source
-COPY . .
-
-# Default bash version (can be overridden at runtime)
-ARG BASH=5.2
+FROM bash-builder AS build
+COPY --parents Makefile Makefile.bash CMakeLists.txt src scripts .
+ARG BASH=5.3
 ENV BASH=${BASH}
-ENV BASH_PATH=/opt/bash/${BASH}/bin/bash
-ENV PATH=/opt/bash/${BASH}/bin/:$PATH
+ENV PATH=/src/build/${BASH}/prefixbash/bin:$PATH
+RUN set -x && make build
+ENTRYPOINT ["bash", "-c"]
 
-# Build the project (release mode)
-RUN set -x && \
-      cp -v ${BASH_PATH} /usr/bin/bash && \
-      cp -v ${BASH_PATH} /bin/bash && \
-      cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBASH=${BASH_PATH} -DBASH_INC=/opt/bash/${BASH}/include && \
-      cmake --build build -- -j$(nproc)
-
-# Test entrypoint
-ENTRYPOINT ["/opt/bash/${BASH}/bin/bash", "-c"]
-CMD ["/src/runtests.sh"]
+FROM build AS test
+COPY tests runtests.sh .
+RUN ./runtests.sh
