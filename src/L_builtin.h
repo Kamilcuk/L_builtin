@@ -12,7 +12,7 @@ extern int l_entrypoint(struct word_list *list);
 
 int lseek_subcommand(struct word_list *list);
 int poll_subcommand(struct word_list *list);
-#ifdef HAVE_PPOLL
+#if HAVE_PPOLL
 int ppoll_subcommand(struct word_list *list);
 #endif
 int sigmask_subcommand(struct word_list *list);
@@ -28,7 +28,7 @@ int sleep_subcommand(struct word_list *list);
 
 extern char *lseek_doc[];
 extern char *poll_doc[];
-#ifdef HAVE_PPOLL
+#if HAVE_PPOLL
 extern char *ppoll_doc[];
 #endif
 extern char *sigmask_doc[];

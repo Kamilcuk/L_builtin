@@ -12,7 +12,6 @@
 
 use crate::bash_api::{WordListIterOsString, WordListView, EX_NOTFOUND, EX_USAGE, WORD_LIST};
 use crate::intlookup::IntLookup64;
-use crate::shared::capture_into_variable;
 use crate::{bash_getopt, beprintln, bprintln, intlookup};
 
 use std::os::raw::c_int;

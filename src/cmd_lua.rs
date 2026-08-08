@@ -63,7 +63,7 @@ Arguments:
 /// # Safety
 #[no_mangle]
 pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (opts, args) = bash_getopt!(list, print_lua_help, [], []);
+    let (_opts, args) = bash_getopt!(list, print_lua_help, [], []);
     let store = unsafe { WordListView::from_raw(args) };
     let mut args = store.iter_bytes();
     let script = match args.next() {
@@ -76,7 +76,7 @@ pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
         }
     };
     let lua = Lua::new();
-    let return_value = return_on_err!(ENAME, run_lua_script(&lua, script, args), 1);
+    let _return_value = return_on_err!(ENAME, run_lua_script(&lua, script, args), 1);
     0
 }
 

@@ -16,7 +16,7 @@ const char *L_builtin_doc[] = {
   "Available subcommands:",
   "  lseek      Reposition file offset",
   "  poll       Wait for file descriptors to become ready",
-#ifdef HAVE_PPOLL
+#if HAVE_PPOLL
   "  ppoll      Wait for FDs and unblock signals atomically",
 #endif
   "  sigmask    Block or unblock signals",
@@ -31,6 +31,7 @@ const char *L_builtin_doc[] = {
   "  sleep      High-precision sub-second sleep",
   "  core       Core utilities (ls, stat) via Rust/uutils",
   "  lua        Execute LuaJIT script",
+  "  ext        External command helpers",
   "  capture    Run a command with stdout captured into a variable",
   "",
   "Use 'L_builtin <subcommand> -h' for more information.",

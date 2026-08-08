@@ -152,3 +152,90 @@ _L_test_net_port0_requires_p() {
     # Port is 0, so -p option is required
     L_unittest_checkexit 2 L_builtin listen sfd
 }
+
+# Test recv with poll-based timeout
+# Server accepts connection but delays sending response
+_L_net_client_delayed_send() {
+    local port="$1"
+    local delay="$2"
+    local client_fd=""
+    L_builtin connect client_fd 127.0.0.1 "$port"
+    L_builtin sleep "$delay"
+    L_builtin send "$client_fd" "delayed_response"
+    L_builtin shutdown "$client_fd" RDWR
+    eval "exec $client_fd<&-"
+}
+
+_L_test_net_recv_poll_timeout() {
+    local sfd=""
+    local port_val=""
+    L_builtin listen -p port_val sfd 127.0.0.1 0
+
+    # Start client that delays sending response by 0.5s
+    local client_pid=""
+    L_with_process_into client_pid _L_net_client_delayed_send "$port_val" 0.5
+
+    local accepted_fd=""
+    local client_addr=""
+    L_builtin accept accepted_fd client_addr "$sfd"
+
+    # Use poll to wait for data with 0.2s timeout (should timeout before client sends)
+    local poll_result_arr=()
+    L_builtin poll -t 0.2 -v poll_result_arr "$accepted_fd:r"
+    # On timeout, array should be empty (0 ready fds)
+    L_unittest_eq "${#poll_result_arr[@]}" "0"
+
+    # Now wait longer with poll - should succeed when client sends
+    L_builtin poll -t 1.0 -v poll_result_arr "$accepted_fd:r"
+    L_unittest_ne "${#poll_result_arr[@]}" "0"
+
+    # Receive the delayed response
+    local reply=""
+    L_builtin recv -v reply "$accepted_fd" 32
+    L_unittest_eq "$reply" "delayed_response"
+
+    eval "exec $accepted_fd<&-"
+    eval "exec $sfd<&-"
+}
+
+# Test server that handles multiple connections sequentially
+_L_net_server_multiple() {
+    local port="$1"
+    local sfd=""
+    local port_val=""
+    L_builtin listen -p port_val sfd 127.0.0.1 "$port"
+    for _ in 0 1 2; do
+        local cfd="" addr=""
+        L_builtin accept cfd addr "$sfd"
+        local data=""
+        L_builtin recv -v data "$cfd" 32
+        L_builtin send "$cfd" "echo:$data"
+        L_builtin shutdown "$cfd" RDWR
+        eval "exec $cfd<&-"
+    done
+    eval "exec $sfd<&-"
+}
+
+_L_test_net_multiple_connections() {
+    # Server function will create its own listener on the given port
+    # We pass a fixed port to avoid conflict
+    local port=18999
+
+    local server_pid=""
+    L_with_process_into server_pid _L_net_server_multiple "$port"
+
+    # Give server time to start listening
+    L_builtin sleep 0.1
+
+    # Connect 3 clients sequentially
+    for i in 1 2 3; do
+        local cfd=""
+        L_builtin connect cfd 127.0.0.1 "$port"
+        L_builtin send "$cfd" "msg$i"
+        local resp=""
+        L_builtin recv -v resp "$cfd" 32
+        L_unittest_eq "$resp" "echo:msg$i"
+        L_builtin shutdown "$cfd" RDWR
+        eval "exec $cfd<&-"
+    done
+}

@@ -162,7 +162,7 @@ pub unsafe extern "C" fn l_capture_output(var: *const c_char, list: *mut WORD_LI
 #[no_mangle]
 pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
     // Parse top-level options (-v VAR) before dispatching to subcommand
-    let (opts, args) = bash_getopt!(list, l_builtin_print_help, [], [v]);
+    let (opts, args) = bash_getopt!(list, l_builtin_print_help, [h], [v]);
     let view = unsafe { WordListView::from_raw(args) };
     let mut list = view.into_iter();
     let first = match list.next() {

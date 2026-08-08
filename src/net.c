@@ -17,8 +17,7 @@
 #include "common.h"
 #include "bashgetopt.h"
 #include "L_builtin.h"
-
-#undef free
+#include "bash_api.h"
 
 static unsigned char *hex_decode(const char *hex, size_t *out_len)
 {

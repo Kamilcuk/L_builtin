@@ -16,7 +16,7 @@
 
 #define LEN(x) (sizeof(x) / sizeof((x)[0]))
 extern char *this_command_name;
-extern int capture_subcommand(WORD_LIST*);
+extern int capture_subcommand(WORD_LIST *);
 
 #if defined(__GNUC__) || defined(__clang__)
 #define SENTINEL __attribute__((sentinel))
@@ -130,17 +130,15 @@ int l_cmd_ext(WORD_LIST *list)
 {
   int opt;
   reset_internal_getopt();
-  char *var = 0;
-  while ((opt = internal_getopt(list, "hb:")) != -1) {
+  while ((opt = internal_getopt(list, "h")) != -1) {
     switch (opt) {
-      case 'v': var = list_optarg; break;
-      case 'h':
-      case GETOPT_HELP:
-        print_loadables_usage();
-        return (EX_USAGE);
-      default:
-        print_loadables_usage();
-        return (EX_USAGE);
+    case 'h':
+    case GETOPT_HELP:
+      print_loadables_usage();
+      return (EX_USAGE);
+    default:
+      print_loadables_usage();
+      return (EX_USAGE);
     }
   }
   list = loptend;
@@ -163,11 +161,6 @@ int l_cmd_ext(WORD_LIST *list)
   l_xfree(this_command_name);
   this_command_name = aconcat("L_builtin ", " ", subcmd, NULL);
   current_builtin = b;
-  //
-  // WORD_LIST head;
-  // head.next = list;
-  // head.word = &(WORD_DESC){var, 0};
-  // list = list->next;
   //
   const char *first = list->word->word;
   if (strcmp(first, "--help") == 0 || strcmp(first, "-h") == 0) {

@@ -21,29 +21,29 @@ _L_test_poll_pipe() {
 _L_test_ppoll_atomic_signal() {
     local CAUGHT=0
     trap 'CAUGHT=1' USR1
-    
+
     L_builtin sigmask -s USR1
     L_raise -USR1
-    
+
     local -a results=()
-    L_unittest_checkexit 1 L_builtin ppoll -u USR1 -t 0.1 -v results
+    L_unittest_checkexit 1 L_builtin ppoll -i -u USR1 -t 0.1 -v results
     L_unittest_eq "$CAUGHT" "1"
     L_unittest_eq "${#results[@]}" "0"
-    
+
     L_builtin sigmask -u USR1
 }
 
 _L_test_ppoll_all_signals() {
     local CAUGHT=0
     trap 'CAUGHT=1' USR1
-    
+
     L_builtin sigmask -s ALL
     L_raise -USR1
-    
+
     local -a results=()
-    L_unittest_checkexit 1 L_builtin ppoll -u ALL -t 0.1 -v results
+    L_unittest_checkexit 1 L_builtin ppoll -i -u ALL -t 0.1 -v results
     L_unittest_eq "$CAUGHT" "1"
     L_unittest_eq "${#results[@]}" "0"
-    
+
     L_builtin sigmask -u ALL
 }

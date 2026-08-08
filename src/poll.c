@@ -19,10 +19,6 @@
 #include "L_builtin.h"
 #include "bash_api.h"
 
-#undef free
-#undef xmalloc
-#undef xrealloc
-
 static short parse_events(const char *s)
 {
   short ev = 0;
@@ -68,7 +64,7 @@ static char *format_revents(short revents)
 static int
 do_poll(struct pollfd *pfds, int nfds, struct timespec *tsp, sigset_t *sigmask, int is_ppoll)
 {
-#ifdef HAVE_PPOLL
+#if HAVE_PPOLL
   if (is_ppoll)
     return ppoll(pfds, nfds, tsp, sigmask);
   else
@@ -87,11 +83,12 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
   char *timeout_str = NULL;
   sigset_t unblock_set, current_mask, new_mask;
   int opt, unblock_any = 0;
+  int interruptible = 0;
 
   sigemptyset(&unblock_set);
   reset_internal_getopt();
 
-  const char *optstr = is_ppoll ? "t:v:u:h" : "t:v:h";
+  const char *optstr = is_ppoll ? "t:v:u:ih" : "t:v:ih";
 
   while ((opt = internal_getopt(list, (char *)optstr)) != -1) {
     switch (opt) {
@@ -114,6 +111,9 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
         sigaddset(&unblock_set, sig);
         unblock_any = 1;
       }
+      break;
+    case 'i':
+      interruptible = 1;
       break;
     case 'h':
     case GETOPT_HELP:
@@ -177,7 +177,12 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
 
   int ret = do_poll(pfds, nfds, tsp, &new_mask, is_ppoll);
 
-  if (ret < 0 && errno != EINTR)
+  /* Retry on EINTR - poll was interrupted by a signal, unless -i flag is set */
+  while (ret < 0 && errno == EINTR && !interruptible) {
+    ret = do_poll(pfds, nfds, tsp, &new_mask, is_ppoll);
+  }
+
+  if (ret < 0)
     builtin_error("poll: %s", strerror(errno));
 
   if (ret_var) {
@@ -218,19 +223,23 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
 
 int poll_subcommand(WORD_LIST *list) { return poll_internal(list, 0); }
 
-#ifdef HAVE_PPOLL
+#if HAVE_PPOLL
 int ppoll_subcommand(WORD_LIST *list) { return poll_internal(list, 1); }
 #endif
 
 char *poll_doc[] = {
   "Wait for file descriptors to become ready.",
   "",
-  "L_builtin poll [-t TIMEOUT] [-v ARRAY_VAR] [FD[:EVENTS] ...]",
+  "L_builtin poll [-t TIMEOUT] [-v ARRAY_VAR] [-i] [FD[:EVENTS] ...]",
   "",
   "Poll file descriptors using poll(2). EVENTS can be 'r', 'w', or 'p'.",
   "Results are stored in the indexed array ARRAY_VAR as FD:REVENTS.",
   "REVENTS contains 'r', 'w', 'p', 'h' (hangup), 'e' (error), or 'n' "
   "(invalid).",
+  "",
+  "If -i is provided, poll will not automatically retry on signal interruption",
+  "(EINTR). Instead, it will fail with an error. By default, poll retries on",
+  "EINTR.",
   "",
   "Exit Status:",
   "Returns success if poll succeeds, even if it timed out. Returns failure "
@@ -239,11 +248,11 @@ char *poll_doc[] = {
   (char *)NULL
 };
 
-#ifdef HAVE_PPOLL
+#if HAVE_PPOLL
 char *ppoll_doc[] = {
   "Wait for file descriptors and unblock signals atomically.",
   "",
-  "L_builtin ppoll [-t TIMEOUT] [-v ARRAY_VAR] [-u SIGSPEC] [FD[:EVENTS] "
+  "L_builtin ppoll [-t TIMEOUT] [-v ARRAY_VAR] [-u SIGSPEC] [-i] [FD[:EVENTS] "
   "...]",
   "",
   "Poll file descriptors and unblock signals using ppoll(2).",
@@ -251,6 +260,10 @@ char *ppoll_doc[] = {
   "",
   "Use -u SIGSPEC to temporarily unblock specified signals during ppoll.",
   "Use -u 'ALL' (case-insensitive) to unblock all signals.",
+  "",
+  "If -i is provided, ppoll will not automatically retry on signal interruption",
+  "(EINTR). Instead, it will fail with an error. By default, ppoll retries on",
+  "EINTR.",
   "",
   "EVENTS and REVENTS format:",
   "  EVENTS can be a combination of 'r' (read, default if omitted),",

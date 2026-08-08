@@ -19,8 +19,6 @@ $(shell ionice -c 3 -p $$PPID >/dev/null 2>&1; \
 
 ARGS ?=
 
-.SECONDARY:
-
 ###############################################################################
 # ---- Default targets ----
 all: test
@@ -41,7 +39,7 @@ $(BASH_RESOLVED_FILE): ./scripts/resolve-bash-version.sh $(BASH_BARE_REPO)/HEAD
 # Include resolved version (auto-regenerates Makefile on first run)
 -include $(BASH_RESOLVED_FILE)
 # Validation target - runs only when targets need the version
-bash_version_resolved: $(BASH_RESOLVED_FILE)
+bash-version-resolved: $(BASH_RESOLVED_FILE)
 	@[ -n "$(BASH_RESOLVED_COMMIT)" ] || { \
 		echo "Could not resolve bash version from spec: $(BASH)"; \
 		cat $(BASH_RESOLVED_FILE); \
@@ -52,11 +50,11 @@ bash_version_resolved: $(BASH_RESOLVED_FILE)
 # --- Building bash ---
 BASH_SOURCE = $(BUILD_DIR)/$(BASH)/bash/
 # git worktree depends on bare repo
-$(BASH_SOURCE)/configure: bash_version_resolved $(BASH_BARE_REPO)/HEAD
+$(BASH_SOURCE)/configure: bash-version-resolved $(BASH_BARE_REPO)/HEAD
 	[ -e $@ ] || git -C $(BASH_BARE_REPO) worktree add -f $(abspath $(BASH_SOURCE)) $(BASH_RESOLVED_COMMIT)
 export BASH_CFLAGS = -Wno-old-style-definition -Wno-implicit-function-declaration -std=gnu99 -Wno-int-conversion -w -Wno-implicit-int -Wno-discarded-qualifiers -D_GNU_SOURCE -Wno-return-mismatch -Wno-incompatible-pointer-types -Wno-error=implicit-function-declaration
 BASH_EXTRA_CONFIGURE_FLAGS ?=
-BASH_CONFIGURE_FLAGS ?= --disable-nls --prefix=$(abspath $(BASH_PREFIX)) $(BASH_EXTRA_CONFIGURE_FLAGS)
+BASH_CONFIGURE_FLAGS ?= --disable-nls --without-bash-malloc --prefix=$(abspath $(BASH_PREFIX)) $(BASH_EXTRA_CONFIGURE_FLAGS)
 # Bash installation location.
 BASH_PREFIX = $(BUILD_DIR)/$(BASH)/prefixbash/
 # configure depends on git files (cloned repo)
@@ -66,22 +64,28 @@ BASH_EXE=$(BASH_SOURCE)/bash
 # bash binary depends on Makefile
 $(BASH_EXE): $(BASH_SOURCE)/config.status
 	make -C $(BASH_SOURCE) -j$$(nproc) LOCAL_CFLAGS="$$BASH_CFLAGS" # SUBDIRS="builtins lib doc support"
-	# I do not need .o files. I just need headers.
-	find $(BASH_SOURCE) -name '*.o' -delete
 # install target depends on bash binary
 $(BASH_PREFIX)/bin/bash: $(BASH_SOURCE)/bash
 	make -C $(BASH_SOURCE) install
 bash-build: $(BASH_EXE)
-.PHONY: bash-build
+bash-distclean:
+	rm -rf $(BASH_SOURCE) $(BASH_PREFIX)
+bash-clean:
+	$(MAKE) -C $(BASH_SOURCE) clean
+	rm -rf $(BASH_PREFIX)
+BASH_TRIM = find $(BASH_SOURCE) -type f ! -name '*.[hc]' ! -name 'bash' ! -path '*/.git/*' ! -name '.git' ! -name 'configure'
+bash-trim-print: ; $(BASH_TRIM) -print ; $(BASH_TRIM) -exec du -ch {} + | tail -n1
+bash-trim-delete: ; $(BASH_TRIM) -print -delete
+.PHONY: bash-build bash-distclean bash-clean bash-trim-print bash-trim-delete
 
 ###############################################################################
 # ---- L_builtin targets ----
 CMAKE_BUILD_TYPE = Debug
 CMAKE_FLAGS = -D L_DEV=1 -D CMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
+CMAKE_EXTRA_FLAGS ?=
 BUILD = $(BUILD_DIR)/$(BASH)/build/
 $(BUILD)/L_builtin.so: $(BASH_SOURCE)/bash $(wildcard src/*) ./CMakeLists.txt
-	cmake -S . -B $(BUILD) $(CMAKE_FLAGS) \
-		-D BASH_SOURCE=$(BASH_SOURCE)
+	cmake -S . -B $(BUILD) -D BASH_SOURCE=$(BASH_SOURCE) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS)
 	cmake --build $(BUILD) -j $$(nproc)
 build: $(BUILD)/L_builtin.so
 TESTARGS ?= -Pn
@@ -121,14 +125,9 @@ cppcheck: check-compile-commands
 	cppcheck --project=$(BUILD)/compile_commands.json --suppress=missingIncludeSystem
 
 distclean:
-	rm -rf $(BUILD_DIR) compile_commands.json
-bash-distclean:
-	rm -rf $(BASH_SOURCE) $(BASH_PREFIX)
-bash-clean:
-	$(MAKE) -C $(BASH_SOURCE) clean
-	rm -rf $(BASH_PREFIX)
+	rm -rf $(BUILD) compile_commands.json
 clean:
-	rm -rf $(BUILD)
+	cmake --build $(BUILD) --target clean
 
 build/init.bash: build
 	echo 'enable -f ./$(BUILD)/L_builtin.so L_builtin' > $@
@@ -151,7 +150,7 @@ _test:
 	$(MAKE) test || { $(BASH_EXE) --version; exit 1; }
 test-all:
 	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) _test$(NL))
-test-all-all: bash_version_resolved
+test-all-all: bash-version-resolved
 	$(foreach I,$(BASH_RESOLVED_ALL_VERSIONS),$(MAKE) BASH=$(I) _test$(NL))
 build-all:
 	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) build$(NL))
