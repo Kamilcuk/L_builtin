@@ -49,11 +49,11 @@ bash-version-resolved: $(BASH_RESOLVED_FILE)
 
 ###############################################################################
 # ---- Building bash ----
-BASH_SOURCE = $(BUILD_DIR)/$(BASH)/bash/
+BASH_SOURCE_DIR = $(BUILD_DIR)/$(BASH)/bash/
 
 # git worktree depends on bare repo
-$(BASH_SOURCE)/configure: bash-version-resolved $(BASH_BARE_REPO)/HEAD
-	[ -e $@ ] || git -C $(BASH_BARE_REPO) worktree add -f $(abspath $(BASH_SOURCE)) $(BASH_RESOLVED_COMMIT)
+$(BASH_SOURCE_DIR)/configure: bash-version-resolved $(BASH_BARE_REPO)/HEAD
+	[ -e $@ ] || git -C $(BASH_BARE_REPO) worktree add -f $(abspath $(BASH_SOURCE_DIR)) $(BASH_RESOLVED_COMMIT)
 
 export BASH_CFLAGS = -Wno-old-style-definition -Wno-implicit-function-declaration -std=gnu99 -Wno-int-conversion -w -Wno-implicit-int -Wno-discarded-qualifiers -D_GNU_SOURCE -Wno-return-mismatch -Wno-incompatible-pointer-types -Wno-error=implicit-function-declaration
 
@@ -64,30 +64,30 @@ BASH_CONFIGURE_FLAGS ?= --disable-nls --without-bash-malloc --prefix=$(abspath $
 BASH_PREFIX = $(BUILD_DIR)/$(BASH)/prefixbash/
 
 # configure depends on git files (cloned repo)
-$(BASH_SOURCE)/config.status: $(BASH_SOURCE)/configure
-	cd $(BASH_SOURCE) && CFLAGS="$$BASH_CFLAGS" ./configure $(BASH_CONFIGURE_FLAGS)
+$(BASH_SOURCE_DIR)/config.status: $(BASH_SOURCE_DIR)/configure
+	cd $(BASH_SOURCE_DIR) && CFLAGS="$$BASH_CFLAGS" ./configure $(BASH_CONFIGURE_FLAGS)
 
-BASH_EXE=$(BASH_SOURCE)/bash
+BASH_EXE=$(BASH_SOURCE_DIR)/bash
 
 # bash binary depends on Makefile
-$(BASH_EXE): $(BASH_SOURCE)/config.status
-	make -C $(BASH_SOURCE) -j$$(nproc) LOCAL_CFLAGS="$$BASH_CFLAGS"
+$(BASH_EXE): $(BASH_SOURCE_DIR)/config.status
+	make -C $(BASH_SOURCE_DIR) -j$$(nproc) LOCAL_CFLAGS="$$BASH_CFLAGS"
 
 # install target depends on bash binary
 bash-install: $(BASH_PREFIX)/bin/bash
-$(BASH_PREFIX)/bin/bash: $(BASH_SOURCE)/bash
-	make -C $(BASH_SOURCE) install
+$(BASH_PREFIX)/bin/bash: $(BASH_SOURCE_DIR)/bash
+	make -C $(BASH_SOURCE_DIR) install
 
 bash-build: $(BASH_EXE)
 
 bash-distclean:
-	rm -rf $(BASH_SOURCE) $(BASH_PREFIX)
+	rm -rf $(BASH_SOURCE_DIR) $(BASH_PREFIX)
 
 bash-clean:
-	$(MAKE) -C $(BASH_SOURCE) clean
+	$(MAKE) -C $(BASH_SOURCE_DIR) clean
 	rm -rf $(BASH_PREFIX)
 
-BASH_TRIM = find $(BASH_SOURCE) -type f \
+BASH_TRIM = find $(BASH_SOURCE_DIR) -type f \
 	! -name '*.[hc]' \
 	! -name 'bash' \
 	! -path '*/.git/*' \

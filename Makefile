@@ -9,21 +9,32 @@ include Makefile.bash
 
 ###############################################################################
 # ---- L_builtin targets ----
-CMAKE_BUILD_TYPE = Debug
-CMAKE_FLAGS = -D L_DEV=1 -D CMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
-CMAKE_EXTRA_FLAGS ?=
-BUILD = $(BUILD_DIR)/$(BASH)/build/
-$(BUILD)/L_builtin.so: $(BASH_SOURCE)/bash $(wildcard src/*) ./CMakeLists.txt
-	cmake -S . -B $(BUILD) -D BASH_SOURCE=$(BASH_SOURCE) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS)
-	cmake --build $(BUILD) -j $$(nproc)
-build: $(BUILD)/L_builtin.so
+# Cargo build modes (replaces CMake)
+CARGO_PROFILE ?= debug
+CARGO_FEATURES ?= dev
+
+# Output paths
+TARGET_DIR = target
+L_BUILTIN_SO_DEBUG = $(TARGET_DIR)/debug/libL_builtin.so
+L_BUILTIN_SO_RELEASE = $(TARGET_DIR)/release/libL_builtin.so
+
+# Select binary based on profile
+ifeq ($(CARGO_PROFILE),release)
+L_BUILTIN_SO = $(L_BUILTIN_SO_RELEASE)
+else
+L_BUILTIN_SO = $(L_BUILTIN_SO_DEBUG)
+endif
+
+$(L_BUILTIN_SO): src/*.c src/*.h src/L_builtin.map build.rs Cargo.toml
+	BASH_SOURCE_DIR=$(BASH_SOURCE_DIR) cargo build $(if $(filter release,$(CARGO_PROFILE)),--release,) --features $(CARGO_FEATURES)
+build: $(L_BUILTIN_SO)
 TESTARGS ?= -Pn
 test: build
-	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh $(BUILD)/L_builtin.so $(ARGS) $(TESTARGS)
+	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh $(L_BUILTIN_SO) $(ARGS) $(TESTARGS)
 release-build:
-	$(MAKE) CMAKE_BUILD_TYPE=Release BUILD=$(BUILD_DIR)/$(BASH)/release build
+	$(MAKE) CARGO_PROFILE=release CARGO_FEATURES="" build
 release-test:
-	$(MAKE) CMAKE_BUILD_TYPE=Release BUILD=$(BUILD_DIR)/$(BASH)/release test
+	$(MAKE) CARGO_PROFILE=release CARGO_FEATURES="" test
 .PHONY: build test release-build release-test
 
 ###############################################################################

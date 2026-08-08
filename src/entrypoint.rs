@@ -129,7 +129,6 @@ fn build_eval_command<'a>(args: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
 /// `list` starts at VAR (the dispatcher already consumed the word `capture`).
 /// # Safety
 #[cfg(not(feature = "bash_lt_4_3"))]
-#[no_mangle]
 pub unsafe extern "C" fn l_capture_subcommand(list: *mut WORD_LIST) -> c_int {
     let mut args = WordListView::from_raw(list).into_iter();
     // var is a slice from bash WORD_LIST; use the original C string pointer.
@@ -159,7 +158,8 @@ pub unsafe extern "C" fn l_capture_output(var: *const c_char, list: *mut WORD_LI
     })
 }
 
-#[no_mangle]
+/// Top-level L_builtin entry point called by bash via L_builtin_struct.function
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
     // Parse top-level options (-v VAR) before dispatching to subcommand
     let (opts, args) = bash_getopt!(list, l_builtin_print_help, [h], [v]);
