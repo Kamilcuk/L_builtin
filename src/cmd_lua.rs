@@ -189,7 +189,7 @@ unsafe fn set_array_from_table(
     for pair in table.pairs::<Value, Value>() {
         let (k, v) = pair?;
         let idx = table_key_to_index(&k)? - base;
-        array_insert(array, idx, scalar_to_bytes(&v)?.as_ptr());
+        array_insert(array, idx, scalar_to_bytes(&v)?.as_ptr().cast_mut());
     }
     Ok(Value::Boolean(true))
 }

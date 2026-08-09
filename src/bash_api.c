@@ -5,19 +5,15 @@
 #include <stddef.h>
 #include <sys/types.h>
 #include <dlfcn.h>
-#include <shell.h>
-#include <variables.h>
-#include <array.h>
-#include <assoc.h>
-#include <command.h>
-#include <general.h>
-#include <externs.h>
-#include <subst.h>
-#include <execute_cmd.h>
-#include <unwind_prot.h>
-#include <builtins/common.h>
-#include <trap.h> // TRAP_STRING restore_default_signal ERROR_TRAP
+
 #include "bash_api.h"
+// bash_api_gen.h declares every l_* wrapper defined below, so the compiler
+// checks each declaration against its definition. It also pulls in all the
+// bash headers (shell.h, variables.h, array.h, assoc.h, command.h, general.h,
+// externs.h, subst.h, execute_cmd.h, unwind_prot.h, builtins/common.h,
+// trap.h) exactly once — shell.h has no include guard, so do NOT include those
+// headers directly here or redefinition errors result.
+#include "bash_api_gen.h"
 
 // For rust I require external symbols, so no macros.
 // These x* are defined for both Bash internal and non-internal allopcation paths.
@@ -44,9 +40,6 @@ ARRAY_ELEMENT *l_array_head(ARRAY *a) { return a->head; }
 ARRAY_ELEMENT *l_element_forw(ARRAY_ELEMENT *ae) { return element_forw(ae); }
 char *l_element_value(ARRAY_ELEMENT *ae) { return element_value(ae); }
 long long l_element_index(ARRAY_ELEMENT *ae) { return (long long)element_index(ae); }
-WORD_LIST *l_word_list_next(WORD_LIST *list) { return list->next; }
-WORD_DESC *l_word_list_word(WORD_LIST *list) { return list->word; }
-char *l_word_desc_string(WORD_DESC *word) { return word->word; }
 int l_readonly_p(SHELL_VAR *var) { return readonly_p(var); }
 int l_invisible_p(SHELL_VAR *var) { return invisible_p(var); }
 int l_array_p(SHELL_VAR *var) { return array_p(var); }

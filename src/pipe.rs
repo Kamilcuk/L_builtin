@@ -77,11 +77,11 @@ pub unsafe extern "C" fn pipe_subcommand(list: *mut WORD_LIST) -> c_int {
 
     // Insert read fd (index 0)
     let read_fd = crate::shared::I64Str::new(fds[0] as i64);
-    unsafe { crate::bash_api::array_insert(array, 0, read_fd.as_ptr()) };
+    unsafe { crate::bash_api::array_insert(array, 0, read_fd.as_ptr().cast_mut()) };
 
     // Insert write fd (index 1)
     let write_fd = crate::shared::I64Str::new(fds[1] as i64);
-    unsafe { crate::bash_api::array_insert(array, 1, write_fd.as_ptr()) };
+    unsafe { crate::bash_api::array_insert(array, 1, write_fd.as_ptr().cast_mut()) };
 
     EXECUTION_SUCCESS
 }

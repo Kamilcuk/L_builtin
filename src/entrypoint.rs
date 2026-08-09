@@ -123,7 +123,8 @@ fn build_eval_command<'a>(args: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
 pub unsafe extern "C" fn l_capture_subcommand(list: *mut WORD_LIST) -> c_int {
     let mut args = WordListView::from_raw(list).into_iter();
     // var is a slice from bash WORD_LIST; use the original C string pointer.
-    // l_word_desc_string returns a NUL-terminated C string.
+    // The WORD_DESC.word field (direct field access on the generated layout)
+    // is a NUL-terminated C string.
     let var_ptr = match args.next() {
         None => {
             beprintln!(b"L_builtin capture: usage: L_builtin capture VAR <command> [args...]");

@@ -33,6 +33,7 @@ fn main() {
     }
     let loadable_info = generate_loadables_array(&bash_source);
     generate_loadables_header(&loadable_info);
+    generate_bash_bindings(&bash_source, bash_version);
     compile_c_sources(&bash_source, bash_version, &loadable_info);
     setup_version_script();
     if cfg!(feature = "dev") {
@@ -144,6 +145,84 @@ fn generate_loadables_header(info: &(Vec<String>, Vec<PathBuf>)) {
     let header_path = out_dir.join("bash_loadables_gen.h");
     fs::write(&header_path, content).expect("Failed to write bash_loadables_gen.h");
     println!("cargo:rerun-if-changed={}", header_path.display());
+}
+
+fn generate_bash_bindings(bash_source: &Path, bash_version: i32) {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let header = "src/bash_api_gen.h";
+
+    // Bash API functions called from Rust that live in bash's own headers.
+    const BASH_FUNCTIONS: &[&str] = &[
+        "find_variable",
+        "bind_variable",
+        "find_function",
+        "make_new_array_variable",
+        "convert_var_to_array",
+        "make_new_assoc_variable",
+        "array_flush",
+        "array_insert",
+        "assoc_flush",
+        "assoc_keys_to_word_list",
+        "assoc_reference",
+        "make_word",
+        "make_word_list",
+        "execute_shell_function",
+        "dispose_words",
+        "expand_string_to_string",
+        "expand_string",
+        "builtin_usage",
+    ];
+    // Bash internal types referenced only behind pointers from Rust.
+    // WORD_DESC and WORD_LIST are intentionally NOT opaque: Rust traverses the
+    // word-list chain by direct field access (`(*list).next`, `(*word).word`).
+    const OPAQUE_TYPES: &[&str] = &[
+        "SHELL_VAR",
+        "ARRAY",
+        "ARRAY_ELEMENT",
+        "HASH_TABLE",
+    ];
+
+    let mut builder = bindgen::Builder::default()
+        .header(header)
+        .clang_arg("-DHAVE_CONFIG_H")
+        .clang_arg("-DHAVE_PPOLL=1")
+        .clang_arg(format!("-DL_BASH_VERSION={}", bash_version))
+        .clang_arg("-DSHELL")
+        .clang_arg("-D_GNU_SOURCE=1")
+        .clang_arg("-std=gnu99")
+        .clang_args([
+            format!("-I{}", bash_source.display()),
+            format!("-I{}", bash_source.join("include").display()),
+            format!("-I{}", bash_source.join("builtins").display()),
+            format!("-I{}", bash_source.join("lib").display()),
+            format!("-I{}", out_dir.display()),
+        ])
+        // Every l_* wrapper (bash_api_gen.h) plus the specific bash entry
+        // points Rust calls directly. Note: the pattern is a regex, so `l_.*`
+        // (not `l_*`, which means "l" + zero or more underscores).
+        .allowlist_function("l_.*");
+    for f in BASH_FUNCTIONS {
+        builder = builder.allowlist_function(f);
+    }
+    // this_command_name (entrypoint.rs) and current_builtin (struct builtin *)
+    // are read by Rust.
+    builder = builder
+        .allowlist_var("this_command_name")
+        .allowlist_var("current_builtin");
+    // Full definition of `struct builtin`; everything else stays opaque.
+    builder = builder.allowlist_type("builtin");
+    for ty in OPAQUE_TYPES {
+        builder = builder.allowlist_type(ty).opaque_type(ty);
+    }
+
+    let bindings = builder
+        .generate()
+        .expect("bindgen failed for bash_api_gen.h");
+    let bindings_out = out_dir.join("bash_api_gen.rs");
+    bindings
+        .write_to_file(&bindings_out)
+        .expect("Failed to write bash_api_gen.rs");
+    println!("cargo:rerun-if-changed={}", header);
 }
 
 fn compile_c_sources(
