@@ -175,11 +175,8 @@ fn compile_c_sources(
         .files(&loadable_info.1)
         .compile("bash_loadables");
     let glue_sources = [
-        "lseek.c",
         "poll.c",
         "sig.c",
-        "pipe.c",
-        "net.c",
         "bash_api.c",
         "cmd_ext.c",
         "L_builtin.c",
@@ -191,7 +188,7 @@ fn compile_c_sources(
         .files(glue_sources.into_iter().map(|x| Path::new("src").join(x)))
         .compile("c_sources");
     println!("cargo:rustc-link-lib=static=c_sources");
-    println!("cargo:rustc-link-lib=static=bash_glue");
+    // println!("cargo:rustc-link-lib=static=bash_glue");
     let link_args = [
         "-Wl,--no-gc-sections",
         "-Wl,--no-undefined-version",

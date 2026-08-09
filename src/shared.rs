@@ -182,3 +182,264 @@ pub(crate) fn capture_into_variable(
     return_on_err!(ename, res, 1);
     ret
 }
+
+////////////////////////////////////
+
+pub const fn max_str_len_for_bits(bits: usize) -> usize {
+    // ceil(bits * log10(2)) + 1 (sign) + 1 (null terminator)
+    ((bits * 30103) / 100000) + 3
+}
+
+pub struct IntStr<const N: usize> {
+    buf: [u8; N],
+    start: usize,
+}
+
+impl<const N: usize> IntStr<N> {
+    pub fn as_ptr(&self) -> *const c_char {
+        &self.buf[self.start] as *const u8 as *const c_char
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buf[self.start..N - 1]
+    }
+}
+
+// Constructor for i64
+impl<const N: usize> IntStr<N> {
+    pub fn new_i64(val: i64) -> Self {
+        let mut buf = [0u8; N];
+        let mut n = val;
+        let is_negative = n < 0;
+        if is_negative {
+            n = -n;
+        }
+        let mut i = N;
+        i -= 1;
+        buf[i] = 0; // null terminator
+        if n == 0 {
+            i -= 1;
+            buf[i] = b'0';
+        } else {
+            while n > 0 && i > 0 {
+                i -= 1;
+                buf[i] = b'0' + (n % 10) as u8;
+                n /= 10;
+            }
+        }
+        if is_negative && i > 0 {
+            i -= 1;
+            buf[i] = b'-';
+        }
+        Self { buf, start: i }
+    }
+}
+
+// Constructor for u64
+impl<const N: usize> IntStr<N> {
+    pub fn new_u64(val: u64) -> Self {
+        let mut buf = [0u8; N];
+        let mut n = val;
+        let mut i = N;
+        i -= 1;
+        buf[i] = 0; // null terminator
+        if n == 0 {
+            i -= 1;
+            buf[i] = b'0';
+        } else {
+            while n > 0 && i > 0 {
+                i -= 1;
+                buf[i] = b'0' + (n % 10) as u8;
+                n /= 10;
+            }
+        }
+        Self { buf, start: i }
+    }
+}
+
+// Constructor for usize
+impl<const N: usize> IntStr<N> {
+    pub fn new_usize(val: usize) -> Self {
+        let mut buf = [0u8; N];
+        let mut n = val;
+        let mut i = N;
+        i -= 1;
+        buf[i] = 0; // null terminator
+        if n == 0 {
+            i -= 1;
+            buf[i] = b'0';
+        } else {
+            while n > 0 && i > 0 {
+                i -= 1;
+                buf[i] = b'0' + (n % 10) as u8;
+                n /= 10;
+            }
+        }
+        Self { buf, start: i }
+    }
+}
+
+// Newtype wrappers to create distinct types (not just aliases)
+pub struct SizeTStr(IntStr<{ max_str_len_for_bits(size_of::<usize>() * 8) }>);
+pub struct I64Str(IntStr<{ max_str_len_for_bits(64) }>);
+pub struct U64Str(IntStr<{ max_str_len_for_bits(64) }>);
+
+impl SizeTStr {
+    pub fn from_usize(val: usize) -> Self {
+        Self(IntStr::new_usize(val))
+    }
+    pub fn as_ptr(&self) -> *const c_char {
+        self.0.as_ptr()
+    }
+}
+
+impl I64Str {
+    pub fn new(val: i64) -> Self {
+        Self(IntStr::new_i64(val))
+    }
+    pub fn as_ptr(&self) -> *const c_char {
+        self.0.as_ptr()
+    }
+}
+
+impl U64Str {
+    pub fn new(val: u64) -> Self {
+        Self(IntStr::new_u64(val))
+    }
+    pub fn as_ptr(&self) -> *const c_char {
+        self.0.as_ptr()
+    }
+}
+
+////////////////////////////////////
+// C string helpers - no allocations, work with raw pointers from bash
+////////////////////////////////////
+
+/// Convert a raw C string pointer to &str (borrowing, no allocation)
+pub fn cstr_to_str(ptr: *const c_char) -> Option<&'static str> {
+    if ptr.is_null() {
+        return None;
+    }
+    unsafe { CStr::from_ptr(ptr).to_str().ok() }
+}
+
+/// Convert a raw C string pointer to &[u8] (borrowing, no allocation)
+pub fn cstr_to_bytes(ptr: *const c_char) -> Option<&'static [u8]> {
+    if ptr.is_null() {
+        return None;
+    }
+    Some(unsafe { CStr::from_ptr(ptr).to_bytes() })
+}
+
+/// Parse an integer from a raw C string pointer
+pub fn parse_int<T: std::str::FromStr>(ptr: *const c_char) -> Option<T> {
+    cstr_to_str(ptr)?.parse().ok()
+}
+
+/// Create a null-terminated C string from a raw buffer using a stack buffer
+pub fn bytes_to_cstr<'a, const N: usize>(bytes: &[u8], buf: &'a mut [u8; N]) -> *const c_char {
+    let len = bytes.len().min(N - 1);
+    buf[..len].copy_from_slice(&bytes[..len]);
+    buf[len] = 0;
+    buf.as_ptr() as *const c_char
+}
+
+/// Format a string into a stack buffer and return a null-terminated C pointer.
+///
+/// `$size` is the total buffer size in bytes; the last byte is reserved for the
+/// null terminator. Returns `*const c_char`.
+///
+/// # Example
+/// ```ignore
+/// let addr_ptr = bufwrite!(48, "{}:{}", ip, port);
+/// ```
+#[macro_export]
+macro_rules! bufwrite {
+    ($size:expr, $($arg:tt)*) => {{
+        let mut buf = [0u8; $size];
+        let mut cursor = ::std::io::Cursor::new(&mut buf[..$size - 1]);
+        let _ = ::std::io::Write::write_fmt(&mut cursor, ::core::format_args!($($arg)*));
+        let pos = cursor.position() as usize;
+        buf[pos] = 0;
+        buf.as_ptr() as *const ::std::os::raw::c_char
+    }};
+}
+
+////////////////////////////////////
+// Zero-allocation integer parsing from ASCII bytes
+
+/// Trait for primitive integers that can be parsed from raw ASCII bytes.
+pub trait FromAsciiBytes: Sized {
+    fn parse_ascii(bytes: &[u8]) -> Option<Self>;
+}
+
+macro_rules! impl_from_ascii_signed {
+    ($($t:ty),*) => {
+        $(
+            impl FromAsciiBytes for $t {
+                fn parse_ascii(bytes: &[u8]) -> Option<Self> {
+                    if bytes.is_empty() {
+                        return None;
+                    }
+                    let (is_neg, digits) = match bytes {
+                        [b'-', rest @ ..] if !rest.is_empty() => (true, rest),
+                        [b'+', rest @ ..] if !rest.is_empty() => (false, rest),
+                        _ => (false, bytes),
+                    };
+
+                    let mut acc: $t = 0;
+                    for &b in digits {
+                        if !b.is_ascii_digit() {
+                            return None;
+                        }
+                        let digit = (b - b'0') as $t;
+                        acc = acc.checked_mul(10)?.checked_add(digit)?;
+                    }
+
+                    if is_neg {
+                        acc.checked_neg()
+                    } else {
+                        Some(acc)
+                    }
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_from_ascii_unsigned {
+    ($($t:ty),*) => {
+        $(
+            impl FromAsciiBytes for $t {
+                fn parse_ascii(bytes: &[u8]) -> Option<Self> {
+                    if bytes.is_empty() {
+                        return None;
+                    }
+                    let digits = match bytes {
+                        [b'+', rest @ ..] if !rest.is_empty() => rest,
+                        _ => bytes,
+                    };
+
+                    let mut acc: $t = 0;
+                    for &b in digits {
+                        if !b.is_ascii_digit() {
+                            return None;
+                        }
+                        let digit = (b - b'0') as $t;
+                        acc = acc.checked_mul(10)?.checked_add(digit)?;
+                    }
+                    Some(acc)
+                }
+            }
+        )*
+    };
+}
+
+impl_from_ascii_signed!(i8, i16, i32, i64, isize);
+impl_from_ascii_unsigned!(u8, u16, u32, u64, usize);
+
+/// Parse `&[u8]` into any type implementing `FromAsciiBytes`.
+#[inline]
+pub fn parse_bytes<T: FromAsciiBytes>(bytes: &[u8]) -> Option<T> {
+    T::parse_ascii(bytes)
+}

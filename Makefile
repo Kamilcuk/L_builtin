@@ -25,8 +25,11 @@ else
 L_BUILTIN_SO = $(L_BUILTIN_SO_DEBUG)
 endif
 
-$(L_BUILTIN_SO): src/*.c src/*.h src/L_builtin.map build.rs Cargo.toml
-	BASH_SOURCE_DIR=$(BASH_SOURCE_DIR) cargo build $(if $(filter release,$(CARGO_PROFILE)),--release,) --features $(CARGO_FEATURES)
+CARGO = BASH_SOURCE_DIR=$(BASH_SOURCE_DIR) cargo
+
+$(L_BUILTIN_SO): $(wildcard src/*) build.rs Cargo.toml
+	$(CARGO) build $(if $(filter release,$(CARGO_PROFILE)),--release,) --features $(CARGO_FEATURES)
+	ln -vfs $(L_BUILTIN_SO) L_builtin.so
 build: $(L_BUILTIN_SO)
 TESTARGS ?= -Pn
 test: build
@@ -41,16 +44,12 @@ release-test:
 # --- Additional targets ---
 
 rustchecks:
-	cargo fmt --all -- --check
-	cargo clippy --all-targets --all-features -- -D warnings
-	cargo test --all-features
+	$(CARGO) fmt --all -- --check
+	$(CARGO) clippy --all-targets --all-features -- -D warnings
+	$(CARGO) test --all-features
 
 format:
-	clang-format -i src/*.c src/*.h
-	cargo fix --lib -p l_builtin_rs --allow-dirty
-
-check-format:
-	clang-format --dry-run --Werror src/*.c src/*.h
+	$(CARGO) fix --lib -p L_builtin --allow-dirty
 
 check-compile-commands:
 	@[ -f $(BUILD)/compile_commands.json ] || { echo "Error: $(BUILD)/compile_commands.json not found. Run make first.";  exit 1 }
@@ -67,7 +66,7 @@ cppcheck: check-compile-commands
 distclean:
 	rm -rf $(BUILD) compile_commands.json
 clean:
-	cmake --build $(BUILD) --target clean
+	$(CARGO) clean
 
 build/init.bash: build
 	echo 'enable -f ./$(BUILD)/L_builtin.so L_builtin' > $@

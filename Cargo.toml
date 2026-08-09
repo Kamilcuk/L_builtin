@@ -40,7 +40,10 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-[workspace.lints.clippy]
+[lints.rust]
+dead_code = "allow"
+
+[lints.clippy]
 missing_safety_doc = "allow"
 undocumented_unsafe_blocks = "allow"
 

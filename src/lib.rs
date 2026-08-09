@@ -16,6 +16,15 @@ pub(crate) mod entrypoint;
 pub(crate) mod shared;
 pub(crate) mod bash_getopt;
 pub(crate) mod intlookup;
+pub(crate) mod lseek;
+pub(crate) mod pipe;
+pub(crate) mod listen;
+pub(crate) mod accept;
+pub(crate) mod connect;
+pub(crate) mod shutdown;
+pub(crate) mod send;
+pub(crate) mod recv;
+pub(crate) mod sleep;
 
 /// Route all Rust allocations through bash's allocator, so the whole process
 /// shares one heap regardless of how bash was configured. See `bash_alloc`.

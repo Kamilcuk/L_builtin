@@ -21,20 +21,11 @@ use crate::bash_api::l_execute_command_string;
 
 // C subcommand handlers (compiled into the same .so)
 extern "C" {
-    fn lseek_subcommand(list: *mut WORD_LIST) -> c_int;
     fn poll_subcommand(list: *mut WORD_LIST) -> c_int;
     #[cfg(feature = "ppoll")]
     fn ppoll_subcommand(list: *mut WORD_LIST) -> c_int;
     fn sigmask_subcommand(list: *mut WORD_LIST) -> c_int;
     fn sigunmask_subcommand(list: *mut WORD_LIST) -> c_int;
-    fn pipe_subcommand(list: *mut WORD_LIST) -> c_int;
-    fn listen_subcommand(list: *mut WORD_LIST) -> c_int;
-    fn accept_subcommand(list: *mut WORD_LIST) -> c_int;
-    fn connect_subcommand(list: *mut WORD_LIST) -> c_int;
-    fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int;
-    fn send_subcommand(list: *mut WORD_LIST) -> c_int;
-    fn recv_subcommand(list: *mut WORD_LIST) -> c_int;
-    fn sleep_subcommand(list: *mut WORD_LIST) -> c_int;
     fn l_cmd_ext(list: *mut WORD_LIST) -> c_int;
     fn fflush(stream: *mut core::ffi::c_void) -> c_int;
     #[link_name = "L_builtin_doc"]
@@ -44,20 +35,20 @@ extern "C" {
 type SubcommandFn = unsafe extern "C" fn(*mut WORD_LIST) -> c_int;
 
 const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
-    ("lseek", lseek_subcommand),
+    ("lseek", crate::lseek::lseek_subcommand),
     ("poll", poll_subcommand),
     #[cfg(feature = "ppoll")]
     ("ppoll", ppoll_subcommand),
     ("sigmask", sigmask_subcommand),
     ("sigunmask", sigunmask_subcommand),
-    ("pipe", pipe_subcommand),
-    ("listen", listen_subcommand),
-    ("accept", accept_subcommand),
-    ("connect", connect_subcommand),
-    ("shutdown", shutdown_subcommand),
-    ("send", send_subcommand),
-    ("recv", recv_subcommand),
-    ("sleep", sleep_subcommand),
+    ("pipe", crate::pipe::pipe_subcommand),
+    ("listen", crate::listen::listen_subcommand),
+    ("accept", crate::accept::accept_subcommand),
+    ("connect", crate::connect::connect_subcommand),
+    ("shutdown", crate::shutdown::shutdown_subcommand),
+    ("send", crate::send::send_subcommand),
+    ("recv", crate::recv::recv_subcommand),
+    ("sleep", crate::sleep::sleep_subcommand),
     ("core", crate::cmd_core::l_core_subcommand),
     ("lua", crate::cmd_lua::l_lua_subcommand),
     ("ext", l_cmd_ext),

@@ -122,6 +122,7 @@ extern "C" {
     pub fn l_word_desc_string(word: *mut WORD_DESC) -> *mut c_char;
     #[cfg(not(feature = "bash_lt_4_3"))]
     pub fn l_execute_command_string(cmd: *const c_char) -> c_int;
+    pub fn builtin_usage();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -152,17 +153,52 @@ impl Drop for CStringOwned {
 
 /// Wrapper to track lifetimes of char pointers.
 #[repr(transparent)]
-pub struct Cpnt<'a>(pub *mut c_char, pub PhantomData<&'a c_char>);
+pub struct Cpnt<'a>(*mut c_char, PhantomData<&'a c_char>);
 
 impl<'a> Cpnt<'a> {
     pub const fn new(ptr: *mut c_char) -> Self {
         Self(ptr, PhantomData)
     }
+    pub unsafe fn to_cstr(&self) -> &'a CStr {
+        CStr::from_ptr(self.0)
+    }
     pub unsafe fn to_bytes(&self) -> &'a [u8] {
-        CStr::from_ptr(self.0).to_bytes()
+        self.to_cstr().to_bytes()
+    }
+    pub unsafe fn to_str(&self) -> Result<&'a str, std::str::Utf8Error> {
+        self.to_cstr().to_str()
     }
     pub const fn as_ptr(&self) -> *mut c_char {
         self.0
+    }
+    /// Compare the C string with a byte slice (excluding the null terminator).
+    pub unsafe fn eq_bytes(&self, other: &[u8]) -> bool {
+        self.to_bytes() == other
+    }
+    /// Compare the C string with a `&str` (excluding the null terminator).
+    pub unsafe fn eq_str(&self, other: &str) -> bool {
+        self.to_bytes() == other.as_bytes()
+    }
+    /// Compare the C string with a null-terminated string using `libc::strcmp`.
+    /// The `other` must contain a null byte (e.g. `"--help\0"`).
+    pub unsafe fn strcmp(&self, other: &str) -> bool {
+        debug_assert!(
+            other.as_bytes().last() == Some(&0),
+            "strcmp: `other` must be null-terminated"
+        );
+        unsafe { libc::strcmp(self.0, other.as_ptr() as *const c_char) == 0 }
+    }
+}
+
+impl<'a, 'b> PartialEq<&'b [u8]> for Cpnt<'a> {
+    fn eq(&self, other: &&'b [u8]) -> bool {
+        unsafe { self.to_bytes() == *other }
+    }
+}
+
+impl<'a> PartialEq<&str> for Cpnt<'a> {
+    fn eq(&self, other: &&str) -> bool {
+        unsafe { self.to_bytes() == other.as_bytes() }
     }
 }
 

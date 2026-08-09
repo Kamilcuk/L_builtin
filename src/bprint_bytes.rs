@@ -317,7 +317,6 @@ macro_rules! beprintln {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CString;
     use std::io::Cursor;
 
     #[test]
@@ -330,7 +329,7 @@ mod tests {
     }
     #[test]
     fn test_cstr() {
-        let s = CString::new("hello").unwrap();
+        let s = std::ffi::CStr::from_bytes_with_nul(b"hello\0").unwrap();
         bprintln!(s.as_ptr());
     }
     #[test]
