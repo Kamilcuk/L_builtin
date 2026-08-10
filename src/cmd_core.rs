@@ -10,10 +10,10 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListIterOsString, WordListView, EX_NOTFOUND, EX_USAGE, WORD_LIST};
+use crate::bash_api::{WordListIterOsString, WordListView, EX_NOTFOUND, WORD_LIST};
 use crate::intlookup::IntLookup64;
 use crate::subcmd::CmdDesc;
-use crate::{bash_getopt, beprintln, intlookup};
+use crate::{beprintln, getopts, intlookup};
 
 use std::os::raw::c_int;
 
@@ -32,7 +32,7 @@ Available subcommands:
     rm       Remove files or directories
     tee      Copy stdin to each FILE and stdout
 
-Use 'L_builtin core <subcommand> -h' for more information.
+Use 'L_builtin core <subcommand> --help' for more information.
 ",
 );
 
@@ -66,7 +66,7 @@ const UU_DISPATCH_TABLE: IntLookup64<UuMain, { UU_DISPATCH_ENTRIES.len() }> = in
 #[no_mangle]
 pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
     CMD.enter();
-    let (_, args) = bash_getopt!(list, [], []);
+    let args = getopts!(list, [], []);
     let view = unsafe { WordListView::from_raw(args) };
     let val = match view.iter().current() {
         Some(val) => val.to_bytes(),

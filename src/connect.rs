@@ -7,7 +7,7 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
-use crate::{bash_getopt, beprintln};
+use crate::{beprintln, getopts};
 use std::os::fd::{AsRawFd, IntoRawFd};
 use std::os::raw::c_int;
 
@@ -33,7 +33,7 @@ Returns success unless connection fails or variable binding fails.
 #[no_mangle]
 pub unsafe extern "C" fn connect_subcommand(list: *mut WORD_LIST) -> c_int {
     CMD.enter();
-    let (_, args) = bash_getopt!(list, [], []);
+    let args = getopts!(list, [], []);
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();

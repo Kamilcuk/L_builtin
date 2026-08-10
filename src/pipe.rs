@@ -8,7 +8,7 @@
 
 use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{bash_getopt, beprintln};
+use crate::{beprintln, getopts};
 use std::os::raw::c_int;
 
 const ENAME: &str = "L_builtin pipe";
@@ -31,7 +31,7 @@ Returns success unless the pipe cannot be created or ARRAY is invalid.
 #[no_mangle]
 pub unsafe extern "C" fn pipe_subcommand(list: *mut WORD_LIST) -> c_int {
     CMD.enter();
-    let (_, args) = bash_getopt!(list, [], []);
+    let args = getopts!(list, [], []);
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();

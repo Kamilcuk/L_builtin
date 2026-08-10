@@ -14,7 +14,7 @@ pub(crate) mod cmd_core;
 pub(crate) mod cmd_lua;
 pub(crate) mod entrypoint;
 pub(crate) mod shared;
-pub(crate) mod bash_getopt;
+pub(crate) mod getopts;
 pub(crate) mod intlookup;
 pub(crate) mod lseek;
 pub(crate) mod pipe;
@@ -31,6 +31,7 @@ pub(crate) mod memfd;
 pub(crate) mod timerfd;
 pub(crate) mod signalfd;
 pub(crate) mod splice;
+pub(crate) mod variadic;
 
 /// Route all Rust allocations through bash's allocator, so the whole process
 /// shares one heap regardless of how bash was configured. See `bash_alloc`.

@@ -6,12 +6,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
+use crate::bash_api::{
+    this_cmd_name, WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
+};
 use crate::subcmd::CmdDesc;
-use crate::{bash_getopt, beprintln};
+use crate::{beprintln, getopts};
 use std::os::raw::c_int;
-
-const ENAME: &str = "L_builtin shutdown";
 
 const CMD: CmdDesc = CmdDesc::new(
     c"shutdown",
@@ -34,7 +34,7 @@ Returns success unless shutdown fails.
 #[no_mangle]
 pub unsafe extern "C" fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int {
     CMD.enter();
-    let (_, args) = bash_getopt!(list, [], []);
+    let args = getopts!(list, [], []);
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();
@@ -47,18 +47,18 @@ pub unsafe extern "C" fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int {
                 Ok(s) => match s.parse::<c_int>() {
                     Ok(fd) => fd,
                     Err(_) => {
-                        beprintln!(ENAME, b": invalid fd: ", fd_bytes);
+                        beprintln!(this_cmd_name(), b": invalid fd: ", fd_bytes);
                         return EX_USAGE;
                     }
                 },
                 Err(_) => {
-                    beprintln!(ENAME, b": invalid fd encoding");
+                    beprintln!(this_cmd_name(), b": invalid fd encoding");
                     return EX_USAGE;
                 }
             }
         }
         None => {
-            beprintln!(ENAME, b": missing FD argument");
+            beprintln!(this_cmd_name(), b": missing FD argument");
             return EX_USAGE;
         }
     };
@@ -70,7 +70,7 @@ pub unsafe extern "C" fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int {
         let how_str = match std::str::from_utf8(how_bytes) {
             Ok(s) => s,
             Err(_) => {
-                beprintln!(ENAME, b": invalid shutdown mode encoding");
+                beprintln!(this_cmd_name(), b": invalid shutdown mode encoding");
                 return EX_USAGE;
             }
         };
@@ -80,7 +80,7 @@ pub unsafe extern "C" fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int {
             "WR" | "1" => libc::SHUT_WR,
             "RDWR" | "2" => libc::SHUT_RDWR,
             _ => {
-                beprintln!(ENAME, b": invalid shutdown mode: ", how_bytes);
+                beprintln!(this_cmd_name(), b": invalid shutdown mode: ", how_bytes);
                 return EX_USAGE;
             }
         };
@@ -88,9 +88,14 @@ pub unsafe extern "C" fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int {
 
     // Call shutdown
     if unsafe { libc::shutdown(fd, how) } < 0 {
-        beprintln!(ENAME, b": shutdown failed: ", std::io::Error::last_os_error());
+        beprintln!(
+            this_cmd_name(),
+            b": shutdown failed: ",
+            std::io::Error::last_os_error()
+        );
         return EXECUTION_FAILURE;
     }
 
     EXECUTION_SUCCESS
 }
+

@@ -9,11 +9,13 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{c_char, c_int, this_command_name, WordListView, EX_USAGE, WORD_LIST};
+use crate::bash_api::{
+    builtin_error, c_char, c_int, this_cmd_name, WordListView, EX_USAGE, WORD_LIST,
+};
 use crate::intlookup::IntLookup128;
 use crate::shared::{capture_into_variable, flush_stdout_buffers};
 use crate::subcmd::{CmdDesc, SubcommandFn, SubcommandGuard};
-use crate::{bash_getopt, beprintln, bprintln, intlookup};
+use crate::{beprintln, bprintln, getopts, intlookup, variadic};
 
 #[cfg(not(feature = "bash_lt_4_3"))]
 use crate::bash_api::l_execute_command_string;
@@ -136,26 +138,37 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("capture", l_capture_subcommand),
 ];
 
+const fn extract_first<const N: usize>(a: &[(&'static str, SubcommandFn)]) -> [&'static str; N] {
+    let mut names = [""; N];
+    let mut i = 0;
+    while i < N {
+        names[i] = a[i].0;
+        i += 1;
+    }
+    names
+}
+
+/// Extract just the subcommand names for usage printing.
+const SUBCOMMAND_NAMES: &[&str] =
+    &extract_first::<{ SUBCOMMAND_ENTRIES.len() }>(SUBCOMMAND_ENTRIES);
+
 const SUBCOMMAND_TABLE: IntLookup128<SubcommandFn, { SUBCOMMAND_ENTRIES.len() }> =
     intlookup!(&SUBCOMMAND_ENTRIES);
 
-unsafe fn l_builtin_print_usage() {
-    let cmd_name = this_command_name;
-    if !cmd_name.is_null() && *cmd_name != 0 {
-        bprintln!(cmd_name, ": usage:");
-    }
-    let doc_array = L_BUILTIN_DOC.as_ptr();
-    let short_doc_ptr = *doc_array.add(2);
-    if !short_doc_ptr.is_null() {
-        bprintln!(short_doc_ptr);
-    }
-}
-unsafe fn l_builtin_unknown_subcommand(name: &[u8]) {
-    let cmd_name = this_command_name;
-    if !cmd_name.is_null() && *cmd_name != 0 {
-        beprintln!(cmd_name, ": unknown subcommand:", name);
-    } else {
-        beprintln!("unknown subcommand:", name);
+fn l_builtin_print_usage() {
+    let cmd_name = this_cmd_name();
+    // Print usage line
+    bprintln!(
+        cmd_name,
+        b": usage: ",
+        cmd_name,
+        " [-v VAR] <subcommand> [options] [args]"
+    );
+    bprintln!(b"");
+    bprintln!(b"Available subcommands:");
+    // Print each subcommand name
+    for name in SUBCOMMAND_NAMES {
+        bprintln!(b"  ", name);
     }
 }
 
@@ -240,13 +253,19 @@ pub unsafe extern "C" fn l_capture_output(var: *const c_char, list: *mut WORD_LI
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
     // Parse top-level options (-v VAR) before dispatching to subcommand
-    let (opts, args) = bash_getopt!(list, [], [v]);
+    let mut var: *mut c_char = std::ptr::null_mut();
+    let args = getopts!(
+        list,
+        [],
+        [ v => |v| var = v.as_ptr().cast() ]
+    );
     let view = unsafe { WordListView::from_raw(args) };
     let mut list = view.into_iter();
     let first_word = match list.next() {
         Some(first_word) => first_word,
         None => {
-            unsafe { l_builtin_print_usage() };
+            variadic!(builtin_error, c"missing subcommand");
+            l_builtin_print_usage();
             return EX_USAGE;
         }
     };
@@ -255,7 +274,13 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
     let subcommand = match SUBCOMMAND_TABLE.lookup(first) {
         Some(f) => f,
         None => {
-            unsafe { l_builtin_unknown_subcommand(first) };
+            // beprintln!(this_cmd_name(), b": unknown subcommand:", first);
+            variadic!(
+                builtin_error,
+                c"unknown subcommand: %s",
+                first_word.as_ptr(),
+            );
+            l_builtin_print_usage();
             return EX_USAGE;
         }
     };
@@ -266,9 +291,11 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
     // Flush before the handler so buffered bash/C output cannot be reordered
     // against direct fd writes from Rust.
     flush_stdout_buffers();
-    let ret = if let Some(var) = opts.v {
+    let ret = if !var.is_null() {
         // -v VAR was provided: capture subcommand stdout into VAR
-        capture_into_variable("L_builtin", var, true, || unsafe { subcommand(list.as_ptr()) })
+        capture_into_variable("L_builtin", var, true, || unsafe {
+            subcommand(list.as_ptr())
+        })
     } else {
         unsafe { subcommand(list.as_ptr()) }
     };

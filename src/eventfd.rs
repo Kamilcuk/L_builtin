@@ -6,12 +6,10 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
 use crate::{beprintln, bprintln, getopts, parse_positionals};
 use std::os::raw::{c_char, c_int};
-
-const ENAME: &str = "L_builtin eventfd";
 
 const CMD: CmdDesc = CmdDesc::new(
     c"eventfd",
@@ -30,6 +28,21 @@ INITVAL initializes the counter (default 0).
 
 Exit Status:
 Returns success unless the eventfd cannot be created or the variable cannot be bound.
+
+Examples:
+  // Create eventfd with default flags (CLOEXEC), counter=0, print fd
+  L_builtin eventfd
+  // Output: 3
+
+  // Create non-blocking eventfd, store fd in MYFD
+  L_builtin eventfd -n -v MYFD
+  echo $$MYFD
+
+  // Create semaphore-style eventfd with initial value 5
+  L_builtin eventfd -s 5
+
+  // Create eventfd without CLOEXEC, initial value 100
+  L_builtin eventfd -c 100
 ",
 );
 
@@ -42,7 +55,7 @@ unsafe fn store_fd(var: *mut c_char, fd: c_int) -> bool {
     }
     let s = crate::shared::I64Str::new(fd as i64);
     if unsafe { crate::bash_api::bind_variable(var, s.as_ptr(), 0) }.is_null() {
-        beprintln!(ENAME, b": cannot bind variable");
+        beprintln!(this_cmd_name(), b": cannot bind variable");
         return false;
     }
     true
@@ -63,14 +76,14 @@ pub unsafe extern "C" fn eventfd_subcommand(list: *mut WORD_LIST) -> c_int {
         [ n => || nonblock = true,
           s => || semaphore = true,
           c => || cloexec = !cloexec ],
-        [ v => |v: crate::bash_api::Cpnt<'_>| fd_var = v.as_ptr().cast() ]
+        [ v => |v| fd_var = v.as_ptr().cast() ]
     );
     let (initval,) = parse_positionals!(rest, [], [initval]);
     let initval: u32 = match initval {
         Some(c) => match unsafe { c.to_str() }.ok().and_then(|s| s.parse().ok()) {
             Some(v) => v,
             None => {
-                beprintln!(ENAME, b": invalid INITVAL");
+                beprintln!(this_cmd_name(), b": invalid INITVAL");
                 return EX_USAGE;
             }
         },
@@ -90,7 +103,11 @@ pub unsafe extern "C" fn eventfd_subcommand(list: *mut WORD_LIST) -> c_int {
 
     let fd = unsafe { libc::eventfd(initval, flags) };
     if fd < 0 {
-        beprintln!(ENAME, b": eventfd: ", std::io::Error::last_os_error());
+        beprintln!(
+            this_cmd_name(),
+            b": eventfd: ",
+            std::io::Error::last_os_error()
+        );
         return EXECUTION_FAILURE;
     }
     if !unsafe { store_fd(fd_var, fd) } {

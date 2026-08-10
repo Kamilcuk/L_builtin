@@ -8,8 +8,8 @@
 
 use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{bash_getopt, beprintln};
-use std::os::raw::c_int;
+use crate::{beprintln, getopts};
+use std::os::raw::{c_char, c_int};
 use std::ffi::CStr;
 
 const ENAME: &str = "L_builtin send";
@@ -63,14 +63,21 @@ fn cptr_to_str(ptr: *mut std::os::raw::c_char) -> Result<&'static str, ()> {
 #[no_mangle]
 pub unsafe extern "C" fn send_subcommand(list: *mut WORD_LIST) -> c_int {
     CMD.enter();
-    let (opts, args) = bash_getopt!(list, [], [f, v]);
+    let mut f_var: *mut c_char = std::ptr::null_mut();
+    let mut var: *mut c_char = std::ptr::null_mut();
+    let args = getopts!(
+        list,
+        [],
+        [ f => |f: crate::bash_api::Cpnt<'_>| f_var = f.as_ptr().cast(),
+          v => |v: crate::bash_api::Cpnt<'_>| var = v.as_ptr().cast() ]
+    );
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();
 
     // Get format (optional, defaults to "raw")
-    let format = if let Some(f) = opts.f {
-        match cptr_to_str(f) {
+    let format = if !f_var.is_null() {
+        match cptr_to_str(f_var) {
             Ok(s) => s,
             Err(_) => {
                 beprintln!(ENAME, b": invalid format encoding");
@@ -141,7 +148,8 @@ pub unsafe extern "C" fn send_subcommand(list: *mut WORD_LIST) -> c_int {
     }
 
     // If -v SENT_VAR is provided, store the result
-    if let Some(var_ptr) = opts.v {
+    if !var.is_null() {
+        let var_ptr = var;
         let sent_str = crate::shared::SizeTStr::from_usize(sent as usize);
         if unsafe { crate::bash_api::bind_variable(var_ptr, sent_str.as_ptr(), 0) }.is_null() {
             beprintln!(ENAME, b": cannot bind variable");

@@ -8,9 +8,9 @@
 
 use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{bash_getopt, beprintln};
+use crate::{beprintln, getopts};
 use std::os::fd::IntoRawFd;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 
 const ENAME: &str = "L_builtin listen";
 
@@ -39,7 +39,12 @@ Returns success unless socket/bind/listen fails or variable binding fails.
 #[no_mangle]
 pub unsafe extern "C" fn listen_subcommand(list: *mut WORD_LIST) -> c_int {
     CMD.enter();
-    let (opts, args) = bash_getopt!(list, [], [p]);
+    let mut port_var: Option<*mut c_char> = None;
+    let args = getopts!(
+        list,
+        [],
+        [ p => |p: crate::bash_api::Cpnt<'_>| port_var = Some(p.as_ptr().cast()) ]
+    );
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();
@@ -54,7 +59,7 @@ pub unsafe extern "C" fn listen_subcommand(list: *mut WORD_LIST) -> c_int {
     let ip_str = iter.next().and_then(|p| unsafe { p.to_str().ok() }).unwrap_or("127.0.0.1");
     let port_str = iter.next().and_then(|p| unsafe { p.to_str().ok() }).unwrap_or("0");
 
-    if port_str == "0" && opts.p.is_none() {
+    if port_str == "0" && port_var.is_none() {
         beprintln!(ENAME, b": -p PORT_VAR option is required when port is 0");
         return EX_USAGE;
     }
@@ -70,7 +75,7 @@ pub unsafe extern "C" fn listen_subcommand(list: *mut WORD_LIST) -> c_int {
     };
 
     // If -p PORT_VAR is provided, get the actual bound port
-    if let Some(port_var) = opts.p {
+    if let Some(port_var) = port_var {
         let port_num = listener.local_addr().map(|a| a.port()).unwrap_or(0);
         let port_str = crate::shared::I64Str::new(port_num as i64);
         if unsafe { crate::bash_api::bind_variable(port_var, port_str.as_ptr(), 0) }.is_null() {

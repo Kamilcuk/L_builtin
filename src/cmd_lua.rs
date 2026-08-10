@@ -4,7 +4,7 @@ use crate::bash_api::{
     WordListOwned, WordListView,
 };
 use crate::bprint_bytes::BDisplay;
-use crate::{bash_getopt, beprintln};
+use crate::{beprintln, getopts};
 use crate::return_on_err;
 
 use std::ffi::{c_char, CStr};
@@ -63,7 +63,7 @@ Arguments:
 #[no_mangle]
 pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
     CMD.enter();
-    let (_opts, args) = bash_getopt!(list, [], []);
+    let args = getopts!(list, [], []);
     let store = unsafe { WordListView::from_raw(args) };
     let mut args = store.iter_bytes();
     let script = match args.next() {

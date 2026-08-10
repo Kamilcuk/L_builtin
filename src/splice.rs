@@ -30,6 +30,23 @@ FLAGS combos:
 
 Exit Status:
 Returns success unless splice fails.
+
+Examples:
+  // Splice 1024 bytes from fd 3 (pipe) to fd 4 (pipe), print bytes moved
+  L_builtin splice 3 4 1024
+
+  // Splice with nonblock flag, store bytes moved in MOVED
+  L_builtin splice -v MOVED 3 4 4096 nonblock
+
+  // Splice with multiple flags (comma-separated)
+  L_builtin splice 3 4 8192 move,more
+
+  // Typical use: zero-copy pipe-to-pipe transfer
+  // (assuming fd 3 is readable pipe, fd 4 is writable pipe)
+  L_builtin splice 3 4 65536
+
+  // Copy file to pipe (fd 3=file, fd 4=pipe) - requires splice support
+  L_builtin splice 3 4 1048576
 ",
 );
 

@@ -8,20 +8,6 @@ use std::os::raw::{c_char, c_int};
 
 use crate::bash_api::{builtin, current_builtin, WORD_LIST};
 
-/// A constant description of one L_builtin subcommand: its name plus the
-/// short (usage line) and long (full help) documentation. Build with
-/// [`CmdDesc::new`] in a `const` (using `c"..."` literals, which are
-/// NUL-terminated at compile time) and call [`CmdDesc::enter`] at the top of
-/// the subcommand to enter the subcommand context.
-pub struct CmdDesc {
-    /// Subcommand name, shown after `L_builtin` in `this_command_name`.
-    pub name: &'static CStr,
-    /// Usage line, printed after `<this_command_name>: usage:`.
-    pub short_doc: &'static CStr,
-    /// Full help text (description, options, exit status).
-    pub long_doc: &'static CStr,
-}
-
 /// Constant check that a C string ends with the NUL terminator (the pieces of
 /// a `CmdDesc` must be NUL-terminated: C code does `strlen()` on them).
 const fn cstr_is_nul_terminated(c: &CStr) -> bool {
@@ -29,6 +15,20 @@ const fn cstr_is_nul_terminated(c: &CStr) -> bool {
         Some(&0) => true,
         _ => false,
     }
+}
+
+/// A constant description of one L_builtin subcommand: its name plus the
+/// short (usage line) and long (full help) documentation. Build with
+/// [`CmdDesc::new`] in a `const` (using `c"..."` literals, which are
+/// NUL-terminated at compile time) and call [`CmdDesc::enter`] at the top of
+/// the subcommand to enter the subcommand context.
+pub struct CmdDesc {
+    /// Subcommand name, shown after `L_builtin` in `this_cmd_name()`.
+    pub name: &'static CStr,
+    /// Usage line, printed after `<this_cmd_name()>: usage:`.
+    pub short_doc: &'static CStr,
+    /// Full help text (description, options, exit status).
+    pub long_doc: [*const c_char; 2],
 }
 
 impl CmdDesc {
@@ -46,19 +46,19 @@ impl CmdDesc {
         Self {
             name,
             short_doc,
-            long_doc,
+            long_doc: [long_doc.as_ptr() as *const c_char, std::ptr::null()],
         }
     }
 
     /// Enter the subcommand context: `l_enter_subcommand` appends `" name"` to
-    /// `this_command_name` and points `current_builtin` at these docs, so that
+    /// `this_cmd_name()` and points `current_builtin` at these docs, so that
     /// `-h` (via `l_builtin_usage_long`) shows this subcommand's help.
     pub fn enter(&self) {
         unsafe {
             crate::bash_api::l_enter_subcommand(
                 self.name.as_ptr().cast_mut(),
                 self.short_doc.as_ptr().cast_mut(),
-                self.long_doc.as_ptr().cast_mut(),
+                self.long_doc.as_ptr(),
             )
         };
     }
@@ -99,3 +99,4 @@ impl Drop for SubcommandGuard {
 
 /// Function implementing a subcommand.
 pub type SubcommandFn = unsafe extern "C" fn(*mut WORD_LIST) -> c_int;
+

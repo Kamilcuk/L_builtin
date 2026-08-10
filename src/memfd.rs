@@ -28,6 +28,22 @@ Options:
 
 Exit Status:
 Returns success unless memfd_create fails or the variable cannot be bound.
+
+Examples:
+  // Create memfd with default name, default flags (CLOEXEC | NOEXEC_SEAL), print fd
+  L_builtin memfd
+  // Output: 3
+
+  // Create memfd with custom name, store fd in MYFD
+  L_builtin memfd -v MYFD mydata
+
+  // Create memfd with MFD_EXEC flag (allows fexecve)
+  L_builtin memfd -x myexec
+
+  // Use memfd as temporary in-RAM storage
+  L_builtin memfd -v FD
+  echo data >&FD
+  cat <&FD
 ",
 );
 

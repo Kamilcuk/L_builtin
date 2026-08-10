@@ -9,3 +9,4 @@ Cpp11BracedListStyle: true
 BinPackArguments: false
 BinPackParameters: false
 BreakBeforeBraces: Linux
+AlignEscapedNewlines: DontAlign

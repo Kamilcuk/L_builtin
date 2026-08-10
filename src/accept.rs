@@ -7,7 +7,7 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{
-    this_command_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
+    this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
 };
 use crate::subcmd::CmdDesc;
 use crate::{beprintln, bufwrite, getopts, parse_positionals, shared};
@@ -38,7 +38,7 @@ pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
 
     let fd_bytes = unsafe { fd_cptr.to_bytes() };
     let Some(listenfd) = shared::parse_bytes::<c_int>(fd_bytes) else {
-        beprintln!(this_command_name, b": invalid listenfd: ", fd_bytes);
+        beprintln!(this_cmd_name(), b": invalid listenfd: ", fd_bytes);
         return EX_USAGE;
     };
 
@@ -54,7 +54,7 @@ pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
     };
     if clientfd < 0 {
         beprintln!(
-            this_command_name,
+            this_cmd_name(),
             b": accept failed: ",
             std::io::Error::last_os_error()
         );
@@ -85,13 +85,13 @@ pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
         unsafe {
             libc::close(clientfd);
         }
-        beprintln!(this_command_name, b": cannot bind variable");
+        beprintln!(this_cmd_name(), b": cannot bind variable");
         return EXECUTION_FAILURE;
     }
 
     // Bind addr variable - use stack buffer
     if unsafe { crate::bash_api::bind_variable(addr_var.as_ptr(), addr_ptr, 0) }.is_null() {
-        beprintln!(this_command_name, b": cannot bind variable");
+        beprintln!(this_cmd_name(), b": cannot bind variable");
         return EXECUTION_FAILURE;
     }
 

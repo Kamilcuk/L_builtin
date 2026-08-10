@@ -3,12 +3,8 @@
 
 struct word_list;
 
-#ifndef GETOPT_HELP
-#define GETOPT_HELP -99
-#endif
-
 /* Top-level entry point, implemented in Rust (src/entrypoint.rs). */
-extern int l_entrypoint(struct word_list *list);
+int l_entrypoint(struct word_list *list);
 
 int lseek_subcommand(struct word_list *list);
 int poll_subcommand(struct word_list *list);
@@ -25,21 +21,5 @@ int shutdown_subcommand(struct word_list *list);
 int send_subcommand(struct word_list *list);
 int recv_subcommand(struct word_list *list);
 int sleep_subcommand(struct word_list *list);
-
-extern char *lseek_doc[];
-extern char *poll_doc[];
-#if HAVE_PPOLL
-extern char *ppoll_doc[];
-#endif
-extern char *sigmask_doc[];
-extern char *sigunmask_doc[];
-extern char *pipe_doc[];
-extern char *listen_doc[];
-extern char *accept_doc[];
-extern char *connect_doc[];
-extern char *shutdown_doc[];
-extern char *send_doc[];
-extern char *recv_doc[];
-extern char *sleep_doc[];
 
 #endif

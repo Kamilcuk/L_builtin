@@ -90,7 +90,7 @@ function(generate_bash_bindings gen_file bash_source)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/generated_rust")
     execute_process(
         COMMAND "${L_BINDGEN_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/bash_api_gen.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/bash_api.h"
             --output "${gen_file}"
             --allowlist-function l_.*
             # Bash entry points Rust calls directly (same allowlist as the
@@ -115,10 +115,15 @@ function(generate_bash_bindings gen_file bash_source)
             --allowlist-function builtin_usage
             --allowlist-function internal_getopt
             --allowlist-function reset_internal_getopt
+            --allowlist-function get_name_for_error
+            --allowlist-function executing_line_number
+            --allowlist-function builtin_error
             --allowlist-var this_command_name
             --allowlist-var current_builtin
             --allowlist-var list_optarg
             --allowlist-var loptend
+            --allowlist-var GETOPT_HELP
+            --allowlist-var interactive_shell
             --allowlist-type builtin
             --opaque-type SHELL_VAR
             --opaque-type ARRAY
@@ -141,7 +146,7 @@ function(generate_bash_bindings gen_file bash_source)
     )
     if(NOT l_bindgen_result EQUAL 0)
         message(FATAL_ERROR
-            "bindgen failed for src/bash_api_gen.h (result ${l_bindgen_result})\n"
+            "bindgen failed for src/bash_api.h (result ${l_bindgen_result})\n"
             "stdout: ${l_bindgen_stdout}\nstderr: ${l_bindgen_stderr}")
     endif()
 endfunction()

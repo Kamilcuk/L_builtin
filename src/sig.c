@@ -4,18 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "builtins.h"
-#include "shell.h"
-#include "common.h"
-#include "bashgetopt.h"
-#include "execute_cmd.h"
-#include "make_cmd.h"
-#include "quit.h"
-#include "sig.h"
-#include "trap.h"
-#include "unwind_prot.h"
-#include "L_builtin.h"
 #include "bash_api.h"
+#include "L_builtin.h"
 
 /* Missing extern declarations from Bash headers */
 extern sigset_t top_level_mask;
@@ -47,6 +37,22 @@ static int parse_sigspec(WORD_LIST *list, sigset_t *set)
   return 0;
 }
 
+static const char *const sigmask_doc[] = {
+  "Block or unblock signals.",
+  "",
+  "L_builtin sigmask [-s sigspec] [-u sigspec] [sigspec ...]",
+  "",
+  "Block or unblock signals in the shell process. Without options, it",
+  "prints the current signal mask. -s blocks, -u unblocks.",
+  "Use 'ALL' (case-insensitive) with -s or -u to block or unblock all",
+  "signals respectively. Positional arguments are always blocked.",
+  "",
+  "Exit Status:",
+  "Returns success unless an invalid signal is provided or a system error "
+  "occurs.",
+  (char *)NULL
+};
+
 int sigmask_subcommand(WORD_LIST *list)
 {
   sigset_t block_set, unblock_set, old;
@@ -58,6 +64,7 @@ int sigmask_subcommand(WORD_LIST *list)
   sigemptyset(&block_set);
   sigemptyset(&unblock_set);
 
+  l_enter_subcommand("sigmask", "[-s sigspec] [-u sigspec] [sigspec ...]", sigmask_doc);
   reset_internal_getopt();
   while ((opt = internal_getopt(list, "s:u:h")) != -1) {
     any_opt = 1;
@@ -92,8 +99,8 @@ int sigmask_subcommand(WORD_LIST *list)
       break;
     case 'h':
     case GETOPT_HELP:
-      builtin_usage();
-      return (EX_USAGE);
+      l_builtin_usage_long();
+      return 0;
     default:
       builtin_usage();
       return (EX_USAGE);
@@ -153,12 +160,35 @@ static COMMAND *L_make_bare_simple_command(void)
 #endif
 }
 
+static const char *const sigunmask_doc[] = {
+  "Unblock signals and run a command.",
+  "",
+  "L_builtin sigunmask [-h] -s sigspec cmd [args...]",
+  "",
+  "Temporarily unblocks the specified signal and executes the command.",
+  "Use 'ALL' (case-insensitive) with -s to unblock all signals.",
+  "If the signal was pending, the trap is executed and the command is "
+  "skipped.",
+  "The command can be any shell command (builtin, function, or external).",
+  "",
+  "WARNING: There is a small window between unblocking and starting the "
+  "command.",
+  "If a signal arrives in this window, it may be delivered to the command "
+  "itself",
+  "rather than being caught by this builtin's check.",
+  "",
+  "Exit Status:",
+  "Returns the status of the command, or 128+signum if a signal was caught.",
+  (char *)NULL
+};
+
 int sigunmask_subcommand(WORD_LIST *list)
 {
   sigset_t set, old, unblocked;
   int opt;
 
   sigemptyset(&unblocked);
+  l_enter_subcommand("sigunmask", "[-h] -s sigspec cmd [args...]", sigunmask_doc);
   reset_internal_getopt();
   while ((opt = internal_getopt(list, "s:h")) != -1) {
     switch (opt) {
@@ -176,8 +206,8 @@ int sigunmask_subcommand(WORD_LIST *list)
       break;
     case 'h':
     case GETOPT_HELP:
-      builtin_usage();
-      return (EX_USAGE);
+      l_builtin_usage_long();
+      return 0;
     default:
       builtin_usage();
       return (EX_USAGE);
@@ -247,41 +277,3 @@ int sigunmask_subcommand(WORD_LIST *list)
 
   return (result);
 }
-
-char *sigmask_doc[] = {
-  "Block or unblock signals.",
-  "",
-  "L_builtin sigmask [-s sigspec] [-u sigspec] [sigspec ...]",
-  "",
-  "Block or unblock signals in the shell process. Without options, it",
-  "prints the current signal mask. -s blocks, -u unblocks.",
-  "Use 'ALL' (case-insensitive) with -s or -u to block or unblock all",
-  "signals respectively. Positional arguments are always blocked.",
-  "",
-  "Exit Status:",
-  "Returns success unless an invalid signal is provided or a system error "
-  "occurs.",
-  (char *)NULL
-};
-
-char *sigunmask_doc[] = {
-  "Unblock signals and run a command.",
-  "",
-  "L_builtin sigunmask [-h] -s sigspec cmd [args...]",
-  "",
-  "Temporarily unblocks the specified signal and executes the command.",
-  "Use 'ALL' (case-insensitive) with -s to unblock all signals.",
-  "If the signal was pending, the trap is executed and the command is "
-  "skipped.",
-  "The command can be any shell command (builtin, function, or external).",
-  "",
-  "WARNING: There is a small window between unblocking and starting the "
-  "command.",
-  "If a signal arrives in this window, it may be delivered to the command "
-  "itself",
-  "rather than being caught by this builtin's check.",
-  "",
-  "Exit Status:",
-  "Returns the status of the command, or 128+signum if a signal was caught.",
-  (char *)NULL
-};

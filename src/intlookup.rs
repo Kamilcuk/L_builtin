@@ -29,6 +29,28 @@ impl ConstRange {
     }
 }
 
+pub struct ConstRevRange {
+    curr: usize,
+    end: usize,
+}
+
+impl ConstRevRange {
+    pub const fn new(start: usize, end: usize) -> Self {
+        assert!(start >= end, "ConstRevRange: start must be >= end");
+        Self { curr: start, end }
+    }
+
+    pub const fn next(&mut self) -> Option<usize> {
+        if self.curr > self.end {
+            let val = self.curr;
+            self.curr -= 1;
+            Some(val)
+        } else {
+            None
+        }
+    }
+}
+
 ///////////////////////////////////////////////////
 
 /// Given an array of str and something, return the longest str length.
@@ -92,6 +114,36 @@ macro_rules! define_functions {
                     val |= (bytes[i] as $T) << ((size - 1 - i) * 8);
                 }
                 val
+            }
+            /// Returns the number of non-zero bytes in the big-endian packed representation of $T.
+            const fn packed_len(val: $T) -> usize {
+                if val == 0 {
+                    return 0;
+                }
+                // Leading zeros in $T map to empty tail bytes.
+                // Each non-zero byte takes 8 bits.
+                let total_bits = (std::mem::size_of::<$T>() * 8) as u32;
+                let unused_bits = val.trailing_zeros();
+                let occupied_bits = total_bits - unused_bits;
+                // Convert occupied bits to whole byte count
+                ((occupied_bits + 7) / 8) as usize
+            }
+
+            /// Unpack integer $T into a fixed-size byte array of length `LEN`,
+            /// stopping at the first zero byte. Returns `([u8; LEN], actual_len)`.
+            const fn unpack<const LEN: usize>(val: $T) -> [u8; LEN] {
+                let size = std::mem::size_of::<$T>();
+                assert!(LEN <= size, "LEN exceeds type size");
+                assert!(LEN == Self::packed_len(val), "LEN does not match packed payload length");
+                let mut out = [0u8; LEN];
+                let mut range = ConstRange::new(0, LEN);
+                while let Some(i) = range.next() {
+                    let shift = (size - 1 - i) * 8;
+                    let byte = ((val >> shift) & 0xFF) as u8;
+                    assert!(byte != 0, "Encountered unexpected NUL byte within LEN payload");
+                    out[i] = byte;
+                }
+                out
             }
 
             /// Given an array of tuples, unpack it into two arrays.
@@ -200,8 +252,6 @@ macro_rules! define_functions {
                     None
                 }
             }
-
-
         }
 
     };

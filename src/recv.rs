@@ -8,7 +8,7 @@
 
 use crate::bash_api::{WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{bash_getopt, beprintln};
+use crate::{beprintln, getopts};
 use std::os::raw::{c_char, c_int};
 
 const ENAME: &str = "L_builtin recv";
@@ -55,7 +55,17 @@ fn hex_encode(data: &[u8]) -> Vec<u8> {
 #[no_mangle]
 pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
     CMD.enter();
-    let (opts, args) = bash_getopt!(list, [n, i], [f, v]);
+    let mut non_blocking = false;
+    let mut interruptible = false;
+    let mut f_var: *mut c_char = std::ptr::null_mut();
+    let mut var: *mut c_char = std::ptr::null_mut();
+    let args = getopts!(
+        list,
+        [ n => || non_blocking = true,
+          i => || interruptible = true ],
+        [ f => |f: crate::bash_api::Cpnt<'_>| f_var = f.as_ptr().cast(),
+          v => |v: crate::bash_api::Cpnt<'_>| var = v.as_ptr().cast() ]
+    );
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();
@@ -67,8 +77,8 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
         Hex,
     }
 
-    let format = if let Some(f) = opts.f {
-        match crate::shared::cstr_to_str(f) {
+    let format = if !f_var.is_null() {
+        match crate::shared::cstr_to_str(f_var) {
             Some("hex") => Format::Hex,
             Some("raw") | None => Format::Raw,
             Some(_) => {
@@ -79,9 +89,6 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
     } else {
         Format::Raw
     };
-
-    let non_blocking = opts.n;
-    let interruptible = opts.i;
 
     // Get fd
     let fd = match iter.next() {
@@ -170,7 +177,8 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
     buf[received] = 0; // null terminate
 
     // If -v RECV_VAR is provided, store the result
-    if let Some(var_ptr) = opts.v {
+    if !var.is_null() {
+        let var_ptr = var;
         match format {
             Format::Hex => {
                 // hex format - NUL-terminated byte vector, no C-string type

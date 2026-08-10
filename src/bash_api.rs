@@ -39,6 +39,22 @@ include!(concat!(
 /// under the idiomatic PascalCase name.
 pub type Builtin = builtin;
 
+/// Return this_command_name as a byte slice. Panics in debug builds if
+/// this_command_name is NULL (should never happen when called from bash).
+pub fn this_cmd_name() -> &'static [u8] {
+    let ptr = unsafe { std::ptr::addr_of!(this_command_name).read() };
+    debug_assert!(
+        !ptr.is_null(),
+        "this_command_name should never be NULL when called from bash"
+    );
+    if ptr.is_null() {
+        // Fallback for release builds - return empty slice
+        b""
+    } else {
+        unsafe { CStr::from_ptr(ptr).to_bytes() }
+    }
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 /// RAII wrapper for C strings that need to be freed with `free()`

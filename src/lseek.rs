@@ -8,8 +8,8 @@
 
 use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{bash_getopt, beprintln};
-use std::os::raw::c_int;
+use crate::{beprintln, getopts};
+use std::os::raw::{c_char, c_int};
 
 const ENAME: &str = "L_builtin lseek";
 
@@ -38,7 +38,12 @@ Returns success unless an error occurs during lseek or variable binding.
 #[no_mangle]
 pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
     CMD.enter();
-    let (opts, args) = bash_getopt!(list, [], [v]);
+    let mut var: *mut c_char = std::ptr::null_mut();
+    let args = getopts!(
+        list,
+        [],
+        [ v => |v: crate::bash_api::Cpnt<'_>| var = v.as_ptr().cast() ]
+    );
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();
@@ -122,7 +127,8 @@ pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
     }
 
     // If -v VAR was provided, store the result
-    if let Some(var_ptr) = opts.v {
+    if !var.is_null() {
+        let var_ptr = var;
         let result_str = crate::shared::I64Str::new(result);
 
         unsafe {

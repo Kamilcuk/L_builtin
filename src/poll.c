@@ -8,16 +8,8 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#include "builtins.h"
-#include "shell.h"
-#include "variables.h"
-#include "array.h"
-#include "common.h"
-#include "bashgetopt.h"
-#include "sig.h"
-#include "trap.h"
-#include "L_builtin.h"
 #include "bash_api.h"
+#include "L_builtin.h"
 
 static short parse_events(const char *s)
 {
@@ -117,8 +109,8 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
       break;
     case 'h':
     case GETOPT_HELP:
-      builtin_usage();
-      return (EX_USAGE);
+      l_builtin_usage_long();
+      return 0;
     default:
       builtin_usage();
       return (EX_USAGE);
@@ -221,13 +213,7 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
   return (ret >= 0 ? EXECUTION_SUCCESS : EXECUTION_FAILURE);
 }
 
-int poll_subcommand(WORD_LIST *list) { return poll_internal(list, 0); }
-
-#if HAVE_PPOLL
-int ppoll_subcommand(WORD_LIST *list) { return poll_internal(list, 1); }
-#endif
-
-char *poll_doc[] = {
+static const char *const poll_doc[] = {
   "Wait for file descriptors to become ready.",
   "",
   "L_builtin poll [-t TIMEOUT] [-v ARRAY_VAR] [-i] [FD[:EVENTS] ...]",
@@ -245,15 +231,21 @@ char *poll_doc[] = {
   "Returns success if poll succeeds, even if it timed out. Returns failure "
   "on",
   "system errors.",
-  (char *)NULL
+  NULL
 };
 
+int poll_subcommand(WORD_LIST *list)
+{
+  l_enter_subcommand("poll", "[-t TIMEOUT] [-v ARRAY_VAR] [-i] [FD[:EVENTS] ...]", poll_doc);
+  return poll_internal(list, 0);
+}
+
 #if HAVE_PPOLL
-char *ppoll_doc[] = {
+
+static const char *const ppoll_doc[] = {
   "Wait for file descriptors and unblock signals atomically.",
   "",
-  "L_builtin ppoll [-t TIMEOUT] [-v ARRAY_VAR] [-u SIGSPEC] [-i] [FD[:EVENTS] "
-  "...]",
+  "L_builtin ppoll [-t TIMEOUT] [-v ARRAY_VAR] [-u SIGSPEC] [-i] [FD[:EVENTS] ...]",
   "",
   "Poll file descriptors and unblock signals using ppoll(2).",
   "Results are stored in the indexed array ARRAY_VAR as FD:REVENTS.",
@@ -278,6 +270,14 @@ char *ppoll_doc[] = {
   "",
   "Exit Status:",
   "Returns success if ppoll succeeds. Returns failure on system errors.",
-  (char *)NULL
+  NULL
 };
+
+int ppoll_subcommand(WORD_LIST *list)
+{
+  l_enter_subcommand(
+    "poll", "[-t TIMEOUT] [-v ARRAY_VAR] [-u SIGSPEC] [-i] [FD[:EVENTS] ...]", ppoll_doc
+  );
+  return poll_internal(list, 1);
+}
 #endif

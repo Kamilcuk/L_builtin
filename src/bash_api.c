@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <config.h>
 #include <errno.h>
 #include <stdio.h>
@@ -8,28 +9,6 @@
 #include <dlfcn.h>
 
 #include "bash_api.h"
-// bash_api_gen.h declares every l_* wrapper defined below, so the compiler
-// checks each declaration against its definition. It also pulls in all the
-// bash headers (shell.h, variables.h, array.h, assoc.h, command.h, general.h,
-// externs.h, subst.h, execute_cmd.h, unwind_prot.h, builtins/common.h,
-// trap.h) exactly once - shell.h has no include guard, so do NOT include those
-// headers directly here or redefinition errors result.
-#include "bash_api_gen.h"
-
-// For rust I require external symbols, so no macros.
-// These x* are defined for both Bash internal and non-internal allopcation paths.
-#ifdef xmalloc
-#undef xmalloc
-#endif
-#ifdef xrealloc
-#undef xrealloc
-#endif
-#ifdef xfree
-#undef xfree
-#endif
-extern void *xmalloc(size_t);
-extern void *xrealloc(void *, size_t);
-extern void xfree(void *);
 
 // My wrappers, that always resolve to external symbols, because of #undef above.
 void *l_xmalloc(size_t s) { return xmalloc(s); }
@@ -94,8 +73,8 @@ char *l_expand_string_to_string_in_quotes(const char *string)
 /* Print the long usage message for the currently-executing builtin: the
  * `this_command_name` prefix, the short usage line, and the NULL-terminated
  * `long_doc` array. This is the C counterpart of the former Rust
- * `builtin_usage_long()`; it duplicates the (nearly identical) static
- * `l_builtin_long_usage` in cmd_ext.c but is exported for Rust to call. */
+ * `builtin_usage_long()`
+ */
 void l_builtin_usage_long(void)
 {
   if (this_command_name && *this_command_name) {
@@ -123,10 +102,9 @@ void l_builtin_usage_long(void)
  * strings; the leading separator space is added here. The caller is
  * responsible for restoring the previous docs (Rust SubcommandGuard); bash
  * rewinds `this_command_name` after the builtin. */
-static char *l_long_doc_static[2];
-
-void l_enter_subcommand(char *prefix, char *short_doc, char *long_doc)
+void l_enter_subcommand(const char *prefix, const char *short_doc, const char *const long_doc[])
 {
+  assert(prefix && prefix[0]);
   // this_command_name += " prefix"
   const size_t old_len = this_command_name ? strlen(this_command_name) : 0;
   const size_t prefix_len = prefix ? strlen(prefix) : 0;
@@ -141,14 +119,12 @@ void l_enter_subcommand(char *prefix, char *short_doc, char *long_doc)
   }
   buf[off] = '\0';
   this_command_name = buf;
-
   // Replace current_builtin's doc pointers (only when docs are supplied).
-  if (short_doc) {
-    l_long_doc_static[0] = long_doc;
-    l_long_doc_static[1] = NULL;
-    current_builtin->short_doc = short_doc;
-    current_builtin->long_doc = l_long_doc_static;
-  }
+  assert(short_doc);
+  assert(long_doc);
+  assert(long_doc[0]);
+  current_builtin->short_doc = (void *)short_doc;
+  current_builtin->long_doc = (void *)long_doc;
 }
 
 /* ------------------------------------------------------------------------- */

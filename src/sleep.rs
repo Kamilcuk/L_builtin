@@ -6,9 +6,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{
-    this_command_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
-};
+use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
 use crate::{beprintln, getopts, parse_positionals};
 use std::os::raw::c_int;
@@ -53,7 +51,7 @@ pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
     };
 
     if seconds < 0.0 {
-        beprintln!(this_command_name, b": invalid sleep duration");
+        beprintln!(this_cmd_name(), b": invalid sleep duration");
         return EX_USAGE;
     }
 
@@ -74,17 +72,14 @@ pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
         let err = std::io::Error::last_os_error();
         if err.raw_os_error() == Some(libc::EINTR) {
             if interruptible {
-                beprintln!(
-                    this_command_name,
-                    b": sleep failed: Interrupted system call"
-                );
+                beprintln!(this_cmd_name(), b": sleep failed: Interrupted system call");
                 return EXECUTION_FAILURE;
             }
             // Interrupted by signal, continue sleeping with remaining time
             ts = rem;
             continue;
         }
-        beprintln!(this_command_name, b": sleep failed: ", err);
+        beprintln!(this_cmd_name(), b": sleep failed: ", err);
         return EXECUTION_FAILURE;
     }
 

@@ -4,7 +4,7 @@
 #include "shell.h"
 #include "L_builtin.h"
 
-const char *L_builtin_doc[] = {
+const char *const L_builtin_doc[] = {
   "L_lib helper builtins.",
   "",
   "L_builtin [-v VAR] <subcommand> [options] [args]",
@@ -14,32 +14,34 @@ const char *L_builtin_doc[] = {
   "           (trailing newlines stripped, like $(...))",
   "",
   "Available subcommands:",
-  "  lseek      Reposition file offset",
+  "  accept     Accept a network connection",
+  "  capture    Run a command with stdout captured into a variable",
+  "  connect    Establish a TCP connection",
+  "  core       Core utilities via Rust/uutils",
+  "             (run 'L_builtin core --help' to list available)",
+  "  eventfd    Create an eventfd counter",
+  "  ext        Builtins from bash examples/loadables/ directory",
+  "             (run 'L_builtin ext --help' to list available)",
+  "  listen     Create a listening TCP socket",
+  "  lua        Execute LuaJIT script",
+  "  memfd      Create an anonymous memory-backed file",
+  "  pipe       Create a pipe",
   "  poll       Wait for file descriptors to become ready",
 #if HAVE_PPOLL
   "  ppoll      Wait for FDs and unblock signals atomically",
 #endif
+  "  recv       Receive bytes from a socket",
+  "  send       Send bytes over a socket",
+  "  shutdown   Semi-close a network socket",
   "  sigmask    Block or unblock signals",
   "  sigunmask  Unblock signals and run a command",
-  "  pipe       Create a pipe",
-  "  listen     Create a listening TCP socket",
-  "  accept     Accept a network connection",
-  "  connect    Establish a TCP connection",
-  "  shutdown   Semi-close a network socket",
-  "  send       Send bytes over a socket",
-  "  recv       Receive bytes from a socket",
   "  sleep      High-precision sub-second sleep",
-  "  core       Core utilities (ls, stat, tee) via Rust/uutils",
-  "  lua        Execute LuaJIT script",
-  "  ext        External command helpers",
-  "  capture    Run a command with stdout captured into a variable",
-  "  eventfd    Create an eventfd counter",
-  "  memfd      Create an anonymous memory-backed file",
-  "  timerfd    Create a timer as a file descriptor",
-  "  signalfd   Deliver signals as a file descriptor",
   "  splice     Zero-copy move between two file descriptors",
+  "  signalfd   Deliver signals as a file descriptor",
+  "  timerfd    Create a timer as a file descriptor",
+  "  lseek      Reposition file offset",
   "",
-  "Use 'L_builtin <subcommand> -h' for more information.",
+  "Use 'L_builtin <subcommand> --help' for more information.",
   (char *)NULL
 };
 
