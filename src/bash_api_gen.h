@@ -33,6 +33,7 @@
 #include <unwind_prot.h>
 #include <builtins/common.h>
 #include <trap.h>
+#include <bashgetopt.h>
 
 /* ── Simple allocation wrappers ─────────────────────────────────────────── */
 

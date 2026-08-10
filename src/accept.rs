@@ -6,11 +6,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
-use crate::{bash_getopt, beprintln, bufwrite, shared};
+use crate::bash_api::{
+    this_command_name, WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
+};
+use crate::{bash_getopt, beprintln, bufwrite, getopts, parse_positionals, shared};
 use std::os::raw::c_int;
-
-const ENAME: &str = "L_builtin accept";
 
 fn print_accept_help() {
     let doc = b"\
@@ -31,29 +31,13 @@ Returns success unless accept fails or variable binding fails.
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (_, args) = bash_getopt!(list, print_accept_help, [], []);
+    let rest = getopts!(list, [], []);
+    let (clientfd_var, addr_var, fd_cptr) =
+        parse_positionals!(rest, [CLIENTFD_VAR, ADDR_VAR, LISTENFD]);
 
-    let view = unsafe { WordListView::from_raw(args) };
-    let mut iter = view.iter();
-
-    // Get clientfd_var and addr_var
-    let Some(clientfd_var) = iter.next() else {
-        beprintln!(ENAME, b": missing CLIENTFD_VAR argument");
-        return EX_USAGE;
-    };
-    let Some(addr_var) = iter.next() else {
-        beprintln!(ENAME, b": missing ADDR_VAR argument");
-        return EX_USAGE;
-    };
-
-    // Get listenfd
-    let Some(fd_cptr) = iter.next() else {
-        beprintln!(ENAME, b": missing LISTENFD argument");
-        return EX_USAGE;
-    };
     let fd_bytes = unsafe { fd_cptr.to_bytes() };
     let Some(listenfd) = shared::parse_bytes::<c_int>(fd_bytes) else {
-        beprintln!(ENAME, b": invalid listenfd: ", fd_bytes);
+        beprintln!(this_command_name, b": invalid listenfd: ", fd_bytes);
         return EX_USAGE;
     };
 
@@ -68,7 +52,11 @@ pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
         )
     };
     if clientfd < 0 {
-        beprintln!(ENAME, b": accept failed: ", std::io::Error::last_os_error());
+        beprintln!(
+            this_command_name,
+            b": accept failed: ",
+            std::io::Error::last_os_error()
+        );
         return EXECUTION_FAILURE;
     }
 
@@ -96,16 +84,15 @@ pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
         unsafe {
             libc::close(clientfd);
         }
-        beprintln!(ENAME, b": cannot bind variable");
+        beprintln!(this_command_name, b": cannot bind variable");
         return EXECUTION_FAILURE;
     }
 
     // Bind addr variable - use stack buffer
     if unsafe { crate::bash_api::bind_variable(addr_var.as_ptr(), addr_ptr, 0) }.is_null() {
-        beprintln!(ENAME, b": cannot bind variable");
+        beprintln!(this_command_name, b": cannot bind variable");
         return EXECUTION_FAILURE;
     }
 
     EXECUTION_SUCCESS
 }
-

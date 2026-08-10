@@ -25,6 +25,7 @@ pub(crate) mod shutdown;
 pub(crate) mod send;
 pub(crate) mod recv;
 pub(crate) mod sleep;
+pub(crate) mod subcmd;
 
 /// Route all Rust allocations through bash's allocator, so the whole process
 /// shares one heap regardless of how bash was configured. See `bash_alloc`.

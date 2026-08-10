@@ -6,11 +6,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
-use crate::{bash_getopt, beprintln};
+use crate::bash_api::{
+    this_command_name, WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
+};
+use crate::{bash_getopt, beprintln, getopts, parse_positionals, shared};
 use std::os::raw::c_int;
-
-const ENAME: &str = "L_builtin sleep";
 
 fn print_sleep_help() {
     let doc = b"\
@@ -33,39 +33,26 @@ Returns success unless sleep fails.
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (opts, args) = bash_getopt!(list, print_sleep_help, [i], []);
-
-    let view = unsafe { WordListView::from_raw(args) };
-    let mut iter = view.iter();
-
-    let interruptible = opts.i;
-
-    // Get seconds
-    let seconds = match iter.next() {
-        Some(sec_cptr) => {
-            let sec_bytes = unsafe { sec_cptr.to_bytes() };
-            match std::str::from_utf8(sec_bytes) {
-                Ok(s) => match s.parse::<f64>() {
-                    Ok(sec) => sec,
-                    Err(_) => {
-                        beprintln!(ENAME, b": invalid sleep duration: ", sec_bytes);
-                        return EX_USAGE;
-                    }
-                },
-                Err(_) => {
-                    beprintln!(ENAME, b": invalid sleep duration encoding");
-                    return EX_USAGE;
-                }
-            }
+    let mut interruptible = false;
+    let rest = getopts!(list, [i => || interruptible=true], []);
+    let (seconds_cstr,) = parse_positionals!(rest, [SECONDS]);
+    let seconds_str = match seconds_cstr.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            beprintln!("L_builtin: invalid UTF-8 argument");
+            return EX_USAGE;
         }
-        None => {
-            beprintln!(ENAME, b": missing SECONDS argument");
+    };
+    let seconds: f64 = match seconds_str.parse() {
+        Ok(f) => f,
+        Err(_) => {
+            beprintln!("L_builtin: invalid number: {}", seconds_str);
             return EX_USAGE;
         }
     };
 
     if seconds < 0.0 {
-        beprintln!(ENAME, b": invalid sleep duration");
+        beprintln!(this_command_name, b": invalid sleep duration");
         return EX_USAGE;
     }
 
@@ -75,7 +62,10 @@ pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
     };
 
     loop {
-        let mut rem = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        let mut rem = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
         let result = unsafe { libc::nanosleep(&ts, &mut rem) };
         if result == 0 {
             break;
@@ -83,14 +73,17 @@ pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
         let err = std::io::Error::last_os_error();
         if err.raw_os_error() == Some(libc::EINTR) {
             if interruptible {
-                beprintln!(ENAME, b": sleep failed: Interrupted system call");
+                beprintln!(
+                    this_command_name,
+                    b": sleep failed: Interrupted system call"
+                );
                 return EXECUTION_FAILURE;
             }
             // Interrupted by signal, continue sleeping with remaining time
             ts = rem;
             continue;
         }
-        beprintln!(ENAME, b": sleep failed: ", err);
+        beprintln!(this_command_name, b": sleep failed: ", err);
         return EXECUTION_FAILURE;
     }
 

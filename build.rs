@@ -20,9 +20,11 @@ fn get_bash_version(bash_source: &Path) -> i32 {
 
 fn main() {
     let bash_source =
-        PathBuf::from(env::var("BASH_SOURCE_DIR").expect("BASH_SOURCE_DIR must be set"));
+        PathBuf::from(env::var("BASH_SOURCE_DIR").expect("BASH_SOURCE_DIR must be set to compile. Use `make build' to compile the project, which will clone and build bash source code automatically."));
     if !bash_source.join("version.h").exists() {
-        panic!("BASH_SOURCE_DIR must point to bash source directory containing version.h");
+        panic!(
+            "BASH_SOURCE_DIR must point to compiled bash source code directory containing version.h"
+        );
     }
     println!("cargo:rustc-env=BASH_SOURCE_DIR={}", bash_source.display());
     let bash_version = get_bash_version(&bash_source);
@@ -171,16 +173,13 @@ fn generate_bash_bindings(bash_source: &Path, bash_version: i32) {
         "expand_string_to_string",
         "expand_string",
         "builtin_usage",
+        "internal_getopt",
+        "reset_internal_getopt",
     ];
     // Bash internal types referenced only behind pointers from Rust.
     // WORD_DESC and WORD_LIST are intentionally NOT opaque: Rust traverses the
     // word-list chain by direct field access (`(*list).next`, `(*word).word`).
-    const OPAQUE_TYPES: &[&str] = &[
-        "SHELL_VAR",
-        "ARRAY",
-        "ARRAY_ELEMENT",
-        "HASH_TABLE",
-    ];
+    const OPAQUE_TYPES: &[&str] = &["SHELL_VAR", "ARRAY", "ARRAY_ELEMENT", "HASH_TABLE"];
 
     let mut builder = bindgen::Builder::default()
         .header(header)
@@ -208,7 +207,9 @@ fn generate_bash_bindings(bash_source: &Path, bash_version: i32) {
     // are read by Rust.
     builder = builder
         .allowlist_var("this_command_name")
-        .allowlist_var("current_builtin");
+        .allowlist_var("current_builtin")
+        .allowlist_var("list_optarg")
+        .allowlist_var("loptend");
     // Full definition of `struct builtin`; everything else stays opaque.
     builder = builder.allowlist_type("builtin");
     for ty in OPAQUE_TYPES {
@@ -253,13 +254,7 @@ fn compile_c_sources(
         .flag("-w")
         .files(&loadable_info.1)
         .compile("bash_loadables");
-    let glue_sources = [
-        "poll.c",
-        "sig.c",
-        "bash_api.c",
-        "cmd_ext.c",
-        "L_builtin.c",
-    ];
+    let glue_sources = ["poll.c", "sig.c", "bash_api.c", "cmd_ext.c", "L_builtin.c"];
     base_build
         .clone()
         .flag("-Wall")
