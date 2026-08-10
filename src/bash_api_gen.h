@@ -64,6 +64,11 @@ int             l_check_unbind_variable(const char *name);
 int  l_assoc_insert(HASH_TABLE *hash, const char *key, const char *value);
 char *l_expand_string_to_string_in_quotes(const char *string);
 
+/* ── Subcommand context helpers (used by the Rust dispatcher) ──────────── */
+
+void l_builtin_usage_long(void);
+void l_enter_subcommand(char *prefix, char *short_doc, char *long_doc);
+
 /* ── Conditional: evalstring wrapper (Bash ≥ 4.3) ──────────────────────── */
 
 #if L_BASH_VERSION >= 40300

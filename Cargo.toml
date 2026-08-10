@@ -8,7 +8,10 @@ repository = "https://github.com/Kamilcuk/L_builtin"
 
 [lib]
 name = "L_builtin"
-crate-type = ["cdylib"]
+# staticlib so CMake links Rust + C into a single L_builtin.so and the version
+# script can hide all internal symbols (a cdylib would cross-boundary-reference
+# bash_api.c symbols at runtime, which the version script hides).
+crate-type = ["staticlib"]
 
 [features]
 default = ["ppoll"]
@@ -20,6 +23,9 @@ dev = []
 libc = "0.2"
 thiserror = "1.0"
 nix = "0.31"
+# NOTE: no [build-dependencies] and no build.rs — the Rust crate is built by
+# Corrosion under CMake, which runs bindgen (see CMakeLists.txt) and generates
+# the FFI bindings into ${CMAKE_SOURCE_DIR}/generated_rust/bash_api_gen.rs.
 rustix = { version = "1.1", features = ["param", "use-libc-auxv", "time"] }
 mlua = { version = "0.10", features = ["lua51", "vendored"] }
 smallvec = "1.13"
@@ -47,10 +53,3 @@ dead_code = "allow"
 missing_safety_doc = "allow"
 undocumented_unsafe_blocks = "allow"
 
-[build-dependencies]
-bindgen = "0.69"
-cc = "1.0"
-pkg-config = "0.3"
-serde_json = "1.0"
-walkdir = "2.0"
-regex = "1.0"

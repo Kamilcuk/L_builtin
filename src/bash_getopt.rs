@@ -8,48 +8,16 @@ pub const GETOPT_HELP: c_int = -99;
 pub use crate::bash_api::{internal_getopt, list_optarg, loptend, reset_internal_getopt};
 
 /// Check whether `loptend` points to `--help`; if so, call
-/// [`builtin_usage_long`] and return `true`. The caller should return
-/// `EX_USAGE`.
+/// [`crate::bash_api::l_builtin_usage_long`] and return `true`. The caller
+/// should return `EX_USAGE`.
 pub unsafe fn check_help() -> bool {
     if let Some(next) = unsafe { WordListView::from_raw(loptend).current() } {
         if unsafe { next.strcmp("--help\0") } {
-            builtin_usage_long();
+            crate::bash_api::l_builtin_usage_long();
             return true;
         }
     }
     false
-}
-
-/// Print the long usage message for the currently-executing builtin: the
-/// `this_command_name` prefix, the short usage line, and the NULL-terminated
-/// `long_doc` array — the Rust counterpart of `l_builtin_long_usage` in
-/// `cmd_ext.c`.
-pub fn builtin_usage_long() {
-    let mut err = std::io::stderr().lock();
-
-    let cmd_name = unsafe { crate::bash_api::this_command_name };
-    if !cmd_name.is_null() && unsafe { *cmd_name } != 0 {
-        crate::bwrite!(err, cmd_name, b": usage: ");
-    }
-    let current = unsafe { crate::bash_api::current_builtin };
-    let short_doc = unsafe { (*current).short_doc };
-    if !short_doc.is_null() {
-        crate::bwriteln!(err, short_doc);
-    }
-    let long_doc = unsafe { (*current).long_doc };
-    if !long_doc.is_null() {
-        crate::bwrite!(err, b"\n");
-        let mut i = long_doc;
-        loop {
-            let line = unsafe { *i };
-            if line.is_null() {
-                break;
-            }
-            crate::bwriteln!(err, line);
-            i = unsafe { i.add(1) };
-        }
-    }
-    let _ = std::io::Write::flush(&mut err);
 }
 
 /// One item returned by [`BashGetopt::next`].
@@ -405,7 +373,7 @@ macro_rules! getopts {
             match c {
                 -1 => break,
                 $crate::bash_getopt::GETOPT_HELP | 104 /* 'h' */ => {
-                    $crate::bash_getopt::builtin_usage_long();
+                    $crate::bash_api::l_builtin_usage_long();
                     return $crate::bash_api::EX_USAGE;
                 }
                 $(

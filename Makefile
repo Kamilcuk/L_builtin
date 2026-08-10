@@ -9,47 +9,35 @@ include Makefile.bash
 
 ###############################################################################
 # ---- L_builtin targets ----
-# Cargo build modes (replaces CMake)
-CARGO_PROFILE ?= debug
-CARGO_FEATURES ?= dev
-
-# Output paths
-TARGET_DIR = target
-L_BUILTIN_SO_DEBUG = $(TARGET_DIR)/debug/libL_builtin.so
-L_BUILTIN_SO_RELEASE = $(TARGET_DIR)/release/libL_builtin.so
-
-# Select binary based on profile
-ifeq ($(CARGO_PROFILE),release)
-L_BUILTIN_SO = $(L_BUILTIN_SO_RELEASE)
-else
-L_BUILTIN_SO = $(L_BUILTIN_SO_DEBUG)
-endif
-
-CARGO = BASH_SOURCE_DIR=$(BASH_SOURCE_DIR) cargo
-
-$(L_BUILTIN_SO): $(wildcard src/*) build.rs Cargo.toml
-	$(CARGO) build $(if $(filter release,$(CARGO_PROFILE)),--release,) --features $(CARGO_FEATURES)
-	ln -vfs $(L_BUILTIN_SO) L_builtin.so
-build: $(L_BUILTIN_SO)
+# Makefile drives CMake, which drives the Rust crate via Corrosion and the C
+# glue, running bindgen and producing L_builtin.so.
+CMAKE_BUILD_TYPE = Debug
+CMAKE_FLAGS = -D L_DEV=1 -D CMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
+CMAKE_EXTRA_FLAGS ?=
+BUILD = $(BUILD_DIR)/$(BASH)/build/
+$(BUILD)/L_builtin.so: $(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt Cargo.toml
+	cmake -S . -B $(BUILD) -D BASH_SOURCE=$(BASH_SOURCE_DIR) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS)
+	cmake --build $(BUILD) -j $$(nproc)
+build: $(BUILD)/L_builtin.so
 TESTARGS ?= -Pn
 test: build
-	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh $(L_BUILTIN_SO) $(ARGS) $(TESTARGS)
+	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh $(BUILD)/L_builtin.so $(ARGS) $(TESTARGS)
 release-build:
-	$(MAKE) CARGO_PROFILE=release CARGO_FEATURES="" build
+	$(MAKE) CMAKE_BUILD_TYPE=Release BUILD=$(BUILD_DIR)/$(BASH)/release build
 release-test:
-	$(MAKE) CARGO_PROFILE=release CARGO_FEATURES="" test
+	$(MAKE) CMAKE_BUILD_TYPE=Release BUILD=$(BUILD_DIR)/$(BASH)/release test
 .PHONY: build test release-build release-test
 
 ###############################################################################
 # --- Additional targets ---
 
 rustchecks:
-	$(CARGO) fmt --all -- --check
-	$(CARGO) clippy --all-targets --all-features -- -D warnings
-	$(CARGO) test --all-features
+	cargo fmt --all -- --check
+	cargo clippy --all-targets --all-features -- -D warnings
+	cargo test --all-features
 
 format:
-	$(CARGO) fix --lib -p L_builtin --allow-dirty
+	cargo fix --lib -p L_builtin --allow-dirty
 
 check-compile-commands:
 	@[ -f $(BUILD)/compile_commands.json ] || { echo "Error: $(BUILD)/compile_commands.json not found. Run make first.";  exit 1 }
@@ -66,7 +54,7 @@ cppcheck: check-compile-commands
 distclean:
 	rm -rf $(BUILD) compile_commands.json
 clean:
-	$(CARGO) clean
+	cmake --build $(BUILD) --target clean 2>/dev/null || rm -rf $(BUILD)
 
 build/init.bash: build
 	echo 'enable -f ./$(BUILD)/L_builtin.so L_builtin' > $@

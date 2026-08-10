@@ -1,5 +1,6 @@
 #include <config.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
@@ -86,6 +87,66 @@ int l_assoc_insert(HASH_TABLE *hash, const char *key, const char *value)
 char *l_expand_string_to_string_in_quotes(const char *string)
 {
   return expand_string_to_string((char *)string, Q_DOUBLE_QUOTES);
+}
+
+/* ------------------------------------------------------------------------- */
+
+/* Print the long usage message for the currently-executing builtin: the
+ * `this_command_name` prefix, the short usage line, and the NULL-terminated
+ * `long_doc` array. This is the C counterpart of the former Rust
+ * `builtin_usage_long()`; it duplicates the (nearly identical) static
+ * `l_builtin_long_usage` in cmd_ext.c but is exported for Rust to call. */
+void l_builtin_usage_long(void)
+{
+  if (this_command_name && *this_command_name) {
+    fprintf(stderr, "%s: usage: ", this_command_name);
+  }
+  if (current_builtin && current_builtin->short_doc) {
+    fprintf(stderr, "%s\n", current_builtin->short_doc);
+  }
+  if (current_builtin && current_builtin->long_doc) {
+    fprintf(stderr, "\n");
+    for (char **i = (char **)current_builtin->long_doc; *i; i++) {
+      fprintf(stderr, "%s\n", *i);
+    }
+  }
+  fflush(stderr);
+}
+
+/* Enter a subcommand context: append ` " prefix"` to `this_command_name` and,
+ * when `short_doc` is non-NULL, replace `current_builtin`'s doc pointers so
+ * that help/usage for the running subcommand is shown. `long_doc` is wrapped
+ * as a NULL-terminated array of C strings (a static two-element array reuses
+ * the same storage across calls, which is fine because the docs are replaced
+ * again on the next enter and restored by the caller's SubcommandGuard on
+ * return). The caller is responsible for restoring the previous docs (Rust
+ * SubcommandGuard); bash rewinds `this_command_name` after the builtin. */
+static char *l_long_doc_static[2];
+
+void l_enter_subcommand(char *prefix, char *short_doc, char *long_doc)
+{
+  // this_command_name += " prefix"
+  const size_t old_len = this_command_name ? strlen(this_command_name) : 0;
+  const size_t prefix_len = prefix ? strlen(prefix) : 0;
+  char *const buf = l_xrealloc(this_command_name, old_len + 1 + prefix_len + 1);
+  size_t off = old_len;
+  if (old_len > 0) {
+    buf[off++] = ' ';
+  }
+  if (prefix_len) {
+    memcpy(buf + off, prefix, prefix_len);
+    off += prefix_len;
+  }
+  buf[off] = '\0';
+  this_command_name = buf;
+
+  // Replace current_builtin's doc pointers (only when docs are supplied).
+  if (short_doc) {
+    l_long_doc_static[0] = long_doc;
+    l_long_doc_static[1] = NULL;
+    current_builtin->short_doc = short_doc;
+    current_builtin->long_doc = l_long_doc_static;
+  }
 }
 
 /* ------------------------------------------------------------------------- */

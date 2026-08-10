@@ -33,12 +33,19 @@ Returns success unless recv fails or variable binding fails.
     beprintln!(doc);
 }
 
-fn hex_encode(data: &[u8]) -> String {
-    let mut out = String::with_capacity(data.len() * 2);
+const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+
+/// Hex-encode `data` into a NUL-terminated byte vector. It is passed straight
+/// to the bash interface, which only needs a zero-terminated string, so the
+/// bytes are written directly into the `Vec<u8>` (hex nibble lookup) instead
+/// of building a `String`/`format!` per byte.
+fn hex_encode(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() * 2 + 1);
     for byte in data {
-        out.push_str(&format!("{:02x}", byte));
+        out.push(HEX_CHARS[(byte >> 4) as usize]); // high nibble
+        out.push(HEX_CHARS[(byte & 0x0f) as usize]); // low nibble
     }
-    out.push('\0');
+    out.push(0);
     out
 }
 
@@ -165,12 +172,10 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
     if let Some(var_ptr) = opts.v {
         match format {
             Format::Hex => {
-                // hex format - allocate string, convert to CString
-                let out_str = hex_encode(&buf[..received]);
-                if unsafe {
-                    crate::bash_api::bind_variable(var_ptr, out_str.as_str().as_ptr().cast(), 0)
-                }
-                .is_null()
+                // hex format - NUL-terminated byte vector, no C-string type
+                let out = hex_encode(&buf[..received]);
+                if unsafe { crate::bash_api::bind_variable(var_ptr, out.as_ptr().cast(), 0) }
+                    .is_null()
                 {
                     beprintln!(ENAME, b": cannot bind variable");
                     return EXECUTION_FAILURE;

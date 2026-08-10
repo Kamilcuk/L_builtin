@@ -72,6 +72,85 @@ if(L_BASH_VERSION LESS 40300)
     list(APPEND L_BUILTIN_RS_FEATURES bash_lt_4_3)
 endif()
 
+###############################################################################
+
+# Generate the Rust FFI bindings with bindgen (replaces the former cargo
+# build.rs). CMake knows everything bindgen needs: the bash source path, the
+# resolved bash version, and ppoll availability. The output is written into a
+# git-ignored directory under CMAKE_SOURCE_DIR so the Rust crate (which has no
+# build.rs) can include it via CARGO_MANIFEST_DIR without any Cargo OUT_DIR
+# plumbing.
+find_program(L_BINDGEN_EXECUTABLE NAMES bindgen)
+if(NOT L_BINDGEN_EXECUTABLE)
+    message(FATAL_ERROR "bindgen not found. Install it with: cargo install bindgen-cli")
+endif()
+
+set(L_GENERATED_RUST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated_rust")
+function(generate_bash_bindings gen_file bash_source)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/generated_rust")
+    execute_process(
+        COMMAND "${L_BINDGEN_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/bash_api_gen.h"
+            --output "${gen_file}"
+            --allowlist-function l_.*
+            # Bash entry points Rust calls directly (same allowlist as the
+            # former build.rs), not covered by the l_.* prefix.
+            --allowlist-function find_variable
+            --allowlist-function bind_variable
+            --allowlist-function find_function
+            --allowlist-function make_new_array_variable
+            --allowlist-function convert_var_to_array
+            --allowlist-function make_new_assoc_variable
+            --allowlist-function array_flush
+            --allowlist-function array_insert
+            --allowlist-function assoc_flush
+            --allowlist-function assoc_keys_to_word_list
+            --allowlist-function assoc_reference
+            --allowlist-function make_word
+            --allowlist-function make_word_list
+            --allowlist-function execute_shell_function
+            --allowlist-function dispose_words
+            --allowlist-function expand_string_to_string
+            --allowlist-function expand_string
+            --allowlist-function builtin_usage
+            --allowlist-function internal_getopt
+            --allowlist-function reset_internal_getopt
+            --allowlist-var this_command_name
+            --allowlist-var current_builtin
+            --allowlist-var list_optarg
+            --allowlist-var loptend
+            --allowlist-type builtin
+            --opaque-type SHELL_VAR
+            --opaque-type ARRAY
+            --opaque-type ARRAY_ELEMENT
+            --opaque-type HASH_TABLE
+            --
+            -DHAVE_CONFIG_H
+            -DHAVE_PPOLL=1
+            "-DL_BASH_VERSION=${L_BASH_VERSION}"
+            -DSHELL
+            -D_GNU_SOURCE=1
+            -std=gnu99
+            "-I${bash_source}"
+            "-I${bash_source}/include"
+            "-I${bash_source}/builtins"
+            "-I${bash_source}/lib"
+        RESULT_VARIABLE l_bindgen_result
+        OUTPUT_VARIABLE l_bindgen_stdout
+        ERROR_VARIABLE l_bindgen_stderr
+    )
+    if(NOT l_bindgen_result EQUAL 0)
+        message(FATAL_ERROR
+            "bindgen failed for src/bash_api_gen.h (result ${l_bindgen_result})\n"
+            "stdout: ${l_bindgen_stdout}\nstderr: ${l_bindgen_stderr}")
+    endif()
+endfunction()
+
+generate_bash_bindings("${L_GENERATED_RUST_DIR}/bash_api_gen.rs" "${BASH_SOURCE}")
+message(STATUS "Generated Rust bindings: ${L_GENERATED_RUST_DIR}/bash_api_gen.rs")
+
+###############################################################################
+
 # Define the Rust crate for Corrosion
 corrosion_import_crate(
     MANIFEST_PATH ${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml
@@ -197,23 +276,25 @@ target_include_directories(bash_loadables INTERFACE "${CMAKE_CURRENT_BINARY_DIR}
 
 ###############################################################################
 
-add_library(L_builtin MODULE
+# The C MODULE target is named L_builtin_module because Corrosion already
+# creates an interface target named `L_builtin` for the Rust crate. The output
+# file name is kept as "L_builtin" so bash dlsym()s L_builtin_struct unchanged.
+# Only the C glue sources remain in C; lseek/pipe/net/etc. are implemented in
+# Rust (see src/*.rs).
+add_library(L_builtin_module MODULE
     ./src/L_builtin.c
-    ./src/lseek.c
     ./src/poll.c
     ./src/sig.c
-    ./src/pipe.c
-    ./src/net.c
     ./src/bash_api.c
     ./src/cmd_ext.c
 )
-set_target_properties(L_builtin PROPERTIES
+set_target_properties(L_builtin_module PROPERTIES
     PREFIX ""
     SUFFIX ".so"
     OUTPUT_NAME "L_builtin"
 )
 find_package(Threads REQUIRED)
-target_link_libraries(L_builtin PRIVATE
+target_link_libraries(L_builtin_module PRIVATE
     bash
     Threads::Threads
     ${CMAKE_DL_LIBS}
@@ -223,20 +304,20 @@ target_link_libraries(L_builtin PRIVATE
     bash_loadables
     ${L_BUILTIN_RS_TARGETS}
 )
-add_dependencies(L_builtin ${L_BUILTIN_RS_TARGETS})
+add_dependencies(L_builtin_module ${L_BUILTIN_RS_TARGETS})
 
 # Export only L_builtin_struct (the symbol bash dlsym()s); hide everything
 # else so no symbol in this module can collide/interpose with bash's
 # -rdynamic exports or other loadables.
 set(VERSION_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/src/L_builtin.map)
-target_link_options(L_builtin PRIVATE -Wl,--version-script=${VERSION_SCRIPT})
-set_target_properties(L_builtin PROPERTIES LINK_DEPENDS ${VERSION_SCRIPT})
+target_link_options(L_builtin_module PRIVATE -Wl,--version-script=${VERSION_SCRIPT})
+set_target_properties(L_builtin_module PROPERTIES LINK_DEPENDS ${VERSION_SCRIPT})
 
 ###############################################################################
 
 if(L_DEV)
     if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-        target_compile_options(L_builtin PRIVATE -Wall -Wextra -fanalyzer)
+        target_compile_options(L_builtin_module PRIVATE -Wall -Wextra -fanalyzer)
         target_compile_options(bash_loadables PRIVATE -Wall -Wextra)
     endif()
 
@@ -246,9 +327,9 @@ if(L_DEV)
             ${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json
         COMMENT "Creating symlink to compile_commands.json"
     )
-    add_custom_command(TARGET L_builtin POST_BUILD
+    add_custom_command(TARGET L_builtin_module POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E create_symlink
-            $<TARGET_FILE:L_builtin>
+            $<TARGET_FILE:L_builtin_module>
             ${CMAKE_SOURCE_DIR}/L_builtin.so
         COMMENT "Creating symlink to L_builtin.so"
     )

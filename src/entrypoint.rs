@@ -9,12 +9,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{c_int, this_command_name, WordListView, EX_USAGE, WORD_LIST};
+use crate::bash_api::{c_char, c_int, this_command_name, WordListView, EX_USAGE, WORD_LIST};
 use crate::intlookup::IntLookup128;
 use crate::shared::{capture_into_variable, flush_stdout_buffers};
-use crate::subcmd::{Subcommand, SubcommandGuard};
+use crate::subcmd::{SubcommandFn, SubcommandGuard};
 use crate::{bash_getopt, beprintln, bprintln, intlookup};
-use std::ffi::c_char;
+use std::ptr::null_mut;
 
 #[cfg(not(feature = "bash_lt_4_3"))]
 use crate::bash_api::l_execute_command_string;
@@ -31,148 +31,33 @@ extern "C" {
     static L_BUILTIN_DOC: [*const c_char; 0];
 }
 
-const SUBCOMMAND_ENTRIES: &[(&str, Subcommand)] = &[
-    (
-        "lseek",
-        Subcommand {
-            short_doc: b"Reposition file offset\0",
-            long_doc: b"\0",
-            func: crate::lseek::lseek_subcommand,
-        },
-    ),
-    (
-        "poll",
-        Subcommand {
-            short_doc: b"Wait for file descriptors to become ready\0",
-            long_doc: b"\0",
-            func: poll_subcommand,
-        },
-    ),
+// Dispatch table: a plain map of subcommand name -> extern "C" handler.
+// There is no per-subcommand doc metadata any more (that moved to the C
+// `l_enter_subcommand`/`l_builtin_usage_long` helpers); help/usage comes from
+// L_builtin's own `struct builtin` docs in src/L_builtin.c.
+const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
+    ("lseek", crate::lseek::lseek_subcommand),
+    ("poll", poll_subcommand),
     #[cfg(feature = "ppoll")]
-    (
-        "ppoll",
-        Subcommand {
-            short_doc: b"Wait for FDs and unblock signals atomically\0",
-            long_doc: b"\0",
-            func: ppoll_subcommand,
-        },
-    ),
-    (
-        "sigmask",
-        Subcommand {
-            short_doc: b"Block or unblock signals\0",
-            long_doc: b"\0",
-            func: sigmask_subcommand,
-        },
-    ),
-    (
-        "sigunmask",
-        Subcommand {
-            short_doc: b"Unblock signals and run a command\0",
-            long_doc: b"\0",
-            func: sigunmask_subcommand,
-        },
-    ),
-    (
-        "pipe",
-        Subcommand {
-            short_doc: b"Create a pipe\0",
-            long_doc: b"\0",
-            func: crate::pipe::pipe_subcommand,
-        },
-    ),
-    (
-        "listen",
-        Subcommand {
-            short_doc: b"Create a listening TCP socket\0",
-            long_doc: b"\0",
-            func: crate::listen::listen_subcommand,
-        },
-    ),
-    (
-        "accept",
-        Subcommand {
-            short_doc: b"Accept a network connection\0",
-            long_doc: b"\0",
-            func: crate::accept::accept_subcommand,
-        },
-    ),
-    (
-        "connect",
-        Subcommand {
-            short_doc: b"Establish a TCP connection\0",
-            long_doc: b"\0",
-            func: crate::connect::connect_subcommand,
-        },
-    ),
-    (
-        "shutdown",
-        Subcommand {
-            short_doc: b"Semi-close a network socket\0",
-            long_doc: b"\0",
-            func: crate::shutdown::shutdown_subcommand,
-        },
-    ),
-    (
-        "send",
-        Subcommand {
-            short_doc: b"Send bytes over a socket\0",
-            long_doc: b"\0",
-            func: crate::send::send_subcommand,
-        },
-    ),
-    (
-        "recv",
-        Subcommand {
-            short_doc: b"Receive bytes from a socket\0",
-            long_doc: b"\0",
-            func: crate::recv::recv_subcommand,
-        },
-    ),
-    (
-        "sleep",
-        Subcommand {
-            short_doc: b"High-precision sub-second sleep\0",
-            long_doc: b"\0",
-            func: crate::sleep::sleep_subcommand,
-        },
-    ),
-    (
-        "core",
-        Subcommand {
-            short_doc: b"Core utilities (ls, stat) via Rust/uutils\0",
-            long_doc: b"\0",
-            func: crate::cmd_core::l_core_subcommand,
-        },
-    ),
-    (
-        "lua",
-        Subcommand {
-            short_doc: b"Execute LuaJIT script\0",
-            long_doc: b"\0",
-            func: crate::cmd_lua::l_lua_subcommand,
-        },
-    ),
-    (
-        "ext",
-        Subcommand {
-            short_doc: b"External command helpers\0",
-            long_doc: b"\0",
-            func: l_cmd_ext,
-        },
-    ),
+    ("ppoll", ppoll_subcommand),
+    ("sigmask", sigmask_subcommand),
+    ("sigunmask", sigunmask_subcommand),
+    ("pipe", crate::pipe::pipe_subcommand),
+    ("listen", crate::listen::listen_subcommand),
+    ("accept", crate::accept::accept_subcommand),
+    ("connect", crate::connect::connect_subcommand),
+    ("shutdown", crate::shutdown::shutdown_subcommand),
+    ("send", crate::send::send_subcommand),
+    ("recv", crate::recv::recv_subcommand),
+    ("sleep", crate::sleep::sleep_subcommand),
+    ("core", crate::cmd_core::l_core_subcommand),
+    ("lua", crate::cmd_lua::l_lua_subcommand),
+    ("ext", l_cmd_ext),
     #[cfg(not(feature = "bash_lt_4_3"))]
-    (
-        "capture",
-        Subcommand {
-            short_doc: b"Run a command with stdout captured into a variable\0",
-            long_doc: b"\0",
-            func: l_capture_subcommand,
-        },
-    ),
+    ("capture", l_capture_subcommand),
 ];
 
-const SUBCOMMAND_TABLE: IntLookup128<Subcommand, { SUBCOMMAND_ENTRIES.len() }> =
+const SUBCOMMAND_TABLE: IntLookup128<SubcommandFn, { SUBCOMMAND_ENTRIES.len() }> =
     intlookup!(&SUBCOMMAND_ENTRIES);
 
 unsafe fn l_builtin_print_help() {
@@ -273,16 +158,17 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
     let (opts, args) = bash_getopt!(list, l_builtin_print_help, [h], [v]);
     let view = unsafe { WordListView::from_raw(args) };
     let mut list = view.into_iter();
-    let first = match list.next() {
-        Some(first) => first.to_bytes(),
+    let first_word = match list.next() {
+        Some(first_word) => first_word,
         None => {
             unsafe { l_builtin_print_usage() };
             return EX_USAGE;
         }
     };
+    let first = unsafe { first_word.to_bytes() };
     // Find the subcommand for this name using intlookup's packed table.
     let subcommand = match SUBCOMMAND_TABLE.lookup(first) {
-        Some(s) => s,
+        Some(f) => f,
         None => {
             unsafe { l_builtin_unknown_subcommand(first) };
             return EX_USAGE;
@@ -291,16 +177,18 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
     // Construct the guard before dispatching so current_builtin's doc pointers
     // are restored when l_entrypoint returns.
     let _guard = SubcommandGuard::new();
+    // Enter the subcommand context: append its name to this_command_name.
+    // No doc pointers are passed (NULL keeps current_builtin's docs intact),
+    // so help/usage still reads L_builtin's own struct docs.
+    crate::bash_api::l_enter_subcommand(first_word.as_ptr().cast(), null_mut(), null_mut());
     // Flush before the handler so buffered bash/C output cannot be reordered
     // against direct fd writes from Rust.
     flush_stdout_buffers();
     let ret = if let Some(var) = opts.v {
         // -v VAR was provided: capture subcommand stdout into VAR
-        capture_into_variable("L_builtin", var, true, || unsafe {
-            subcommand.call(first, list.as_ptr())
-        })
+        capture_into_variable("L_builtin", var, true, || unsafe { subcommand(list.as_ptr()) })
     } else {
-        unsafe { subcommand.call(first, list.as_ptr()) }
+        unsafe { subcommand(list.as_ptr()) }
     };
     flush_stdout_buffers();
     ret
