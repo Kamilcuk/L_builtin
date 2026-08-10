@@ -12,9 +12,8 @@
 use crate::bash_api::{c_char, c_int, this_command_name, WordListView, EX_USAGE, WORD_LIST};
 use crate::intlookup::IntLookup128;
 use crate::shared::{capture_into_variable, flush_stdout_buffers};
-use crate::subcmd::{SubcommandFn, SubcommandGuard};
+use crate::subcmd::{CmdDesc, SubcommandFn, SubcommandGuard};
 use crate::{bash_getopt, beprintln, bprintln, intlookup};
-use std::ptr::null_mut;
 
 #[cfg(not(feature = "bash_lt_4_3"))]
 use crate::bash_api::l_execute_command_string;
@@ -31,17 +30,92 @@ extern "C" {
     static L_BUILTIN_DOC: [*const c_char; 0];
 }
 
+// C subcommands have no Rust doc constants, so give each a CmdDesc wrapper that
+// enters the subcommand context (name + docs) before delegating to the C hander.
+const POLL_CMD: CmdDesc = CmdDesc::new(
+    c"poll",
+    c"[-t TIMEOUT] [-v ARRAY_VAR] [-i] [FD[:EVENTS] ...]",
+    c"\
+Wait for file descriptors to become ready using poll(2). EVENTS can be 'r',
+'w', or 'p'. Results are stored in the indexed array ARRAY_VAR as
+FD:REVENTS ('r', 'w', 'p', 'h', 'e', or 'n').
+
+If -i is provided, poll will not automatically retry on signal interruption
+(EINTR); by default it retries.
+
+Exit Status:
+Returns success if poll succeeds, even on timeout; failure on system errors.
+",
+);
+unsafe extern "C" fn poll_enter(list: *mut WORD_LIST) -> c_int {
+    POLL_CMD.enter();
+    unsafe { poll_subcommand(list) }
+}
+
+#[cfg(feature = "ppoll")]
+const PPOLL_CMD: CmdDesc = CmdDesc::new(
+    c"ppoll",
+    c"[-t TIMEOUT] [-v ARRAY_VAR] [-u SIGSPEC] [-i] [FD[:EVENTS] ...]",
+    c"\
+Wait for file descriptors and unblock signals atomically using ppoll(2).
+Results are stored in the indexed array ARRAY_VAR as FD:REVENTS.
+
+Use -u SIGSPEC to temporarily unblock specified signals during ppoll; use
+-u 'ALL' (case-insensitive) to unblock all signals.
+
+If -i is provided, ppoll will not automatically retry on EINTR.
+",
+);
+#[cfg(feature = "ppoll")]
+unsafe extern "C" fn ppoll_enter(list: *mut WORD_LIST) -> c_int {
+    PPOLL_CMD.enter();
+    unsafe { ppoll_subcommand(list) }
+}
+
+const SIGMASK_CMD: CmdDesc = CmdDesc::new(
+    c"sigmask",
+    c"[-s sigspec] [-u sigspec] [sigspec ...]",
+    c"\
+Block or unblock signals in the shell process. Without options, prints the
+current signal mask. -s blocks, -u unblocks. Use 'ALL' (case-insensitive)
+with -s or -u to block or unblock all signals. Positional sigspecs are
+always blocked.
+
+Exit Status:
+Returns success unless an invalid signal is given or a system error occurs.
+",
+);
+unsafe extern "C" fn sigmask_enter(list: *mut WORD_LIST) -> c_int {
+    SIGMASK_CMD.enter();
+    unsafe { sigmask_subcommand(list) }
+}
+
+const SIGUNMASK_CMD: CmdDesc = CmdDesc::new(
+    c"sigunmask",
+    c"-s sigspec cmd [args...]",
+    c"\
+Temporarily unblock the specified signal and execute the command. Use
+'ALL' (case-insensitive) with -s to unblock all signals. If the signal was
+pending, the trap runs and the command is skipped. The command can be any
+shell command (builtin, function, or external).
+
+Exit Status:
+Returns the command's status, or 128+signum if a signal was caught.
+",
+);
+unsafe extern "C" fn sigunmask_enter(list: *mut WORD_LIST) -> c_int {
+    SIGUNMASK_CMD.enter();
+    unsafe { sigunmask_subcommand(list) }
+}
+
 // Dispatch table: a plain map of subcommand name -> extern "C" handler.
-// There is no per-subcommand doc metadata any more (that moved to the C
-// `l_enter_subcommand`/`l_builtin_usage_long` helpers); help/usage comes from
-// L_builtin's own `struct builtin` docs in src/L_builtin.c.
 const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("lseek", crate::lseek::lseek_subcommand),
-    ("poll", poll_subcommand),
+    ("poll", poll_enter),
     #[cfg(feature = "ppoll")]
-    ("ppoll", ppoll_subcommand),
-    ("sigmask", sigmask_subcommand),
-    ("sigunmask", sigunmask_subcommand),
+    ("ppoll", ppoll_enter),
+    ("sigmask", sigmask_enter),
+    ("sigunmask", sigunmask_enter),
     ("pipe", crate::pipe::pipe_subcommand),
     ("listen", crate::listen::listen_subcommand),
     ("accept", crate::accept::accept_subcommand),
@@ -53,20 +127,17 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("core", crate::cmd_core::l_core_subcommand),
     ("lua", crate::cmd_lua::l_lua_subcommand),
     ("ext", l_cmd_ext),
+    ("eventfd", crate::eventfd::eventfd_subcommand),
+    ("memfd", crate::memfd::memfd_subcommand),
+    ("timerfd", crate::timerfd::timerfd_subcommand),
+    ("signalfd", crate::signalfd::signalfd_subcommand),
+    ("splice", crate::splice::splice_subcommand),
     #[cfg(not(feature = "bash_lt_4_3"))]
     ("capture", l_capture_subcommand),
 ];
 
 const SUBCOMMAND_TABLE: IntLookup128<SubcommandFn, { SUBCOMMAND_ENTRIES.len() }> =
     intlookup!(&SUBCOMMAND_ENTRIES);
-
-unsafe fn l_builtin_print_help() {
-    let mut p = L_BUILTIN_DOC.as_ptr();
-    while !(*p).is_null() {
-        bprintln!(*p);
-        p = p.add(1);
-    }
-}
 
 unsafe fn l_builtin_print_usage() {
     let cmd_name = this_command_name;
@@ -121,7 +192,21 @@ fn build_eval_command<'a>(args: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
 /// `list` starts at VAR (the dispatcher already consumed the word `capture`).
 /// # Safety
 #[cfg(not(feature = "bash_lt_4_3"))]
+const CAPTURE_CMD: crate::subcmd::CmdDesc = crate::subcmd::CmdDesc::new(
+    c"capture",
+    c"VAR <command> [args...]",
+    c"\
+Run <command> with its stdout captured into the shell variable VAR
+(trailing newlines stripped, like $(...)). The command runs through the
+shell, so external commands, functions, builtins and L_builtin subcommands
+all work uniformly.
+",
+);
+
+/// # Safety
+#[cfg(not(feature = "bash_lt_4_3"))]
 pub unsafe extern "C" fn l_capture_subcommand(list: *mut WORD_LIST) -> c_int {
+    CAPTURE_CMD.enter();
     let mut args = WordListView::from_raw(list).into_iter();
     // var is a slice from bash WORD_LIST; use the original C string pointer.
     // The WORD_DESC.word field (direct field access on the generated layout)
@@ -155,7 +240,7 @@ pub unsafe extern "C" fn l_capture_output(var: *const c_char, list: *mut WORD_LI
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
     // Parse top-level options (-v VAR) before dispatching to subcommand
-    let (opts, args) = bash_getopt!(list, l_builtin_print_help, [h], [v]);
+    let (opts, args) = bash_getopt!(list, [], [v]);
     let view = unsafe { WordListView::from_raw(args) };
     let mut list = view.into_iter();
     let first_word = match list.next() {
@@ -175,12 +260,9 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
         }
     };
     // Construct the guard before dispatching so current_builtin's doc pointers
-    // are restored when l_entrypoint returns.
+    // (set by the subcommand's CmdDesc::enter) are restored when l_entrypoint
+    // returns.
     let _guard = SubcommandGuard::new();
-    // Enter the subcommand context: append its name to this_command_name.
-    // No doc pointers are passed (NULL keeps current_builtin's docs intact),
-    // so help/usage still reads L_builtin's own struct docs.
-    crate::bash_api::l_enter_subcommand(first_word.as_ptr().cast(), null_mut(), null_mut());
     // Flush before the handler so buffered bash/C output cannot be reordered
     // against direct fd writes from Rust.
     flush_stdout_buffers();

@@ -19,17 +19,17 @@ _L_test_lua_bind_var() {
 
 _L_test_lua_help_short() {
     local out
-    out=$(L_builtin lua -h)
+    out=$(L_builtin lua -h 2>&1)
     L_unittest_checkexit 0 L_builtin lua -h
-    L_unittest_contains "$out" "Usage:"
+    L_unittest_contains "$out" "usage:"
     L_unittest_contains "$out" "-h, --help"
 }
 
 _L_test_lua_help_long() {
     local out
-    out=$(L_builtin lua -h)
+    out=$(L_builtin lua -h 2>&1)
     L_unittest_checkexit 0 L_builtin lua -h
-    L_unittest_contains "$out" "Usage:"
+    L_unittest_contains "$out" "usage:"
     L_unittest_contains "$out" "-h, --help"
 }
 

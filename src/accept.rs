@@ -7,30 +7,31 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{
-    this_command_name, WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
+    this_command_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
 };
-use crate::{bash_getopt, beprintln, bufwrite, getopts, parse_positionals, shared};
+use crate::subcmd::CmdDesc;
+use crate::{beprintln, bufwrite, getopts, parse_positionals, shared};
 use std::os::raw::c_int;
 
-fn print_accept_help() {
-    let doc = b"\
-L_builtin accept CLIENTFD_VAR ADDR_VAR LISTENFD
-
+const CMD: CmdDesc = CmdDesc::new(
+    c"accept",
+    c"CLIENTFD_VAR ADDR_VAR LISTENFD",
+    c"\
 Accept an incoming connection on the listening socket file descriptor LISTENFD.
 The new socket file descriptor for the client is stored in CLIENTFD_VAR.
 The client's address (IP:PORT) is stored in ADDR_VAR.
 
 Exit Status:
 Returns success unless accept fails or variable binding fails.
-";
-    beprintln!(doc);
-}
+",
+);
 
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
+    CMD.enter();
     let rest = getopts!(list, [], []);
     let (clientfd_var, addr_var, fd_cptr) =
         parse_positionals!(rest, [CLIENTFD_VAR, ADDR_VAR, LISTENFD]);

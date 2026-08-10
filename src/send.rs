@@ -7,16 +7,17 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
+use crate::subcmd::CmdDesc;
 use crate::{bash_getopt, beprintln};
 use std::os::raw::c_int;
 use std::ffi::CStr;
 
 const ENAME: &str = "L_builtin send";
 
-fn print_send_help() {
-    let doc = b"\
-L_builtin send [-f format] [-v SENT_VAR] FD DATA
-
+const CMD: CmdDesc = CmdDesc::new(
+    c"send",
+    c"[-f format] [-v SENT_VAR] FD DATA",
+    c"\
 Transmit raw or encoded data over the socket file descriptor FD.
 Supported formats (-f):
   raw   Transmit DATA as raw characters (default)
@@ -27,9 +28,8 @@ is stored in SENT_VAR.
 
 Exit Status:
 Returns success unless send fails or variable binding fails.
-";
-    beprintln!(doc);
-}
+",
+);
 
 fn hex_decode(hex: &[u8]) -> Option<Vec<u8>> {
     if hex.len() % 2 != 0 {
@@ -62,7 +62,8 @@ fn cptr_to_str(ptr: *mut std::os::raw::c_char) -> Result<&'static str, ()> {
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn send_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (opts, args) = bash_getopt!(list, print_send_help, [], [f, v]);
+    CMD.enter();
+    let (opts, args) = bash_getopt!(list, [], [f, v]);
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();

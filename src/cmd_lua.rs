@@ -5,7 +5,7 @@ use crate::bash_api::{
 };
 use crate::bprint_bytes::BDisplay;
 use crate::{bash_getopt, beprintln};
-use crate::{bprintln, return_on_err};
+use crate::return_on_err;
 
 use std::ffi::{c_char, CStr};
 use std::io::Write;
@@ -20,6 +20,7 @@ use crate::bash_api::{
     l_invisible_p, l_readonly_p, l_value_cell, make_new_array_variable, make_new_assoc_variable,
     EX_USAGE, SHELL_VAR, WORD_LIST,
 };
+use crate::subcmd::CmdDesc;
 
 #[cfg(not(feature = "bash_lt_4_3"))]
 use crate::bash_api::l_execute_command_string;
@@ -43,11 +44,10 @@ impl BDisplay for mlua::Error {
 }
 const ENAME: &str = "L_builtin lua";
 
-fn print_lua_help() {
-    bprintln!(
-        "\
-Usage: L_builtin lua <script> [args...]
-
+const CMD: CmdDesc = CmdDesc::new(
+    c"lua",
+    c"<script> [args...]",
+    c"\
 Run a Lua script in-process, with access to a bash.* API.
 
 Options:
@@ -56,20 +56,20 @@ Options:
 Arguments:
   script              Lua script: inline code, or a file path
   args...             Arguments exposed to the script via the Lua 'arg' table
-"
-    );
-}
+",
+);
 
 /// # Safety
 #[no_mangle]
 pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (_opts, args) = bash_getopt!(list, print_lua_help, [], []);
+    CMD.enter();
+    let (_opts, args) = bash_getopt!(list, [], []);
     let store = unsafe { WordListView::from_raw(args) };
     let mut args = store.iter_bytes();
     let script = match args.next() {
         Some(script) => script,
         None => {
-            // No script was given — only options (or nothing).
+            // No script was given - only options (or nothing).
             beprintln!(ENAME, ": missing script");
             beprintln!("Usage: L_builtin lua [-v VAR] <script> [args...]");
             return EX_USAGE;

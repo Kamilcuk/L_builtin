@@ -7,16 +7,17 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
+use crate::subcmd::CmdDesc;
 use crate::{bash_getopt, beprintln};
 use std::os::fd::IntoRawFd;
 use std::os::raw::c_int;
 
 const ENAME: &str = "L_builtin listen";
 
-fn print_listen_help() {
-    let doc = b"\
-L_builtin listen [-p PORT_VAR] LISTENFD_VAR [IP] [PORT]
-
+const CMD: CmdDesc = CmdDesc::new(
+    c"listen",
+    c"[-p PORT_VAR] LISTENFD_VAR [IP] [PORT]",
+    c"\
 Create a new socket, bind it to IP and PORT, listen for incoming
 connections, and store the resulting socket file descriptor in the
 variable LISTENFD_VAR.
@@ -29,16 +30,16 @@ for ephemeral port allocation) is stored in PORT_VAR.
 
 Exit Status:
 Returns success unless socket/bind/listen fails or variable binding fails.
-";
-    beprintln!(doc);
-}
+",
+);
 
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn listen_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (opts, args) = bash_getopt!(list, print_listen_help, [], [p]);
+    CMD.enter();
+    let (opts, args) = bash_getopt!(list, [], [p]);
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();

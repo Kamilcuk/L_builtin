@@ -7,30 +7,31 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
+use crate::subcmd::CmdDesc;
 use crate::{bash_getopt, beprintln};
 use std::os::raw::c_int;
 
 const ENAME: &str = "L_builtin pipe";
 
-fn print_pipe_help() {
-    let doc = b"\
-L_builtin pipe ARRAY
-
+const CMD: CmdDesc = CmdDesc::new(
+    c"pipe",
+    c"ARRAY",
+    c"\
 Create a new pipe and store the file descriptors in the indexed
 array ARRAY. ARRAY[0] is the read end, ARRAY[1] is the write end.
 
 Exit Status:
 Returns success unless the pipe cannot be created or ARRAY is invalid.
-";
-    beprintln!(doc);
-}
+",
+);
 
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn pipe_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (_, args) = bash_getopt!(list, print_pipe_help, [], []);
+    CMD.enter();
+    let (_, args) = bash_getopt!(list, [], []);
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();

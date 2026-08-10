@@ -123,7 +123,6 @@ impl BashGetopt {
 macro_rules! bash_getopt {
     (
         $list:expr,
-        $help_fn:expr,
         [ $( $flag:ident ),* $(,)? ],
         [ $( $opt:ident ),* $(,)? ] $(,)?
     ) => {{
@@ -152,8 +151,16 @@ macro_rules! bash_getopt {
             };
             match c {
                 -1 => break,
-                c if c == b'h' as std::os::raw::c_int => { $help_fn(); return 0; }
-                $crate::bash_getopt::GETOPT_HELP => { $help_fn(); return 2; },
+                // -h prints the currently active subcommand's docs (set by
+                // `l_enter_subcommand`) via `l_builtin_usage_long`.
+                c if c == b'h' as std::os::raw::c_int => {
+                    $crate::bash_api::l_builtin_usage_long();
+                    return 0;
+                }
+                $crate::bash_getopt::GETOPT_HELP => {
+                    $crate::bash_api::l_builtin_usage_long();
+                    return 2;
+                }
                 $(
                     c if c == stringify!($flag).as_bytes()[0] as std::os::raw::c_int => {
                         parsed.$flag = true;
@@ -174,7 +181,7 @@ macro_rules! bash_getopt {
 /// Specifies the arity of a positional argument.
 ///
 /// Each variant carries the argument's name as a `&'static str` (produced by
-/// [`parse_positional_spec!`] via `stringify!` — zero allocation).
+/// [`parse_positional_spec!`] via `stringify!` - zero allocation).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PositionalSpec {
     /// Must be present exactly once.
@@ -323,7 +330,7 @@ macro_rules! getopts_colon {
 /// Parse options from a bash `WORD_LIST` using bash's `internal_getopt`.
 ///
 /// Automatically adds `-h` which calls bash's `builtin_usage()` and returns
-/// `EX_USAGE`. The `-h` flag is appended to the optstring automatically — do
+/// `EX_USAGE`. The `-h` flag is appended to the optstring automatically - do
 /// not add it manually.
 ///
 /// # Syntax
@@ -405,17 +412,17 @@ macro_rules! getopts {
 /// ```
 ///
 /// **Positional modifiers** control arity:
-/// - `<ident>`   — required → `Cpnt` (missing → `EX_USAGE`)
-/// - `<ident>?`  — optional → `Option<Cpnt>`
-/// - `<ident>*`  — zero or more → `Vec<Cpnt>`
-/// - `<ident>+`  — one or more → `Vec<Cpnt>` (empty → `EX_USAGE`)
+/// - `<ident>`   - required -> `Cpnt` (missing -> `EX_USAGE`)
+/// - `<ident>?`  - optional -> `Option<Cpnt>`
+/// - `<ident>*`  - zero or more -> `Vec<Cpnt>`
+/// - `<ident>+`  - one or more -> `Vec<Cpnt>` (empty -> `EX_USAGE`)
 ///
 /// Following the `*`/`+` modifiers the value is a `Vec<Cpnt>`.
 ///
 /// Returns a tuple `(arg1, arg2, ...)` of the bound positional values.
 ///
 /// Spec ordering is validated at **compile time**: variadic specs (`*`, `+`)
-/// must come last, and no required may follow an optional — an invalid
+/// must come last, and no required may follow an optional - an invalid
 /// ordering is a build error. At runtime, if extra words remain after parsing
 /// and no variadic spec is present, prints "too many arguments" to stderr and
 /// returns `EX_USAGE`.

@@ -12,7 +12,7 @@
 // checks each declaration against its definition. It also pulls in all the
 // bash headers (shell.h, variables.h, array.h, assoc.h, command.h, general.h,
 // externs.h, subst.h, execute_cmd.h, unwind_prot.h, builtins/common.h,
-// trap.h) exactly once — shell.h has no include guard, so do NOT include those
+// trap.h) exactly once - shell.h has no include guard, so do NOT include those
 // headers directly here or redefinition errors result.
 #include "bash_api_gen.h"
 
@@ -113,14 +113,16 @@ void l_builtin_usage_long(void)
   fflush(stderr);
 }
 
-/* Enter a subcommand context: append ` " prefix"` to `this_command_name` and,
+/* Enter a subcommand context: append `" prefix"` to `this_command_name` and,
  * when `short_doc` is non-NULL, replace `current_builtin`'s doc pointers so
  * that help/usage for the running subcommand is shown. `long_doc` is wrapped
  * as a NULL-terminated array of C strings (a static two-element array reuses
  * the same storage across calls, which is fine because the docs are replaced
  * again on the next enter and restored by the caller's SubcommandGuard on
- * return). The caller is responsible for restoring the previous docs (Rust
- * SubcommandGuard); bash rewinds `this_command_name` after the builtin. */
+ * return). The caller (CmdDesc::enter in Rust) passes NUL-terminated C
+ * strings; the leading separator space is added here. The caller is
+ * responsible for restoring the previous docs (Rust SubcommandGuard); bash
+ * rewinds `this_command_name` after the builtin. */
 static char *l_long_doc_static[2];
 
 void l_enter_subcommand(char *prefix, char *short_doc, char *long_doc)

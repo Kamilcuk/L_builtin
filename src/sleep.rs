@@ -7,15 +7,16 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{
-    this_command_name, WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
+    this_command_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
 };
-use crate::{bash_getopt, beprintln, getopts, parse_positionals, shared};
+use crate::subcmd::CmdDesc;
+use crate::{beprintln, getopts, parse_positionals};
 use std::os::raw::c_int;
 
-fn print_sleep_help() {
-    let doc = b"\
-L_builtin sleep [-i] SECONDS
-
+const CMD: CmdDesc = CmdDesc::new(
+    c"sleep",
+    c"[-i] SECONDS",
+    c"\
 Sleep for the specified number of SECONDS. SECONDS can be a floating-point
 number to request sub-second/microsecond-level precision.
 
@@ -24,15 +25,15 @@ If -i is provided, the sleep will not automatically retry on signal interruption
 
 Exit Status:
 Returns success unless sleep fails.
-";
-    beprintln!(doc);
-}
+",
+);
 
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
+    CMD.enter();
     let mut interruptible = false;
     let rest = getopts!(list, [i => || interruptible=true], []);
     let (seconds_cstr,) = parse_positionals!(rest, [SECONDS]);

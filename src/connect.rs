@@ -11,27 +11,29 @@ use crate::{bash_getopt, beprintln};
 use std::os::fd::{AsRawFd, IntoRawFd};
 use std::os::raw::c_int;
 
+use crate::subcmd::CmdDesc;
+
 const ENAME: &str = "L_builtin connect";
 
-fn print_connect_help() {
-    let doc = b"\
-L_builtin connect CLIENTFD_VAR IP PORT
-
+const CMD: CmdDesc = CmdDesc::new(
+    c"connect",
+    c"CLIENTFD_VAR IP PORT",
+    c"\
 Establish an outgoing connection to IP on PORT, and store the resulting
 socket file descriptor in CLIENTFD_VAR.
 
 Exit Status:
 Returns success unless connection fails or variable binding fails.
-";
-    beprintln!(doc);
-}
+",
+);
 
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn connect_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (_, args) = bash_getopt!(list, print_connect_help, [], []);
+    CMD.enter();
+    let (_, args) = bash_getopt!(list, [], []);
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();

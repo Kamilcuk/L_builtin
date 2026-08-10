@@ -37,7 +37,11 @@ rustchecks:
 	cargo test --all-features
 
 format:
+	clang-format -i src/*.c src/*.h
 	cargo fix --lib -p L_builtin --allow-dirty
+
+check-format:
+	clang-format --dry-run --Werror src/*.c src/*.h
 
 check-compile-commands:
 	@[ -f $(BUILD)/compile_commands.json ] || { echo "Error: $(BUILD)/compile_commands.json not found. Run make first.";  exit 1 }

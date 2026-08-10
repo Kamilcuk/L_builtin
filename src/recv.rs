@@ -7,15 +7,16 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::subcmd::CmdDesc;
 use crate::{bash_getopt, beprintln};
 use std::os::raw::{c_char, c_int};
 
 const ENAME: &str = "L_builtin recv";
 
-fn print_recv_help() {
-    let doc = b"\
-L_builtin recv [-f format] [-v RECV_VAR] [-n] [-i] FD SIZE
-
+const CMD: CmdDesc = CmdDesc::new(
+    c"recv",
+    c"[-f format] [-v RECV_VAR] [-n] [-i] FD SIZE",
+    c"\
 Receive up to SIZE bytes from the socket file descriptor FD.
 Supported formats (-f):
   raw   Store raw bytes directly into RECV_VAR (null-byte unsafe) (default)
@@ -29,9 +30,8 @@ If -i is provided, the recv call will not automatically retry on signal interrup
 
 Exit Status:
 Returns success unless recv fails or variable binding fails.
-";
-    beprintln!(doc);
-}
+",
+);
 
 const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 
@@ -54,7 +54,8 @@ fn hex_encode(data: &[u8]) -> Vec<u8> {
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (opts, args) = bash_getopt!(list, print_recv_help, [n, i], [f, v]);
+    CMD.enter();
+    let (opts, args) = bash_getopt!(list, [n, i], [f, v]);
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();

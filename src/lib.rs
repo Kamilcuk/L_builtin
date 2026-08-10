@@ -26,6 +26,11 @@ pub(crate) mod send;
 pub(crate) mod recv;
 pub(crate) mod sleep;
 pub(crate) mod subcmd;
+pub(crate) mod eventfd;
+pub(crate) mod memfd;
+pub(crate) mod timerfd;
+pub(crate) mod signalfd;
+pub(crate) mod splice;
 
 /// Route all Rust allocations through bash's allocator, so the whole process
 /// shares one heap regardless of how bash was configured. See `bash_alloc`.

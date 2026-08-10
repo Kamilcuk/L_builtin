@@ -19,6 +19,7 @@ dependencies = [
  "uu_ls",
  "uu_rm",
  "uu_stat",
+ "uu_tee",
  "uucore",
 ]
 
@@ -1303,6 +1304,17 @@ dependencies = [
  "clap",
  "fluent",
  "thiserror 2.0.19",
+ "uucore",
+]
+
+[[package]]
+name = "uu_tee"
+version = "0.9.0"
+source = "git+https://github.com/uutils/coreutils?rev=f66e155d80df3d82798324726e460675a02c5cd5#f66e155d80df3d82798324726e460675a02c5cd5"
+dependencies = [
+ "clap",
+ "fluent",
+ "rustix",
  "uucore",
 ]
 

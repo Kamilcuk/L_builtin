@@ -7,15 +7,16 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
+use crate::subcmd::CmdDesc;
 use crate::{bash_getopt, beprintln};
 use std::os::raw::c_int;
 
 const ENAME: &str = "L_builtin shutdown";
 
-fn print_shutdown_help() {
-    let doc = b"\
-L_builtin shutdown FD [how]
-
+const CMD: CmdDesc = CmdDesc::new(
+    c"shutdown",
+    c"FD [how]",
+    c"\
 Close parts or all of a full-duplex connection on network socket FD.
 how can be one of:
   RD or 0    Further receptions will be disallowed
@@ -24,16 +25,16 @@ how can be one of:
 
 Exit Status:
 Returns success unless shutdown fails.
-";
-    beprintln!(doc);
-}
+",
+);
 
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (_, args) = bash_getopt!(list, print_shutdown_help, [], []);
+    CMD.enter();
+    let (_, args) = bash_getopt!(list, [], []);
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();

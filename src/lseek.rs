@@ -7,15 +7,16 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
+use crate::subcmd::CmdDesc;
 use crate::{bash_getopt, beprintln};
 use std::os::raw::c_int;
 
 const ENAME: &str = "L_builtin lseek";
 
-fn print_lseek_help() {
-    let doc = b"\
-L_builtin lseek [-v var] fd offset [whence]
-
+const CMD: CmdDesc = CmdDesc::new(
+    c"lseek",
+    c"[-v var] fd offset [whence]",
+    c"\
 Adjust the file offset of file descriptor FD to OFFSET bytes
 according to WHENCE.
 
@@ -28,16 +29,16 @@ If -v VAR is provided, the new offset is stored in VAR.
 
 Exit Status:
 Returns success unless an error occurs during lseek or variable binding.
-";
-    beprintln!(doc);
-}
+",
+);
 
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (opts, args) = bash_getopt!(list, print_lseek_help, [], [v]);
+    CMD.enter();
+    let (opts, args) = bash_getopt!(list, [], [v]);
 
     let view = unsafe { WordListView::from_raw(args) };
     let mut iter = view.iter();
