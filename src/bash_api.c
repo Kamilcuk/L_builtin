@@ -92,6 +92,9 @@ void l_builtin_usage_long(void)
   fflush(stderr);
 }
 
+/// Static buffer for the memory, because I do not want to reuse this_command_name.
+static char *this_command_name_buffer = 0;
+
 /* Enter a subcommand context: append `" prefix"` to `this_command_name` and,
  * when `short_doc` is non-NULL, replace `current_builtin`'s doc pointers so
  * that help/usage for the running subcommand is shown. `long_doc` is wrapped
@@ -104,21 +107,23 @@ void l_builtin_usage_long(void)
  * rewinds `this_command_name` after the builtin. */
 void l_enter_subcommand(const char *prefix, const char *short_doc, const char *const long_doc[])
 {
-  assert(prefix && prefix[0]);
-  // this_command_name += " prefix"
-  const size_t old_len = this_command_name ? strlen(this_command_name) : 0;
-  const size_t prefix_len = prefix ? strlen(prefix) : 0;
-  char *const buf = l_xrealloc(this_command_name, old_len + 1 + prefix_len + 1);
-  size_t off = old_len;
-  if (old_len > 0) {
-    buf[off++] = ' ';
+  {
+    assert(prefix && prefix[0]);
+    // this_command_name += " prefix"
+    const size_t old_len = this_command_name ? strlen(this_command_name) : 0;
+    const size_t prefix_len = strlen(prefix);
+    const size_t space_len = old_len > 0 ? 1 : 0;
+    char *const buf = this_command_name_buffer =
+      l_xrealloc(this_command_name_buffer, old_len + space_len + prefix_len + 1);
+    assert(buf);
+    memcpy(this_command_name_buffer, this_command_name, old_len);
+    if (space_len) {
+      buf[old_len] = ' ';
+    }
+    memcpy(buf + old_len + space_len, prefix, prefix_len);
+    buf[old_len + space_len + prefix_len] = '\0';
+    this_command_name = buf;
   }
-  if (prefix_len) {
-    memcpy(buf + off, prefix, prefix_len);
-    off += prefix_len;
-  }
-  buf[off] = '\0';
-  this_command_name = buf;
   // Replace current_builtin's doc pointers (only when docs are supplied).
   assert(short_doc);
   assert(long_doc);

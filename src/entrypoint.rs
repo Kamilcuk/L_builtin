@@ -17,7 +17,7 @@ use crate::bash_api::{
 };
 use crate::intlookup::IntLookup128;
 use crate::shared::{capture_into_variable, flush_stdout_buffers};
-use crate::subcmd::{CmdDesc, SubcommandFn, SubcommandGuard};
+use crate::subcmd::{SubcommandFn, SubcommandGuard};
 use crate::{beprintln, bprintln, getopts, intlookup, variadic};
 
 #[cfg(not(feature = "bash_lt_4_3"))]
@@ -35,92 +35,14 @@ extern "C" {
     static L_BUILTIN_DOC: [*const c_char; 0];
 }
 
-// C subcommands have no Rust doc constants, so give each a CmdDesc wrapper that
-// enters the subcommand context (name + docs) before delegating to the C hander.
-const POLL_CMD: CmdDesc = CmdDesc::new(
-    c"poll",
-    c"[-t TIMEOUT] [-v ARRAY_VAR] [-i] [FD[:EVENTS] ...]",
-    c"\
-Wait for file descriptors to become ready using poll(2). EVENTS can be 'r',
-'w', or 'p'. Results are stored in the indexed array ARRAY_VAR as
-FD:REVENTS ('r', 'w', 'p', 'h', 'e', or 'n').
-
-If -i is provided, poll will not automatically retry on signal interruption
-(EINTR); by default it retries.
-
-Exit Status:
-Returns success if poll succeeds, even on timeout; failure on system errors.
-",
-);
-unsafe extern "C" fn poll_enter(list: *mut WORD_LIST) -> c_int {
-    POLL_CMD.enter();
-    unsafe { poll_subcommand(list) }
-}
-
-#[cfg(feature = "ppoll")]
-const PPOLL_CMD: CmdDesc = CmdDesc::new(
-    c"ppoll",
-    c"[-t TIMEOUT] [-v ARRAY_VAR] [-u SIGSPEC] [-i] [FD[:EVENTS] ...]",
-    c"\
-Wait for file descriptors and unblock signals atomically using ppoll(2).
-Results are stored in the indexed array ARRAY_VAR as FD:REVENTS.
-
-Use -u SIGSPEC to temporarily unblock specified signals during ppoll; use
--u 'ALL' (case-insensitive) to unblock all signals.
-
-If -i is provided, ppoll will not automatically retry on EINTR.
-",
-);
-#[cfg(feature = "ppoll")]
-unsafe extern "C" fn ppoll_enter(list: *mut WORD_LIST) -> c_int {
-    PPOLL_CMD.enter();
-    unsafe { ppoll_subcommand(list) }
-}
-
-const SIGMASK_CMD: CmdDesc = CmdDesc::new(
-    c"sigmask",
-    c"[-s sigspec] [-u sigspec] [sigspec ...]",
-    c"\
-Block or unblock signals in the shell process. Without options, prints the
-current signal mask. -s blocks, -u unblocks. Use 'ALL' (case-insensitive)
-with -s or -u to block or unblock all signals. Positional sigspecs are
-always blocked.
-
-Exit Status:
-Returns success unless an invalid signal is given or a system error occurs.
-",
-);
-unsafe extern "C" fn sigmask_enter(list: *mut WORD_LIST) -> c_int {
-    SIGMASK_CMD.enter();
-    unsafe { sigmask_subcommand(list) }
-}
-
-const SIGUNMASK_CMD: CmdDesc = CmdDesc::new(
-    c"sigunmask",
-    c"-s sigspec cmd [args...]",
-    c"\
-Temporarily unblock the specified signal and execute the command. Use
-'ALL' (case-insensitive) with -s to unblock all signals. If the signal was
-pending, the trap runs and the command is skipped. The command can be any
-shell command (builtin, function, or external).
-
-Exit Status:
-Returns the command's status, or 128+signum if a signal was caught.
-",
-);
-unsafe extern "C" fn sigunmask_enter(list: *mut WORD_LIST) -> c_int {
-    SIGUNMASK_CMD.enter();
-    unsafe { sigunmask_subcommand(list) }
-}
-
 // Dispatch table: a plain map of subcommand name -> extern "C" handler.
 const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("lseek", crate::lseek::lseek_subcommand),
-    ("poll", poll_enter),
+    ("poll", poll_subcommand),
     #[cfg(feature = "ppoll")]
-    ("ppoll", ppoll_enter),
-    ("sigmask", sigmask_enter),
-    ("sigunmask", sigunmask_enter),
+    ("ppoll", ppoll_subcommand),
+    ("sigmask", sigmask_subcommand),
+    ("sigunmask", sigunmask_subcommand),
     ("pipe", crate::pipe::pipe_subcommand),
     ("listen", crate::listen::listen_subcommand),
     ("accept", crate::accept::accept_subcommand),
