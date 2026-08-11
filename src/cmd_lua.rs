@@ -56,6 +56,95 @@ Options:
 Arguments:
   script              Lua script: inline code, or a file path
   args...             Arguments exposed to the script via the Lua 'arg' table
+
+bash.* API:
+
+  bash.get(var_name [, base])
+    Get a bash variable.
+      var_name: string  -- variable name to retrieve
+      base:     integer -- index base for arrays (0 or 1, default 1)
+    Returns:
+      scalar     -> string (or nil if unset)
+      indexed    -> table with integer keys (shifted by base), sparse preserved
+      associative-> table with string keys
+      unset/nil  -> nil
+
+  bash.set(var_name, value [, base])
+    Set a bash variable.
+      var_name: string          -- variable name to set
+      value:    boolean|number|string|table
+      base:     integer         -- index base for indexed arrays (0 or 1, default 1)
+    Returns: boolean (true on success)
+    Behavior:
+      boolean  -> \"true\" or \"false\"
+      number   -> decimal text (1.0 prints as \"1\")
+      string   -> raw bytes
+      table    -> if existing var is associative, or table has any string keys:
+                     creates/sets associative array
+                  else:
+                     creates/sets indexed array (keys shifted by base)
+    Errors on: readonly variables, invalid types, non-integer array keys
+
+  bash.unset(var_name)
+    Unset a bash variable.
+      var_name: string
+    Returns: boolean (true if removed, false if did not exist)
+    Errors on: readonly variables
+
+  bash.eval(command_string)
+    Execute a command string using bash's parser (like 'eval').
+      command_string: string
+    Returns: integer exit status
+    Note: Disabled on bash < 4.3 (missing l_execute_command_string)
+
+  bash.expand(string)
+    Perform bash parameter/command/arithmetic expansion on a string.
+      string: string
+    Returns: expanded string
+
+  bash.expand_list(string)
+    Expand a string using bash word expansion (glob, brace, tilde, etc.).
+      string: string
+    Returns: table (1-indexed) of expanded words
+
+Lua 'arg' table:
+  arg[1], arg[2], ...  -- script arguments (arg[0] is not set)
+
+Examples:
+
+  -- Get scalar
+  local home = bash.get(\"HOME\")
+  print(home)
+
+  -- Indexed array
+  bash.set(\"MY_ARRAY\", {\"a\", \"b\", \"c\"}, 0)  -- indices 0,1,2
+  local arr = bash.get(\"MY_ARRAY\")
+  for i, v in ipairs(arr) do print(i, v) end
+  local arr = bash.get(\"MY_ARRAY\", 1)
+  for i, v in ipairs(arr) do print(i, v) end
+
+  -- Set scalar
+  bash.set(\"FOO\", \"bar\")
+  bash.set(\"BOOL\", true)
+  bash.set(\"NUM\", 42)
+
+  -- Associative array
+  bash.set(\"MY_ASSOC\", {key1=\"val1\", key2=\"val2\"})
+  local assoc = bash.get(\"MY_ASSOC\")
+  for k, v in pairs(assoc) do print(k, v) end
+
+  -- Unset
+  bash.unset(\"TEMP_VAR\")
+
+  -- Eval command
+  local status = bash.eval(\"echo hello\")
+
+  -- Expand string
+  local expanded = bash.expand(\"$HOME/.config\")
+
+  -- Expand list (glob, brace)
+  local files = bash.expand_list(\"*.rs\")
+  for _, f in ipairs(files) do print(f) end
 ",
 );
 
