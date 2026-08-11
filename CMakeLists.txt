@@ -31,15 +31,14 @@ message(STATUS "Determined Bash version: ${L_BASH_VERSION}, using headers: ${BAS
 ###############################################################################
 
 # Auto-initialize git submodules if not already initialized
-function(ensure_submodule submodule_path submodule_name)
-    if(NOT EXISTS "${submodule_path}/CMakeLists.txt")
-        message(STATUS "Initializing submodule: ${submodule_name}")
+function(ensure_submodule submodule_name submodule_file)
+    set(submodule_path "${CMAKE_CURRENT_SOURCE_DIR}/${submodule_name}/${submodule_file}")
+    if(NOT EXISTS "${submodule_path}")
+        message(STATUS "File not found: ${submodule_path}. Initializing submodule: git submodule update --init ${submodule_name}")
         execute_process(
             COMMAND git submodule update --init "${submodule_name}"
-            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
             RESULT_VARIABLE result
-            OUTPUT_QUIET
-            ERROR_QUIET
         )
         if(result)
             message(FATAL_ERROR "Failed to initialize submodule: ${submodule_name}")
@@ -47,8 +46,14 @@ function(ensure_submodule submodule_path submodule_name)
     endif()
 endfunction()
 
-ensure_submodule("${CMAKE_SOURCE_DIR}/third_party/corrosion/CMakeLists.txt" "third_party/corrosion")
-ensure_submodule("${CMAKE_SOURCE_DIR}/third_party/boost_preprocessor/include/boost/preprocessor/version_number.hpp" "third_party/boost_preprocessor")
+ensure_submodule(
+    "third_party/corrosion"
+    "CMakeLists.txt"
+)
+ensure_submodule(
+    "third_party/boost_preprocessor"
+    "CMakeLists.txt"
+)
 
 add_subdirectory(third_party/corrosion)
 
@@ -77,7 +82,7 @@ endif()
 # Generate the Rust FFI bindings with bindgen (replaces the former cargo
 # build.rs). CMake knows everything bindgen needs: the bash source path, the
 # resolved bash version, and ppoll availability. The output is written into a
-# git-ignored directory under CMAKE_SOURCE_DIR so the Rust crate (which has no
+# git-ignored directory under CMAKE_CURRENT_SOURCE_DIR so the Rust crate (which has no
 # build.rs) can include it via CARGO_MANIFEST_DIR without any Cargo OUT_DIR
 # plumbing.
 find_program(L_BINDGEN_EXECUTABLE NAMES bindgen)
@@ -335,7 +340,7 @@ if(L_DEV)
     add_custom_command(TARGET L_builtin_module POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E create_symlink
             $<TARGET_FILE:L_builtin_module>
-            ${CMAKE_SOURCE_DIR}/L_builtin.so
+            ${CMAKE_CURRENT_SOURCE_DIR}/L_builtin.so
         COMMENT "Creating symlink to L_builtin.so"
     )
 endif()

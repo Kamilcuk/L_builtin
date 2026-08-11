@@ -46,6 +46,23 @@ L_builtin core stat file.txt
 L_builtin capture var echo hello
 ```
 
+## Installation
+
+The library is one file. Download the latest release from GitHub and put in your shell's builtin path:
+
+```bash
+mkdir -vp ~/.local/lib/bash/
+wget -O ~/.local/lib/bash/L_builtin.so https://github.com/Kamilcuk/L_builtin/releases/latest/download/L_builtin-linux-x86_64-bash-5.3.so
+```
+
+Then load in your `.bashrc` or interactively:
+```bash
+enable -f ~/.local/lib/bash/L_builtin.so L_builtin
+L_builtin --help
+```
+
+> **Note:** `L_builtin.so` is a Bash loadable builtin (shared library), not a standalone executable. It must be loaded via `enable -f` inside Bash — it cannot be run directly.
+
 ## Quick Start
 
 ### Prerequisites (Build)
@@ -322,3 +339,7 @@ Run `cmd`, capture stdout into `VAR`.
 ## License
 
 This project is licensed under the GNU General Public License v3.0 - see [LICENSE](LICENSE) for details.
+
+## Self promotion
+
+Check out my other Bash related projects: [mkdocstrings-sh](https://github.com/kamilcuk/mkdocstrings-sh), [L_lib](https://github.com/Kamilcuk/L_lib), [L_bash_profile](https://github.com/Kamilcuk/L_bash_profile).

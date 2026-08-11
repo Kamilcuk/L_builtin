@@ -1,0 +1,50 @@
+# .github/workflows/release.yml:
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'bump type, major or minor or patch or empty string'
+        default: ''
+      dry_run:
+        description: 'dry run, true or false'
+        default: 'false'
+      draft:
+        description: 'draft, true or false'
+        default: 'false'
+      pre_release:
+        description: 'pre release, true or false'
+        default: 'false'
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: MeilCli/bump-release-action@v3.0.7
+        id: create_release
+        with:
+          config_path: '.github/bump.yml'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          bump: ${{ github.event.inputs.bump }}
+          dry_run: ${{ github.event.inputs.dry_run }}
+          draft: ${{ github.event.inputs.draft }}
+          pre_release: ${{ github.event.inputs.pre_release }}
+          commit_user: ${{ github.actor }}
+          commit_email: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
+      - name: Download L_builtin artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: L_builtin-artifacts
+          path: dist/
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/L_builtin.so
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

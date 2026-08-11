@@ -11,7 +11,7 @@ include Makefile.bash
 # ---- L_builtin targets ----
 # Makefile drives CMake, which drives the Rust crate via Corrosion and the C
 # glue, running bindgen and producing L_builtin.so.
-CMAKE_BUILD_TYPE = Debug
+CMAKE_BUILD_TYPE ?= Debug
 CMAKE_FLAGS = -D L_DEV=1 -D CMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 CMAKE_EXTRA_FLAGS ?=
 BUILD = $(BUILD_DIR)/$(BASH)/build/
@@ -27,6 +27,13 @@ release-build:
 release-test:
 	$(MAKE) CMAKE_BUILD_TYPE=Release BUILD=$(BUILD_DIR)/$(BASH)/release test
 .PHONY: build test release-build release-test
+
+output: build
+	mkdir -vp "$(DEST)"
+	cp -v "$(BUILD)/L_builtin.so" "$(DEST)"
+dockerfile:
+	$(MAKE) CMAKE_BUILD_TYPE=Release BUILD=$(BUILD_DIR)/$(BASH)/release output
+.PHONY: output dockerfile
 
 ###############################################################################
 # --- Additional targets ---
