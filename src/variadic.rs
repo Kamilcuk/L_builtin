@@ -1,5 +1,4 @@
-use std::ffi::{c_char, c_int, CStr};
-use std::marker::PhantomData;
+use std::ffi::{c_char, CStr};
 use std::str::from_utf8_unchecked;
 
 const fn str_eq(a: &str, b: &str) -> bool {
@@ -189,12 +188,21 @@ impl<A, B, C, D> CallCVariadic2<(C, D)> for (A, B) {
 
 ////////////////////////////////////////////////
 
-pub struct InferSpec<T>(core::marker::PhantomData<T>);
+pub trait TypeMap {
+    const SPEC: SpecMeta;
+}
+
 pub struct InferArg<T>(pub T);
 
 macro_rules! define_infer {
     ( $name:ident$(<$lt:lifetime>)?, $nameSpec:ident, $type:ty, $spec_meta:expr, $args_type:ty, $args_expr:expr) => {
         pub struct $name$(<$lt>)?(pub $type);
+        impl$(<$lt>)? TypeMap for $type {
+            const SPEC: SpecMeta = $spec_meta;
+        }
+        impl$(<$lt>)? TypeMap for $name$(<$lt>)? {
+            const SPEC: SpecMeta = $spec_meta;
+        }
         impl$(<$lt>)? $name$(<$lt>)? {
             #[inline]
             pub fn into_args(self) -> $args_type {
@@ -205,13 +213,6 @@ macro_rules! define_infer {
             #[inline]
             pub fn infer(self) -> $name$(<$lt>)? {
                 $name(self.0)
-            }
-        }
-
-        impl$(<$lt>)? InferSpec<$type> {
-            #[inline]
-            pub const fn spec() -> SpecMeta {
-                $spec_meta
             }
         }
     };
@@ -242,10 +243,8 @@ pub fn infer_arg<T>(val: &T) -> InferArg<&T> {
     InferArg(val)
 }
 
-
-#[inline]
-pub const fn infer_spec<T>(val: &T) -> SpecMeta {
-    InferSpec<T>::spec()
+pub const fn infer_spec<T: TypeMap>(_val: &T) -> SpecMeta {
+    T::SPEC
 }
 
 #[macro_export]
@@ -284,18 +283,29 @@ macro_rules! variadic {
         unsafe { $func($fmt.as_ptr()) }
     }};
     ($func:expr, $fmt:expr, $arg:expr $(,)?) => {{
-        let raw_arg = $arg;
-        let arg = $crate::variadic::infer_arg(&raw_arg).infer();
-        const _: () = $crate::variadic::assert_spec_meta($fmt, [arg.spec()]);
-        let args = arg.into_args();
-        $crate::call_c_variadic1!($func, $fmt.as_ptr(), args);
+        let spec = $crate::variadic::infer_spec(&$arg);
+        let _ = $crate::variadic::assert_spec_meta($fmt, &[spec]);
+        $crate::call_c_variadic1!(
+            $func,
+            $fmt.as_ptr(),
+            $crate::variadic::infer_arg(&$arg).infer().into_args()
+        );
     }};
     ($func:expr, $fmt:expr, $arg1:expr, $arg2:expr $(,)?) => {{
-        let a1 = $crate::variadic::infer_arg(&$arg1).infer();
-        let a2 = $crate::variadic::infer_arg(&$arg2).infer();
-        const _: () = $crate::variadic::assert_spec_meta($fmt, [a1.spec(), a2.spec()]);
-        let args1 = a1.into_args();
-        let args2 = a2.into_args();
-        $crate::call_c_variadic2!($func, $fmt.as_ptr(), (args1, args2));
+        let _ = $crate::variadic::assert_spec_meta(
+            $fmt,
+            &[
+                $crate::variadic::infer_spec(&$arg1),
+                $crate::variadic::infer_spec(&$arg2),
+            ],
+        );
+        $crate::call_c_variadic2!(
+            $func,
+            $fmt.as_ptr(),
+            (
+                $crate::variadic::infer_arg(&$arg1).infer().into_args(),
+                $crate::variadic::infer_arg(&$arg2).infer().into_args()
+            )
+        );
     }};
 }

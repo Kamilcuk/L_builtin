@@ -262,3 +262,46 @@ impl<'a> IntoIterator for &'a WordListOwned {
         self.iter()
     }
 }
+
+/// Check if a byte slice is a valid bash variable name.
+/// Valid names: [a-zA-Z_][a-zA-Z0-9_]*
+pub fn is_valid_var_name(name: &[u8]) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let first = name[0];
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    for &ch in &name[1..] {
+        if !ch.is_ascii_alphanumeric() {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_var_names() {
+        assert!(is_valid_var_name(b"VAR"));
+        assert!(is_valid_var_name(b"var"));
+        assert!(is_valid_var_name(b"_var"));
+        assert!(is_valid_var_name(b"var123"));
+        assert!(is_valid_var_name(b"_"));
+        assert!(is_valid_var_name(b"VAR_123"));
+    }
+
+    #[test]
+    fn test_invalid_var_names() {
+        assert!(!is_valid_var_name(b""));
+        assert!(!is_valid_var_name(b"123var"));
+        assert!(!is_valid_var_name(b"var-name"));
+        assert!(!is_valid_var_name(b"var.name"));
+        assert!(!is_valid_var_name(b"var name"));
+        assert!(!is_valid_var_name(b"-var"));
+    }
+}

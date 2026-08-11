@@ -9,8 +9,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+use std::ffi::CStr;
+
 use crate::bash_api::{
-    builtin_error, c_char, c_int, this_cmd_name, WordListView, EX_USAGE, WORD_LIST,
+    builtin_error, c_char, c_int, is_valid_var_name, this_cmd_name, WordListView, EX_USAGE,
+    WORD_LIST,
 };
 use crate::intlookup::IntLookup128;
 use crate::shared::{capture_into_variable, flush_stdout_buffers};
@@ -254,11 +257,21 @@ pub unsafe extern "C" fn l_capture_output(var: *const c_char, list: *mut WORD_LI
 pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
     // Parse top-level options (-v VAR) before dispatching to subcommand
     let mut var: *mut c_char = std::ptr::null_mut();
+    let mut var_name: *mut c_char = std::ptr::null_mut();
     let args = getopts!(
         list,
         [],
-        [ v => |v| var = v.as_ptr().cast() ]
+        [ v => |v| var_name = v.as_ptr().cast() ]
     );
+    // Validate variable name if -v was provided
+    if !var_name.is_null() {
+        let name = unsafe { CStr::from_ptr(var_name).to_bytes() };
+        if !is_valid_var_name(name) {
+            variadic!(builtin_error, c"-v: invalid variable name '%s'", var_name);
+            return EX_USAGE;
+        }
+        var = var_name;
+    }
     let view = unsafe { WordListView::from_raw(args) };
     let mut list = view.into_iter();
     let first_word = match list.next() {
