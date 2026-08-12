@@ -6,9 +6,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{
-    this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
-};
+use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
 use crate::{beprintln, bufwrite, getopts, parse_positionals, shared};
 use std::os::raw::c_int;
@@ -62,7 +60,7 @@ pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
     }
 
     // Format address
-    let addr_ptr = if addr.ss_family == libc::AF_INET as libc::sa_family_t {
+    let addr_buf = if addr.ss_family == libc::AF_INET as libc::sa_family_t {
         let s = &addr as *const _ as *const libc::sockaddr_in;
         let ip = unsafe { std::net::Ipv4Addr::from((*s).sin_addr.s_addr.to_ne_bytes()) };
         let port = u16::from_be(unsafe { (*s).sin_port });
@@ -73,7 +71,7 @@ pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
         let port = u16::from_be(unsafe { (*s).sin6_port });
         bufwrite!(48, "{ip}:{port}")
     } else {
-        bufwrite!(16, "unknown:0")
+        bufwrite!(48, "unknown:0")
     };
 
     // Bind clientfd variable - use the raw C string pointer
@@ -90,7 +88,9 @@ pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
     }
 
     // Bind addr variable - use stack buffer
-    if unsafe { crate::bash_api::bind_variable(addr_var.as_ptr(), addr_ptr, 0) }.is_null() {
+    if unsafe { crate::bash_api::bind_variable(addr_var.as_ptr(), addr_buf.as_ptr().cast(), 0) }
+        .is_null()
+    {
         beprintln!(this_cmd_name(), b": cannot bind variable");
         return EXECUTION_FAILURE;
     }

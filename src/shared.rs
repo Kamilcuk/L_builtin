@@ -344,14 +344,15 @@ pub fn bytes_to_cstr<'a, const N: usize>(bytes: &[u8], buf: &'a mut [u8; N]) -> 
     buf.as_ptr() as *const c_char
 }
 
-/// Format a string into a stack buffer and return a null-terminated C pointer.
+/// Format a string into a stack buffer and return the buffer.
 ///
 /// `$size` is the total buffer size in bytes; the last byte is reserved for the
-/// null terminator. Returns `*const c_char`.
+/// null terminator. Returns `[u8; $size]`.
 ///
 /// # Example
 /// ```ignore
-/// let addr_ptr = bufwrite!(48, "{}:{}", ip, port);
+/// let buf = bufwrite!(48, "{}:{}", ip, port);
+/// let addr_ptr = buf.as_ptr() as *const c_char;
 /// ```
 #[macro_export]
 macro_rules! bufwrite {
@@ -361,7 +362,7 @@ macro_rules! bufwrite {
         let _ = ::std::io::Write::write_fmt(&mut cursor, ::core::format_args!($($arg)*));
         let pos = cursor.position() as usize;
         buf[pos] = 0;
-        buf.as_ptr() as *const ::std::os::raw::c_char
+        buf
     }};
 }
 
