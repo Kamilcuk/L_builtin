@@ -15,7 +15,7 @@ RELEASE ?=
 CMAKE_BUILD_TYPE ?= $(if $(RELEASE),Release,Debug)
 CMAKE_FLAGS = -D L_DEV=1 -D CMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 CMAKE_EXTRA_FLAGS ?=
-BUILD = $(BUILD_DIR)/$(BASH)/build/
+BUILD = $(BUILD_DIR)/$(CMAKE_BUILD_TYPE)/$(BASH)
 $(BUILD)/L_builtin.so: $(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt Cargo.toml Cargo.lock
 	cmake -S . -B $(BUILD) -D BASH_SOURCE=$(BASH_SOURCE_DIR) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS)
 	cmake --build $(BUILD) -j $$(nproc)
@@ -24,16 +24,22 @@ TESTARGS ?= -Pn
 test: build
 	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh $(BUILD)/L_builtin.so $(ARGS) $(TESTARGS)
 release-build:
-	$(MAKE) CMAKE_BUILD_TYPE=Release BUILD=$(BUILD_DIR)/$(BASH)/release build
+	$(MAKE) CMAKE_BUILD_TYPE=Release build
 release-test:
-	$(MAKE) CMAKE_BUILD_TYPE=Release BUILD=$(BUILD_DIR)/$(BASH)/release test
+	$(MAKE) CMAKE_BUILD_TYPE=Release test
 .PHONY: build test release-build release-test
 
+# Detect OS and architecture for release asset naming
+UNAME_S := $(shell uname -s | tr '[:upper:]' '[:lower:]')
+UNAME_M := $(shell uname -m)
+# Release asset name: L_builtin-<os>-<arch>-bash-<version>.so
+RELEASE_ASSET := L_builtin-$(UNAME_S)-$(UNAME_M)-bash-$(BASH).so
+DEST ?= $(BUILD_DIR)/dest
 output: build
 	mkdir -vp "$(DEST)"
-	cp -v "$(BUILD)/L_builtin.so" "$(DEST)"
+	cp -v "$(BUILD)/L_builtin.so" "$(DEST)/$(RELEASE_ASSET)"
 dockerfile:
-	$(MAKE) CMAKE_BUILD_TYPE=Release BUILD=$(BUILD_DIR)/$(BASH)/release output
+	$(MAKE) CMAKE_BUILD_TYPE=Release output
 .PHONY: output dockerfile
 
 ###############################################################################

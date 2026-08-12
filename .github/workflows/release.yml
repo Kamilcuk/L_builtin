@@ -25,7 +25,28 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: MeilCli/bump-release-action@v3.0.7
+          submodules: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Log in to Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build, Test, Output
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: output
+          push: false
+          build-args: |
+            BASHES=5.3
+            MAKEARGS=
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=local,dest=dist
+      - uses: MeilCli/bump-release-action@v3.0.8
         id: create_release
         with:
           config_path: '.github/bump.yml'
@@ -36,15 +57,12 @@ jobs:
           pre_release: ${{ github.event.inputs.pre_release }}
           commit_user: ${{ github.actor }}
           commit_email: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
-      - name: Download L_builtin artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: L_builtin-artifacts
-          path: dist/
+      - name: Verify release assets
+        run: ls -la dist/
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/**/L_builtin.so
+          files: dist/L_builtin-*.so
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -28,7 +28,7 @@ $(BASH_BARE_REPO)/HEAD:
 	[ -e $@ ] || git clone --branch master --single-branch --bare https://git.savannah.gnu.org/git/bash.git $(BASH_BARE_REPO)
 
 # Resolved version file (depends on BASH spec)
-BASH_RESOLVED_FILE := $(BUILD_DIR)/$(BASH)/bash-resolved.mk
+BASH_RESOLVED_FILE := $(BUILD_DIR)/bash-resolved.mk
 
 # Generate resolved version file
 bash-resolve: $(BASH_RESOLVED_FILE)
@@ -41,7 +41,7 @@ $(BASH_RESOLVED_FILE): ./scripts/resolve-bash-version.sh $(BASH_BARE_REPO)/HEAD
 
 ###############################################################################
 # ---- Building bash ----
-BASH_SOURCE_DIR = $(BUILD_DIR)/$(BASH)/bash/
+BASH_SOURCE_DIR = $(BUILD_DIR)/bash/$(BASH)
 
 # git worktree depends on bare repo
 $(BASH_SOURCE_DIR)/configure: $(BASH_BARE_REPO)/HEAD
@@ -58,7 +58,7 @@ BASH_EXTRA_CONFIGURE_FLAGS ?=
 BASH_CONFIGURE_FLAGS ?= --disable-nls --without-bash-malloc --prefix=$(abspath $(BASH_PREFIX)) $(BASH_EXTRA_CONFIGURE_FLAGS)
 
 # Bash installation location.
-BASH_PREFIX = $(BUILD_DIR)/$(BASH)/prefixbash/
+BASH_PREFIX = $(BUILD_DIR)/prefixbash/$(BASH)
 
 # configure depends on git files (cloned repo)
 $(BASH_SOURCE_DIR)/config.status: $(BASH_SOURCE_DIR)/configure
