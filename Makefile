@@ -11,11 +11,12 @@ include Makefile.bash
 # ---- L_builtin targets ----
 # Makefile drives CMake, which drives the Rust crate via Corrosion and the C
 # glue, running bindgen and producing L_builtin.so.
-CMAKE_BUILD_TYPE ?= Debug
+RELEASE ?=
+CMAKE_BUILD_TYPE ?= $(if $(RELEASE),Release,Debug)
 CMAKE_FLAGS = -D L_DEV=1 -D CMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 CMAKE_EXTRA_FLAGS ?=
 BUILD = $(BUILD_DIR)/$(BASH)/build/
-$(BUILD)/L_builtin.so: $(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt Cargo.toml
+$(BUILD)/L_builtin.so: $(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt Cargo.toml Cargo.lock
 	cmake -S . -B $(BUILD) -D BASH_SOURCE=$(BASH_SOURCE_DIR) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS)
 	cmake --build $(BUILD) -j $$(nproc)
 build: $(BUILD)/L_builtin.so

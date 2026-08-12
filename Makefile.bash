@@ -39,20 +39,17 @@ $(BASH_RESOLVED_FILE): ./scripts/resolve-bash-version.sh $(BASH_BARE_REPO)/HEAD
 # Include resolved version (auto-regenerates Makefile on first run)
 -include $(BASH_RESOLVED_FILE)
 
-# Validation target - runs only when targets need the version
-bash-version-resolved: $(BASH_RESOLVED_FILE)
-	@[ -n "$(BASH_RESOLVED_COMMIT)" ] || { \
-		echo "Could not resolve bash version from spec: $(BASH)"; \
-		cat $(BASH_RESOLVED_FILE); \
-		exit 1; \
-	}
-
 ###############################################################################
 # ---- Building bash ----
 BASH_SOURCE_DIR = $(BUILD_DIR)/$(BASH)/bash/
 
 # git worktree depends on bare repo
-$(BASH_SOURCE_DIR)/configure: bash-version-resolved $(BASH_BARE_REPO)/HEAD
+$(BASH_SOURCE_DIR)/configure: $(BASH_BARE_REPO)/HEAD
+	@[ -n "$(BASH_RESOLVED_COMMIT)" ] || { \
+		echo "Could not resolve bash version from spec: $(BASH)"; \
+		cat $(BASH_RESOLVED_FILE); \
+		exit 1; \
+	}
 	[ -e $@ ] || git -C $(BASH_BARE_REPO) worktree add -f $(abspath $(BASH_SOURCE_DIR)) $(BASH_RESOLVED_COMMIT)
 
 export BASH_CFLAGS = -Wno-old-style-definition -Wno-implicit-function-declaration -std=gnu99 -Wno-int-conversion -w -Wno-implicit-int -Wno-discarded-qualifiers -D_GNU_SOURCE -Wno-return-mismatch -Wno-incompatible-pointer-types -Wno-error=implicit-function-declaration
@@ -101,7 +98,7 @@ bash-trim-print: ; $(BASH_TRIM) -print ; $(BASH_TRIM) -exec du -ch {} + | tail -
 
 bash-trim-delete: ; $(BASH_TRIM) -print -delete
 
-.PHONY: bash-build bash-distclean bash-clean bash-trim-print bash-trim-delete bash-version-resolved
+.PHONY: bash-build bash-distclean bash-clean bash-trim-print bash-trim-delete
 
 ###############################################################################
 

@@ -61,7 +61,7 @@ enable -f ~/.local/lib/bash/L_builtin.so L_builtin
 L_builtin --help
 ```
 
-> **Note:** `L_builtin.so` is a Bash loadable builtin (shared library), not a standalone executable. It must be loaded via `enable -f` inside Bash — it cannot be run directly.
+> **Note:** `L_builtin.so` is a Bash loadable builtin (shared library), not a standalone executable. It must be loaded via `enable -f` inside Bash - it cannot be run directly.
 
 ## Quick Start
 
