@@ -24,7 +24,6 @@ FROM bash-builder AS build
 COPY --parents Cargo.toml Cargo.lock Makefile CMakeLists.txt src scripts third_party .
 ARG MAKEARGS=
 ENV MAKEARGS=${MAKEARGS}
-ENV PATH=/src/build/${BASH}/prefixbash/bin:$PATH
 RUN --mount=type=cache,target=/src/build \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
