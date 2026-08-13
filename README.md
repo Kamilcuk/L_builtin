@@ -36,7 +36,7 @@ L_builtin recv -f hex -v data -n fd 4096
 L_builtin shutdown fd WR
 
 # Lua
-L_builtin lua -v out 'bash.setvar("X", "y"); return 42'
+L_builtin lua 'local home = bash.get("HOME"); print(home)'
 
 # Core utils
 L_builtin core ls -la
@@ -187,13 +187,11 @@ echo "Received: $data"
 
 ### Embedded Lua
 ```bash
-L_builtin lua -v result '
-  local bash = require("bash")
-  bash.setvar("MY_VAR", "from lua")
-  return "lua done"
+L_builtin lua '
+  bash.set("MY_VAR", "hello from lua")
+  local v = bash.get("MY_VAR")
+  print("MY_VAR =", v)
 '
-echo "Result: $result"
-echo "MY_VAR=$MY_VAR"
 ```
 
 ### Core Utilities (Rust/uutils)
@@ -278,9 +276,9 @@ L_builtin ppoll [-t TIMEOUT] [-v ARRAY_VAR] [-u SIGSPEC] [FD[:EVENTS] ...]
 
 ### `lua`
 ```bash
-L_builtin lua [-v VAR] SCRIPT [args...]
+L_builtin lua SCRIPT [args...]
 ```
-- Exposes global `bash` table: `bash.getvar`, `bash.setvar`, `bash.call`, `bash.expand`, `bash.array`
+- Exposes global `bash` table: `bash.get`, `bash.set`, `bash.unset`, `bash.eval`, `bash.expand`, `bash.expand_list`
 - Script args available in `arg` table
 
 ### `listen`
