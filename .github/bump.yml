@@ -5,6 +5,7 @@ release:
   title-prefix: 'v'
   initial-version: '0.1.0'
   tag-prefix: 'v'
+  pull-request-commit: 'include'
 branch:
   base-branch: 'main'
   version-branch-prefix: 'v'
