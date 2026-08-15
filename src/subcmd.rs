@@ -64,9 +64,16 @@ impl CmdDesc {
     }
 }
 
-/// RAII guard: constructed with [`SubcommandGuard::new`] before calling
-/// [`CmdDesc::enter`] to remember the current `current_builtin` and its doc
-/// pointers; on drop restores them on the same struct.
+/// RAII guard that remembers the current `current_builtin` and its doc pointers
+/// and restores them on drop.
+///
+/// # WARNING - DO NOT USE THIS ANYWHERE EXCEPT DISPATCH
+///
+/// This guard is used ONLY by the top-level dispatch (`l_entrypoint`) to restore
+/// the original builtin docs after a subcommand runs. It must NEVER be used from
+/// a subcommand handler, and it must NOT be used inside `subcmd_getopts!` or any
+/// other place. Subcommand handlers rely on the dispatch guard (not this one) to
+/// restore the docs, so adding a second guard here would be wrong and redundant.
 pub struct SubcommandGuard {
     saved_builtin: *mut builtin,
     saved_short_doc: *const c_char,
@@ -99,4 +106,86 @@ impl Drop for SubcommandGuard {
 
 /// Function implementing a subcommand.
 pub type SubcommandFn = unsafe extern "C" fn(*mut WORD_LIST) -> c_int;
+
+/// One-call subcommand entry: install this subcommand's [`CmdDesc`], parse
+/// `-h`/`--help` and any options via [`$crate::getopts!`], then parse the
+/// positional arguments via [`$crate::parse_positionals!`]. It is a thin
+/// forwarder; the variadic argument is written `rest: NAME` (zero or more) or
+/// `some: NAME` (one or more) instead of the bare `*`/`+` symbols. Any of the
+/// `flags:`, `options:`, `required:` and `optional:` groups may be omitted and
+/// defaults to empty.
+///
+/// ```ignore
+/// CMD.enter();
+/// let _rest = getopts!(list, [flags], [options]);
+/// parse_positionals!(_rest, [required], [optional], *args)  // *args == `rest:`, +args == `some:`
+/// ```
+///
+/// # Syntax
+///
+/// ```ignore
+/// let (src, dest, files) = subcmd_getopts!(
+///     MY_CMD,                                // CmdDesc for this subcommand
+///     list,                                  // *mut WORD_LIST
+///     flags:   [ f => || force = true ],     // flags (no colon) - may be omitted
+///     options: [ n => |nm| name = nm.as_ptr() ], // options taking an argument - may be omitted
+///     required: [ SRC ],                     // required positionals - may be omitted
+///     optional: [ DEST ],                    // optional positionals - may be omitted
+///     rest: FILES,                           // zero-or-more (or `some: FILES`); may be omitted
+/// );
+/// ```
+///
+/// # Example
+///
+/// ```ignore
+/// let mut name: *mut c_char = std::ptr::null_mut();
+/// let mut tag: &CStr = c"";
+/// let (src, dest, files) = subcmd_getopts!(
+///     MY_CMD,
+///     list,
+///     flags:   [ v => || verbose = true ],
+///     options: [
+///         n => |nm| name = nm.as_ptr(),            // optarg as a C pointer
+///         t => |tm| tag = unsafe { tm.as_cstr() },  // optarg as a CStr
+///     ],
+///     required: [ SRC ],
+///     optional: [ DEST ],
+///     rest: FILES,                                 // Vec<Cpnt>, may be empty
+/// );
+/// // `name` is `*mut c_char`, `tag` is `&CStr`, `files` is `Vec<Cpnt>`.
+/// ```
+///
+/// Omitting empty groups is allowed - the minimal form is simply:
+///
+/// ```ignore
+/// subcmd_getopts!(CMD, list);
+/// ```
+#[macro_export]
+macro_rules! subcmd_getopts {
+    (
+        $cmd:expr,
+        $list:expr
+        $(, flags:   [ $( $flag:ident => $flag_action:expr ),* $(,)? ] )?
+        $(, options: [ $( $opt:ident => $opt_action:expr ),* $(,)? ] )?
+        $(, required: [ $( $req:ident ),* $(,)? ] )?
+        $(, optional: [ $( $optpos:ident ),* $(,)? ] )?
+        $(, rest: $rest_var:ident )?
+        $(, some: $some_var:ident )?
+        $(,)?
+    ) => {{
+        $cmd.enter();
+        let _rest = $crate::getopts!(
+            $list,
+            [ $( $( $flag => $flag_action ),* )? ],
+            [ $( $( $opt => $opt_action ),* )? ]
+        );
+        $crate::parse_positionals!(
+            _rest,
+            [ $( $( $req ),* )? ]
+            $( , [ $( $optpos ),* ] )?
+            $( , * $rest_var )?
+            $( , + $some_var )?
+        )
+    }};
+}
 

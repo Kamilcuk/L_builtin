@@ -370,7 +370,7 @@ fn get_bash_from_lua(
             if !hash.is_null() {
                 for key in &WordListOwned(assoc_keys_to_word_list(hash)) {
                     let val = assoc_reference(hash, key.as_ptr());
-                    let k = lua.create_string(key.to_bytes())?;
+                    let k = lua.create_string(key.as_bytes())?;
                     let v = lua.create_string(if val.is_null() {
                         b""
                     } else {
@@ -533,7 +533,7 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
                 .into_iter()
                 .enumerate()
             {
-                table.set(idx + 1, lua.create_string(word.to_bytes())?)?;
+                table.set(idx + 1, lua.create_string(word.as_bytes())?)?;
             }
             Ok(Value::Table(table))
         })?,

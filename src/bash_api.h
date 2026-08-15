@@ -88,4 +88,13 @@ void l_enter_subcommand(const char *prefix, const char *short_doc, const char *c
 int l_execute_command_string(const char *cmd);
 #endif
 
+/* ------------------------------------------------------------------------- */
+
+SHELL_VAR *l_init_dynamic_array_var(
+  const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc, int attrs
+);
+
+/* Unbind (remove) a shell variable by name; returns 1 if it existed. */
+int l_unbind_variable(const char *name);
+
 #endif /* L_BUILTIN_BASH_API_H_ */

@@ -77,7 +77,7 @@ pub unsafe extern "C" fn memfd_subcommand(list: *mut WORD_LIST) -> c_int {
 
     let name: Vec<u8> = match name {
         Some(c) => {
-            let b = unsafe { c.to_bytes() };
+            let b = unsafe { c.as_bytes() };
             let mut v = Vec::with_capacity(b.len() + 1);
             v.extend_from_slice(b);
             v.push(0);

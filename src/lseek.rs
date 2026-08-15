@@ -51,7 +51,7 @@ pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
     // Get fd
     let fd = match iter.next() {
         Some(fd_cptr) => {
-            let fd_bytes = unsafe { fd_cptr.to_bytes() };
+            let fd_bytes = unsafe { fd_cptr.as_bytes() };
             match std::str::from_utf8(fd_bytes) {
                 Ok(s) => match s.parse::<c_int>() {
                     Ok(fd) => fd,
@@ -75,7 +75,7 @@ pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
     // Get offset
     let offset = match iter.next() {
         Some(offset_cptr) => {
-            let offset_bytes = unsafe { offset_cptr.to_bytes() };
+            let offset_bytes = unsafe { offset_cptr.as_bytes() };
             match std::str::from_utf8(offset_bytes) {
                 Ok(s) => match s.parse::<i64>() {
                     Ok(offset) => offset,
@@ -99,7 +99,7 @@ pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
     // Get whence (optional, defaults to SEEK_SET)
     let mut whence: c_int = libc::SEEK_SET;
     if let Some(whence_cptr) = iter.next() {
-        let whence_bytes = unsafe { whence_cptr.to_bytes() };
+        let whence_bytes = unsafe { whence_cptr.as_bytes() };
         let whence_str = match std::str::from_utf8(whence_bytes) {
             Ok(s) => s,
             Err(_) => {

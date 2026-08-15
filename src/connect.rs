@@ -52,8 +52,8 @@ pub unsafe extern "C" fn connect_subcommand(list: *mut WORD_LIST) -> c_int {
         return EX_USAGE;
     };
 
-    let ip_str = unsafe { ip.to_str().unwrap_or("0.0.0.0") };
-    let port_str = unsafe { port.to_str().unwrap_or("0") };
+    let ip_str = unsafe { ip.as_str().unwrap_or("0.0.0.0") };
+    let port_str = unsafe { port.as_str().unwrap_or("0") };
     let port_num: u16 = match port_str.parse() {
         Ok(p) => p,
         Err(_) => {

@@ -56,8 +56,8 @@ pub unsafe extern "C" fn listen_subcommand(list: *mut WORD_LIST) -> c_int {
     };
 
     // Get IP (optional, defaults to 127.0.0.1) and PORT (optional, defaults to 0)
-    let ip_str = iter.next().and_then(|p| unsafe { p.to_str().ok() }).unwrap_or("127.0.0.1");
-    let port_str = iter.next().and_then(|p| unsafe { p.to_str().ok() }).unwrap_or("0");
+    let ip_str = iter.next().and_then(|p| unsafe { p.as_str().ok() }).unwrap_or("127.0.0.1");
+    let port_str = iter.next().and_then(|p| unsafe { p.as_str().ok() }).unwrap_or("0");
 
     if port_str == "0" && port_var.is_none() {
         beprintln!(ENAME, b": -p PORT_VAR option is required when port is 0");

@@ -8,22 +8,26 @@
 //! Sharing a heap removes the allocator-mismatch hazard, not the ownership
 //! rule. The FFI boundary stays copy-based.
 //!
-//! Failure policy: allocation failure and over-aligned requests both abort.
-//! `sh_xmalloc` already kills the shell via `allocerr()` on OOM, so returning
-//! null from `alloc()` would only trade one abort for a less informative
-//! one; the null checks below are belt-and-braces for a build where
-//! `sh_xmalloc` might return.
+//! Failure policy: allocation failure aborts. `sh_xmalloc` already kills the
+//! shell via `allocerr()` on OOM, so returning null from `alloc()` would only
+//! trade one abort for a less informative one; the null checks below are
+//! belt-and-braces for a build where `sh_xmalloc` might return.
 //!
 //! Alignment: bash 5.0's internal malloc (USING_BASH_MALLOC) may not provide
-//! 16-byte alignment required by SSE2 instructions. We ensure alignment by
-//! over-allocating and adjusting the pointer, storing the original pointer
-//! in the preceding bytes for deallocation.
+//! 16-byte alignment required by SSE2 instructions, and the underlying
+//! allocator does not honour arbitrary alignment. We honour any alignment by
+//! over-allocating and adjusting the pointer, storing the offset in the byte
+//! before the aligned pointer for deallocation. Requests with an alignment
+//! above `max_align_t` (e.g. SIMD types) are therefore served instead of
+//! rejected.
 
 use std::alloc::{GlobalAlloc, Layout};
 
 /// Alignment guaranteed by `sh_xmalloc`, matching what C's `malloc` guarantees:
-/// suitable for any fundamental type. 16 bytes on x86-64.
-const MAX_ALIGN: usize = std::mem::align_of::<libc::max_align_t>();
+/// suitable for any fundamental type. 16 bytes on x86-64. Retained for
+/// documentation of the baseline alignment the underlying allocator provides;
+/// we still honour larger alignments via over-allocation.
+const _BASE_ALIGN: usize = std::mem::align_of::<libc::max_align_t>();
 
 /// Report a fatal allocator condition and abort.
 #[cold]
@@ -56,7 +60,7 @@ unsafe fn alloc_aligned(raw: *mut u8, size: usize, align: usize) -> *mut u8 {
 /// Recover raw from an aligned pointer returned by alloc_aligned.
 unsafe fn raw_from_aligned(ptr: *mut u8) -> *mut u8 {
     let offset = *ptr.sub(1) as usize;
-    debug_assert!(offset < MAX_ALIGN);
+    debug_assert!(offset < 256, "stored offset must fit in the u8 control byte");
     ptr.sub(1).sub(offset)
 }
 
@@ -64,9 +68,8 @@ pub struct BashAllocator;
 
 unsafe impl GlobalAlloc for BashAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if layout.align() > MAX_ALIGN {
-            fatal("L_builtin: allocation alignment exceeds max_align_t\n");
-        }
+        // Any alignment (including > max_align_t) is honoured by over-allocating
+        // and aligning the pointer in `alloc_aligned`.
         alloc_aligned(std::ptr::null_mut(), layout.size(), layout.align())
     }
 
@@ -76,7 +79,6 @@ unsafe impl GlobalAlloc for BashAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        debug_assert!(layout.align() <= MAX_ALIGN);
         let raw = raw_from_aligned(ptr);
         alloc_aligned(raw, new_size, layout.align())
     }

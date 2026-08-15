@@ -5,6 +5,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::io::Write;
 
+
 /// Trait for types that can display themselves as raw bytes to any Write.
 /// Implement this for your types to enable `bwriteln!(stream, value)`.
 pub(crate) trait BDisplay {

@@ -93,7 +93,7 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
     // Get fd
     let fd = match iter.next() {
         Some(fd_cptr) => {
-            let fd_bytes = unsafe { fd_cptr.to_bytes() };
+            let fd_bytes = unsafe { fd_cptr.as_bytes() };
             match std::str::from_utf8(fd_bytes) {
                 Ok(s) => match s.parse::<c_int>() {
                     Ok(fd) => fd,
@@ -117,7 +117,7 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
     // Get size
     let size = match iter.next() {
         Some(size_cptr) => {
-            let size_bytes = unsafe { size_cptr.to_bytes() };
+            let size_bytes = unsafe { size_cptr.as_bytes() };
             match std::str::from_utf8(size_bytes) {
                 Ok(s) => match s.parse::<usize>() {
                     Ok(size) => size,

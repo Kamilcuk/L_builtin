@@ -35,7 +35,7 @@ pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
     let mut interruptible = false;
     let rest = getopts!(list, [i => || interruptible=true], []);
     let (seconds_cstr,) = parse_positionals!(rest, [SECONDS]);
-    let seconds_str = match seconds_cstr.to_str() {
+    let seconds_str = match seconds_cstr.as_str() {
         Ok(s) => s,
         Err(_) => {
             beprintln!("L_builtin: invalid UTF-8 argument");

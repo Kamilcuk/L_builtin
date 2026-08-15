@@ -80,7 +80,7 @@ pub unsafe extern "C" fn eventfd_subcommand(list: *mut WORD_LIST) -> c_int {
     );
     let (initval,) = parse_positionals!(rest, [], [initval]);
     let initval: u32 = match initval {
-        Some(c) => match unsafe { c.to_str() }.ok().and_then(|s| s.parse().ok()) {
+        Some(c) => match unsafe { c.as_str() }.ok().and_then(|s| s.parse().ok()) {
             Some(v) => v,
             None => {
                 beprintln!(this_cmd_name(), b": invalid INITVAL");

@@ -108,7 +108,7 @@ pub unsafe extern "C" fn signalfd_subcommand(list: *mut WORD_LIST) -> c_int {
         unsafe { libc::sigfillset(&mut set) };
     } else {
         for sig in &signals {
-            let name = match unsafe { sig.to_str() } {
+            let name = match unsafe { sig.as_str() } {
                 Ok(s) => s,
                 Err(_) => {
                     beprintln!(this_cmd_name(), b": invalid signal encoding");

@@ -34,7 +34,7 @@ pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
     let (clientfd_var, addr_var, fd_cptr) =
         parse_positionals!(rest, [CLIENTFD_VAR, ADDR_VAR, LISTENFD]);
 
-    let fd_bytes = unsafe { fd_cptr.to_bytes() };
+    let fd_bytes = unsafe { fd_cptr.as_bytes() };
     let Some(listenfd) = shared::parse_bytes::<c_int>(fd_bytes) else {
         beprintln!(this_cmd_name(), b": invalid listenfd: ", fd_bytes);
         return EX_USAGE;

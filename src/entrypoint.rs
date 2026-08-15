@@ -59,6 +59,7 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("timerfd", crate::timerfd::timerfd_subcommand),
     ("signalfd", crate::signalfd::signalfd_subcommand),
     ("splice", crate::splice::splice_subcommand),
+    ("shm", crate::cmd_shm::shm_subcommand),
     #[cfg(not(feature = "bash_lt_4_3"))]
     ("capture", l_capture_subcommand),
 ];
@@ -167,7 +168,7 @@ pub unsafe extern "C" fn l_capture_subcommand(list: *mut WORD_LIST) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn l_capture_output(var: *const c_char, list: *mut WORD_LIST) -> c_int {
     let args = WordListView::from_raw(list).into_iter();
-    let cmd = build_eval_command(args.map(|c| unsafe { c.to_bytes() }));
+    let cmd = build_eval_command(args.map(|c| unsafe { c.as_bytes() }));
     assert!(!cmd.is_empty());
     capture_into_variable("L_builtin capture", var, false, || unsafe {
         l_execute_command_string(cmd.as_ptr().cast())
@@ -204,7 +205,7 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
             return EX_USAGE;
         }
     };
-    let first = unsafe { first_word.to_bytes() };
+    let first = unsafe { first_word.as_bytes() };
     // Find the subcommand for this name using intlookup's packed table.
     let subcommand = match SUBCOMMAND_TABLE.lookup(first) {
         Some(f) => f,

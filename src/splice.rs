@@ -75,21 +75,21 @@ pub unsafe extern "C" fn splice_subcommand(list: *mut WORD_LIST) -> c_int {
     let (fd_in, fd_out, len, flags) = parse_positionals!(rest, [fd_in, fd_out, len], [flags]);
 
     let (fd_in, fd_out, len) = {
-        let a = match unsafe { fd_in.to_str() }.ok().and_then(|s| s.parse().ok()) {
+        let a = match unsafe { fd_in.as_str() }.ok().and_then(|s| s.parse().ok()) {
             Some(v) => v,
             None => {
                 beprintln!(ENAME, b": invalid FD_IN");
                 return EX_USAGE;
             }
         };
-        let b = match unsafe { fd_out.to_str() }.ok().and_then(|s| s.parse().ok()) {
+        let b = match unsafe { fd_out.as_str() }.ok().and_then(|s| s.parse().ok()) {
             Some(v) => v,
             None => {
                 beprintln!(ENAME, b": invalid FD_OUT");
                 return EX_USAGE;
             }
         };
-        let c = match unsafe { len.to_str() }.ok().and_then(|s| s.parse().ok()) {
+        let c = match unsafe { len.as_str() }.ok().and_then(|s| s.parse().ok()) {
             Some(v) => v,
             None => {
                 beprintln!(ENAME, b": invalid LEN");
@@ -100,7 +100,7 @@ pub unsafe extern "C" fn splice_subcommand(list: *mut WORD_LIST) -> c_int {
     };
 
     let flags = match flags {
-        Some(c) => match unsafe { c.to_str() } {
+        Some(c) => match unsafe { c.as_str() } {
             Ok(s) => match parse_flags(s) {
                 Some(f) => f,
                 None => {

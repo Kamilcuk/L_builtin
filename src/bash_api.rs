@@ -39,16 +39,11 @@ include!(concat!(
 /// under the idiomatic PascalCase name.
 pub type Builtin = builtin;
 
-/// Return this_command_name as a byte slice. Panics in debug builds if
-/// this_command_name is NULL (should never happen when called from bash).
+/// this_command_name as rust slice
 pub fn this_cmd_name() -> &'static [u8] {
     let ptr = unsafe { std::ptr::addr_of!(this_command_name).read() };
-    debug_assert!(
-        !ptr.is_null(),
-        "this_command_name should never be NULL when called from bash"
-    );
+    debug_assert!(!ptr.is_null(), "this_command_name should never be NULL");
     if ptr.is_null() {
-        // Fallback for release builds - return empty slice
         b""
     } else {
         unsafe { CStr::from_ptr(ptr).to_bytes() }
@@ -89,25 +84,28 @@ impl<'a> Cpnt<'a> {
     pub const fn new(ptr: *mut c_char) -> Self {
         Self(ptr, PhantomData)
     }
-    pub unsafe fn to_cstr(&self) -> &'a CStr {
+    pub unsafe fn as_cstr(&self) -> &'a CStr {
         CStr::from_ptr(self.0)
     }
-    pub unsafe fn to_bytes(&self) -> &'a [u8] {
-        self.to_cstr().to_bytes()
+    pub unsafe fn as_bytes(&self) -> &'a [u8] {
+        self.as_cstr().to_bytes()
     }
-    pub unsafe fn to_str(&self) -> Result<&'a str, std::str::Utf8Error> {
-        self.to_cstr().to_str()
+    pub unsafe fn as_str(&self) -> Result<&'a str, std::str::Utf8Error> {
+        self.as_cstr().to_str()
     }
     pub const fn as_ptr(&self) -> *mut c_char {
         self.0
     }
+    pub const fn as_mut_ptr(&self) -> *mut c_char {
+        self.0
+    }
     /// Compare the C string with a byte slice (excluding the null terminator).
     pub unsafe fn eq_bytes(&self, other: &[u8]) -> bool {
-        self.to_bytes() == other
+        self.as_bytes() == other
     }
     /// Compare the C string with a `&str` (excluding the null terminator).
     pub unsafe fn eq_str(&self, other: &str) -> bool {
-        self.to_bytes() == other.as_bytes()
+        self.as_bytes() == other.as_bytes()
     }
     /// Compare the C string with a null-terminated string using `libc::strcmp`.
     /// The `other` must contain a null byte (e.g. `"--help\0"`).
@@ -122,13 +120,13 @@ impl<'a> Cpnt<'a> {
 
 impl<'a, 'b> PartialEq<&'b [u8]> for Cpnt<'a> {
     fn eq(&self, other: &&'b [u8]) -> bool {
-        unsafe { self.to_bytes() == *other }
+        unsafe { self.as_bytes() == *other }
     }
 }
 
 impl<'a> PartialEq<&str> for Cpnt<'a> {
     fn eq(&self, other: &&str) -> bool {
-        unsafe { self.to_bytes() == other.as_bytes() }
+        unsafe { self.as_bytes() == other.as_bytes() }
     }
 }
 
@@ -138,7 +136,7 @@ impl<'a> fmt::Display for Cpnt<'a> {
             return write!(f, "(null)");
         }
         unsafe {
-            let bytes = self.to_bytes();
+            let bytes = self.as_bytes();
             let text = String::from_utf8_lossy(bytes);
             write!(f, "{text}")
         }
@@ -167,7 +165,7 @@ impl<'a> WordListView<'a> {
         WordListIterCpnt(self.0, PhantomData)
     }
     pub fn iter_bytes(&self) -> WordListIterBytes<'_> {
-        self.iter().map(|c| unsafe { c.to_bytes() })
+        self.iter().map(|c| unsafe { c.as_bytes() })
     }
     pub fn iter_osstring(&self) -> WordListIterOsString<'_> {
         self.iter_bytes().map(|s| OsString::from_vec(s.to_vec()))
@@ -304,4 +302,18 @@ mod tests {
         assert!(!is_valid_var_name(b"var name"));
         assert!(!is_valid_var_name(b"-var"));
     }
+}
+
+#[macro_export]
+macro_rules! builtin_error {
+    ( $( $arg:expr ),+ $(,)? ) => {
+        $crate::beprintln!($crate::bash_api::this_cmd_name(), b": error: ", $( $arg ),+)
+    };
+}
+
+#[macro_export]
+macro_rules! builtin_warning {
+    ( $( $arg:expr ),+ $(,)? ) => {
+        $crate::beprintln!($crate::bash_api::this_cmd_name(), b": warning: ", $( $arg ),+)
+    };
 }

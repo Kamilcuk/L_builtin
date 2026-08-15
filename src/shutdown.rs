@@ -42,7 +42,7 @@ pub unsafe extern "C" fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int {
     // Get fd
     let fd = match iter.next() {
         Some(fd_cptr) => {
-            let fd_bytes = unsafe { fd_cptr.to_bytes() };
+            let fd_bytes = unsafe { fd_cptr.as_bytes() };
             match std::str::from_utf8(fd_bytes) {
                 Ok(s) => match s.parse::<c_int>() {
                     Ok(fd) => fd,
@@ -66,7 +66,7 @@ pub unsafe extern "C" fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int {
     // Get how (optional, defaults to SHUT_RDWR)
     let mut how: c_int = libc::SHUT_RDWR;
     if let Some(how_cptr) = iter.next() {
-        let how_bytes = unsafe { how_cptr.to_bytes() };
+        let how_bytes = unsafe { how_cptr.as_bytes() };
         let how_str = match std::str::from_utf8(how_bytes) {
             Ok(s) => s,
             Err(_) => {

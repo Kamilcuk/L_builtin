@@ -30,6 +30,7 @@ pub(crate) mod eventfd;
 pub(crate) mod memfd;
 pub(crate) mod timerfd;
 pub(crate) mod signalfd;
+pub(crate) mod cmd_shm;
 pub(crate) mod splice;
 pub(crate) mod variadic;
 

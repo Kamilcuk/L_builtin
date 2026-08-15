@@ -69,7 +69,7 @@ pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
     let args = getopts!(list, [], []);
     let view = unsafe { WordListView::from_raw(args) };
     let val = match view.iter().current() {
-        Some(val) => val.to_bytes(),
+        Some(val) => val.as_bytes(),
         None => {
             // No subcommand was given - only options (or nothing).
             beprintln!(ENAME, b": missing subcommand");

@@ -70,17 +70,17 @@ pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
         list,
         [ n => || nonblock = true ],
         [ c => |v: crate::bash_api::Cpnt<'_>| {
-            if let Some(c) = parse_clock(unsafe { v.to_str() }.ok()) {
+            if let Some(c) = parse_clock(unsafe { v.as_str() }.ok()) {
                 clock = c;
             } else {
                 beprintln!(ENAME, b": invalid clock");
             }
         },
           s => |v: crate::bash_api::Cpnt<'_>| initial = unsafe {
-                v.to_str().ok().and_then(|s| s.parse().ok()).unwrap_or(0.0)
+                v.as_str().ok().and_then(|s| s.parse().ok()).unwrap_or(0.0)
             },
           i => |v: crate::bash_api::Cpnt<'_>| interval = unsafe {
-                v.to_str().ok().and_then(|s| s.parse().ok()).unwrap_or(0.0)
+                v.as_str().ok().and_then(|s| s.parse().ok()).unwrap_or(0.0)
             },
           v => |v: crate::bash_api::Cpnt<'_>| fd_var = v.as_ptr().cast() ]
     );

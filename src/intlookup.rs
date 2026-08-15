@@ -220,12 +220,52 @@ macro_rules! define_functions {
                     return None;
                 }
                 let target = Self::pack(key);
-                // Linear scan for small arrays could be vectorized.
-                if N <= 16 {
-                    self.lookup_linear(target)
+                if false {
+                    // Linear scan for small arrays could be vectorized.
+                    if N <= 16 {
+                        self.lookup_linear(target)
+                    } else {
+                        self.lookup_binary_search(target)
+                    }
                 } else {
-                    self.lookup_binary_search(target)
+                    self.lookup_shortest_unique_prefix(key)
                 }
+            }
+
+            pub fn lookup_shortest_unique_prefix(&self, key: &[u8]) -> Option<V> {
+                let size = std::mem::size_of::<$T>();
+                if key.len() > size {
+                    return None;
+                }
+                let target = Self::pack(key);
+                let shift = (size - key.len()) * 8;
+                let mask = (!0 as $T) << shift;
+                let masked_target = target & mask;
+                // Find the lower bound via binary search
+                let mut low = 0;
+                let mut high = N;
+                while low < high {
+                    let mid = low + (high - low) / 2;
+                    if (self.0[mid] & mask) < masked_target {
+                        low = mid + 1;
+                    } else {
+                        high = mid;
+                    }
+                }
+                // Check if the lower bound matches the prefix
+                if low < N && (self.0[low] & mask) == masked_target {
+                    // Match exactly.
+                    if self.0[low] == target {
+                        return Some(self.1[low]);
+                    }
+                    // Since keys are sorted, check if the *next* element also matches.
+                    // If it does, the prefix is ambiguous (not unique).
+                    if low + 1 < N && (self.0[low + 1] & mask) == masked_target {
+                        return None; // Ambiguous match
+                    }
+                    return Some(self.1[low]);
+                }
+                None
             }
 
             fn lookup_linear(&self, target: $T) -> Option<V> {
