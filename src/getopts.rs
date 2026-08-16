@@ -9,6 +9,11 @@
 // Re-exported here so `$crate::getopts::*` paths in the macros resolve.
 pub use crate::bash_api::{internal_getopt, list_optarg, loptend, reset_internal_getopt};
 
+use crate::bash_api::{
+    builtin_usage, Cpnt, EX_USAGE, GETOPT_HELP, l_builtin_usage_long, WORD_LIST,
+};
+use std::os::raw::{c_char, c_int};
+
 /// Specifies the arity of a positional argument.
 ///
 /// Each variant carries the argument's name as a `&'static str` (via
@@ -81,13 +86,47 @@ pub const fn has_variadic(specs: &[PositionalSpec]) -> bool {
     false
 }
 
-// Define a trait/helper inside your crate to fix the type context
+/// Lets an option/flag action return either `()` or `Result<(), c_int>`.
+/// The latter lets the action abort the whole builtin via `Err(code)`, which
+/// propagates out through [`getopts_run`].
+pub trait IntoActionResult {
+    fn into_action_result(self) -> Result<(), c_int>;
+}
+
+impl IntoActionResult for () {
+    fn into_action_result(self) -> Result<(), c_int> {
+        Ok(())
+    }
+}
+
+impl IntoActionResult for bool {
+    fn into_action_result(self) -> Result<(), c_int> {
+        if self { Ok(()) } else { Err(EX_USAGE) }
+    }
+}
+
+impl<T> IntoActionResult for Option<T> {
+    fn into_action_result(self) -> Result<(), c_int> {
+        Ok(())
+    }
+}
+
 #[inline(always)]
-pub fn invoke_opt_action<F: FnMut(crate::bash_api::Cpnt)>(
-    mut action: F,
-    arg: crate::bash_api::Cpnt,
-) {
-    action(arg);
+pub fn invoke_opt_action<F, R>(mut action: F, arg: Cpnt<'static>) -> Result<(), c_int>
+where
+    F: FnMut(Cpnt<'static>) -> R,
+    R: IntoActionResult,
+{
+    action(arg).into_action_result()
+}
+
+#[inline(always)]
+pub fn invoke_flag_action<F, R>(mut action: F) -> Result<(), c_int>
+where
+    F: FnMut() -> R,
+    R: IntoActionResult,
+{
+    action().into_action_result()
 }
 
 /// Parse options from a bash `WORD_LIST` using bash's `internal_getopt`.
@@ -135,7 +174,7 @@ pub fn invoke_opt_action<F: FnMut(crate::bash_api::Cpnt)>(
 /// let (var,) = parse_positionals!(rest, [], [VAR]);
 /// // `var` is `Option<Cpnt>`; borrow it as a `CStr` with `as_cstr()`.
 /// let var_cstr: &CStr = match var {
-///     Some(v) => unsafe { v.to_cstr() },
+///     Some(v) => unsafe { v.as_cstr() },
 ///     None    => c"SHMVAR",
 /// };
 /// let var_ptr: *const c_char = var_cstr.as_ptr();
@@ -145,6 +184,32 @@ pub fn invoke_opt_action<F: FnMut(crate::bash_api::Cpnt)>(
 /// Note: a value-option action like `n => |nm| ...` receives the optarg as a
 /// `Cpnt`; call `.as_ptr()` to get a `*mut c_char`. The `-h`/`--help` flag is
 /// added automatically and prints the subcommand's `CmdDesc` long help.
+#[inline(always)]
+pub fn getopts_run(
+    list: *mut WORD_LIST,
+    optstring: &[u8],
+    mut dispatch: impl FnMut(c_int, *mut c_char) -> Result<(), c_int>,
+) -> Result<(), c_int> {
+    unsafe { reset_internal_getopt() };
+    loop {
+        let c = unsafe {
+            internal_getopt(list, optstring.as_ptr().cast::<c_char>().cast_mut())
+        };
+        if c == -1 {
+            break;
+        } else if c == GETOPT_HELP || c == b'h' as c_int {
+            unsafe { l_builtin_usage_long() };
+            return Err(0);
+        } else if c == b'?' as c_int || c == b':' as c_int {
+            unsafe { builtin_usage() };
+            return Err(EX_USAGE);
+        } else if let Err(code) = dispatch(c, unsafe { list_optarg }) {
+            return Err(code);
+        }
+    }
+    Ok(())
+}
+
 #[macro_export]
 macro_rules! getopts {
     (
@@ -152,46 +217,31 @@ macro_rules! getopts {
         [ $( $flag:ident => $flag_action:expr ),* $(,)? ],
         [ $( $opt:ident => $opt_action:expr ),* $(,)? ] $(,)?
     ) => {{
-        $crate::getopts::reset_internal_getopt();
-        let list = $args;
         const OPTSTRING: &[u8] = concat!(
             $( stringify!($flag), )*
             $( stringify!($opt), ":", )*
             "h\0"
         ).as_bytes();
-        loop {
-            let c = unsafe {
-                $crate::getopts::internal_getopt(
-                    list,
-                    OPTSTRING.as_ptr().cast::<std::os::raw::c_char>().cast_mut(),
-                )
-            };
-            match c {
-                -1 => break,
-                $crate::bash_api::GETOPT_HELP  | 104 /* 'h' */ => {
-                    $crate::bash_api::l_builtin_usage_long();
-                    return 0;
+        match $crate::getopts::getopts_run($args, OPTSTRING, |c, p| -> ::std::result::Result<(), ::std::os::raw::c_int> {
+            let _ = (c, p);
+            $(
+                if c == stringify!($flag).as_bytes()[0] as ::std::os::raw::c_int {
+                    $crate::getopts::invoke_flag_action($flag_action)?;
                 }
-                $(
-                    c if c == stringify!($flag).as_bytes()[0] as std::os::raw::c_int => {
-                        $flag_action();
-                    }
-                )*
-                $(
-                    c if c == stringify!($opt).as_bytes()[0] as std::os::raw::c_int => {
-                        $crate::getopts::invoke_opt_action(
-                            $opt_action,
-                            unsafe { $crate::bash_api::Cpnt::new($crate::getopts::list_optarg) },
-                        );
-                    }
-                )*
-                _ => {
-                    $crate::bash_api::builtin_usage();
-                    return $crate::bash_api::EX_USAGE;
+            )*
+            $(
+                if c == stringify!($opt).as_bytes()[0] as ::std::os::raw::c_int {
+                    $crate::getopts::invoke_opt_action(
+                        $opt_action,
+                        $crate::bash_api::Cpnt::<'static>::new(p),
+                    )?;
                 }
-            }
+            )*
+            Ok(())
+        }) {
+            Ok(()) => unsafe { $crate::getopts::loptend },
+            Err(code) => return code,
         }
-        unsafe { $crate::getopts::loptend }
     }};
 }
 

@@ -203,7 +203,4 @@ SHELL_VAR *l_init_dynamic_array_var(
 }
 
 /* Unbind (remove) a shell variable by name; returns 1 if it existed. */
-int l_unbind_variable(const char *name)
-{
-  return unbind_variable((char *)name);
-}
+int l_unbind_variable(const char *name) { return unbind_variable((char *)name); }

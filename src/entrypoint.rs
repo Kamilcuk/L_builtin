@@ -15,7 +15,6 @@ use crate::bash_api::{
     builtin_error, c_char, c_int, is_valid_var_name, this_cmd_name, WordListView, EX_USAGE,
     WORD_LIST,
 };
-use crate::intlookup::IntLookup128;
 use crate::shared::{capture_into_variable, flush_stdout_buffers};
 use crate::subcmd::{SubcommandFn, SubcommandGuard};
 use crate::{beprintln, bprintln, getopts, intlookup, variadic};
@@ -60,6 +59,9 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("signalfd", crate::signalfd::signalfd_subcommand),
     ("splice", crate::splice::splice_subcommand),
     ("shm", crate::cmd_shm::shm_subcommand),
+    ("barrier", crate::cmd_barrier::barrier_subcommand),
+    ("mutex", crate::cmd_mutex::mutex_subcommand),
+    ("semaphore", crate::cmd_semaphore::semaphore_subcommand),
     #[cfg(not(feature = "bash_lt_4_3"))]
     ("capture", l_capture_subcommand),
 ];
@@ -78,8 +80,10 @@ const fn extract_first<const N: usize>(a: &[(&'static str, SubcommandFn)]) -> [&
 const SUBCOMMAND_NAMES: &[&str] =
     &extract_first::<{ SUBCOMMAND_ENTRIES.len() }>(SUBCOMMAND_ENTRIES);
 
-const SUBCOMMAND_TABLE: IntLookup128<SubcommandFn, { SUBCOMMAND_ENTRIES.len() }> =
-    intlookup!(&SUBCOMMAND_ENTRIES);
+const SUBCOMMAND_TABLE: crate::intlookup::U128::IntLookup<
+    SubcommandFn,
+    { SUBCOMMAND_ENTRIES.len() },
+> = intlookup!(&SUBCOMMAND_ENTRIES);
 
 fn l_builtin_print_usage() {
     let cmd_name = this_cmd_name();

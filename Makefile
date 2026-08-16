@@ -52,7 +52,7 @@ rustchecks:
 
 format:
 	clang-format -i src/*.c src/*.h
-	cargo fix --lib -p L_builtin --allow-dirty
+	cargo fix --lib -p l_builtin --allow-dirty
 
 check-format:
 	clang-format --dry-run --Werror src/*.c src/*.h

@@ -40,9 +40,8 @@ use crate::bash_api::{
     variable, WordListView, ARRAY, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, SHELL_VAR,
     WORD_LIST,
 };
-use crate::intlookup::IntLookup32;
 use crate::subcmd::{CmdDesc, SubcommandFn};
-use crate::{beprintln, bprintln, builtin_error, getopts, parse_positionals, subcmd_getopts};
+use crate::{beprintln, bprintln, getopts, l_builtin_error, subcmd_getopts};
 
 use heed::types::Bytes;
 use heed::{Database, Env, MdbError};
@@ -384,14 +383,14 @@ unsafe extern "C" fn shm_rm_subcommand(list: *mut WORD_LIST) -> c_int {
     let (env, db) = match get_shm(&shm_str) {
         Ok(x) => x,
         Err(e) => {
-            builtin_error!(e.as_bytes());
+            l_builtin_error!(e.as_bytes());
             return EXECUTION_FAILURE;
         }
     };
     let mut wtxn = match env.write_txn() {
         Ok(t) => t,
         Err(e) => {
-            builtin_error!(e.to_string());
+            l_builtin_error!(e.to_string());
             return EXECUTION_FAILURE;
         }
     };
@@ -404,7 +403,7 @@ unsafe extern "C" fn shm_rm_subcommand(list: *mut WORD_LIST) -> c_int {
         l_unbind_variable(name.as_ptr() as *const c_char);
     }
     if wtxn.commit().is_err() {
-        builtin_error!("commit failed");
+        l_builtin_error!("commit failed");
         return EXECUTION_FAILURE;
     }
     EXECUTION_SUCCESS
@@ -417,23 +416,21 @@ unsafe extern "C" fn shm_info_subcommand(list: *mut WORD_LIST) -> c_int {
     let (env, db) = match get_shm(&shm_str) {
         Ok(x) => x,
         Err(e) => {
-            beprintln!(this_cmd_name(), b": ", e.as_bytes());
+            l_builtin_error!(e.as_bytes());
             return EXECUTION_FAILURE;
         }
     };
     let rtxn = match env.read_txn() {
         Ok(t) => t,
         Err(e) => {
-            let msg = e.to_string();
-            beprintln!(this_cmd_name(), b": ", msg.as_bytes());
+            l_builtin_error!(e.to_string());
             return EXECUTION_FAILURE;
         }
     };
     let iter = match db.iter(&rtxn) {
         Ok(i) => i,
         Err(e) => {
-            let msg = e.to_string();
-            beprintln!(this_cmd_name(), b": ", msg.as_bytes());
+            l_builtin_error!(e.to_string());
             return EXECUTION_FAILURE;
         }
     };
@@ -535,7 +532,8 @@ Examples:
 ",
 );
 
-const SHM_TABLE: IntLookup32<SubcommandFn, 3> = crate::intlookup!(&SHM_SUBCOMMANDS);
+const SHM_TABLE: crate::intlookup::U32::IntLookup<SubcommandFn, 3> =
+    crate::intlookup!(&SHM_SUBCOMMANDS);
 
 /// # Safety
 ///

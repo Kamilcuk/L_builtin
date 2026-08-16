@@ -11,7 +11,6 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{WordListIterOsString, WordListView, EX_NOTFOUND, WORD_LIST};
-use crate::intlookup::IntLookup64;
 use crate::subcmd::CmdDesc;
 use crate::{beprintln, getopts, intlookup};
 
@@ -58,7 +57,8 @@ const UU_DISPATCH_ENTRIES: &[(&str, UuMain)] = &[
     ("tee", uu_entry!(uu_tee)),
 ];
 
-const UU_DISPATCH_TABLE: IntLookup64<UuMain, { UU_DISPATCH_ENTRIES.len() }> = intlookup!(UU_DISPATCH_ENTRIES);
+const UU_DISPATCH_TABLE: crate::intlookup::U64::IntLookup<UuMain, { UU_DISPATCH_ENTRIES.len() }> =
+    intlookup!(UU_DISPATCH_ENTRIES);
 
 /// # Safety
 ///

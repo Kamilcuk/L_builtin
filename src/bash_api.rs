@@ -305,15 +305,34 @@ mod tests {
 }
 
 #[macro_export]
-macro_rules! builtin_error {
+macro_rules! l_builtin_error {
     ( $( $arg:expr ),+ $(,)? ) => {
         $crate::beprintln!($crate::bash_api::this_cmd_name(), b": error: ", $( $arg ),+)
     };
 }
 
 #[macro_export]
-macro_rules! builtin_warning {
+macro_rules! l_builtin_warning {
     ( $( $arg:expr ),+ $(,)? ) => {
         $crate::beprintln!($crate::bash_api::this_cmd_name(), b": warning: ", $( $arg ),+)
+    };
+}
+
+fn l_builtin_usage() {
+    let short_doc = unsafe {
+        if current_builtin.is_null() || (*current_builtin).short_doc.is_null() {
+            b"\0".as_ptr() as *const c_char
+        } else {
+            (*current_builtin).short_doc
+        }
+    };
+    beprintln!(this_cmd_name(), ": usage: ", short_doc);
+}
+
+#[macro_export]
+macro_rules! l_builtin_usage_error {
+    ( $( $arg:expr ),+ $(,)? ) => {
+        $crate::l_builtin_error!($( $arg ),+);
+        $crate::bash_api::l_builtin_usage()
     };
 }
