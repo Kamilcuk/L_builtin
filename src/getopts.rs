@@ -10,7 +10,7 @@
 pub use crate::bash_api::{internal_getopt, list_optarg, loptend, reset_internal_getopt};
 
 use crate::bash_api::{
-    builtin_usage, Cpnt, EX_USAGE, GETOPT_HELP, l_builtin_usage_long, WORD_LIST,
+    builtin_usage, l_builtin_usage_long, Cpnt, EX_USAGE, GETOPT_HELP, WORD_LIST,
 };
 use std::os::raw::{c_char, c_int};
 
@@ -101,7 +101,11 @@ impl IntoActionResult for () {
 
 impl IntoActionResult for bool {
     fn into_action_result(self) -> Result<(), c_int> {
-        if self { Ok(()) } else { Err(EX_USAGE) }
+        if self {
+            Ok(())
+        } else {
+            Err(EX_USAGE)
+        }
     }
 }
 
@@ -192,9 +196,7 @@ pub fn getopts_run(
 ) -> Result<(), c_int> {
     unsafe { reset_internal_getopt() };
     loop {
-        let c = unsafe {
-            internal_getopt(list, optstring.as_ptr().cast::<c_char>().cast_mut())
-        };
+        let c = unsafe { internal_getopt(list, optstring.as_ptr().cast::<c_char>().cast_mut()) };
         if c == -1 {
             break;
         } else if c == GETOPT_HELP || c == b'h' as c_int {
@@ -355,4 +357,3 @@ macro_rules! parse_positionals {
         )
     }};
 }
-

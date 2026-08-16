@@ -60,7 +60,10 @@ unsafe fn alloc_aligned(raw: *mut u8, size: usize, align: usize) -> *mut u8 {
 /// Recover raw from an aligned pointer returned by alloc_aligned.
 unsafe fn raw_from_aligned(ptr: *mut u8) -> *mut u8 {
     let offset = *ptr.sub(1) as usize;
-    debug_assert!(offset < 256, "stored offset must fit in the u8 control byte");
+    debug_assert!(
+        offset < 256,
+        "stored offset must fit in the u8 control byte"
+    );
     ptr.sub(1).sub(offset)
 }
 

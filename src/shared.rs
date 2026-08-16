@@ -501,6 +501,17 @@ pub(crate) fn take_handle(kind: u8, id: u64) -> Option<HandleEntry> {
     HANDLES.with(|m| m.borrow_mut().remove(&(kind, id)))
 }
 
+/// Invoke `f` once per registered handle of `kind`, passing `(id, ptr)`.
+pub(crate) fn for_each_handle(kind: u8, mut f: impl FnMut(u64, *mut u8)) {
+    HANDLES.with(|m| {
+        for (&k, entry) in m.borrow().iter() {
+            if k.0 == kind {
+                f(k.1, entry.ptr);
+            }
+        }
+    });
+}
+
 /// Map `size` bytes of anonymous shared memory (shared across forked processes).
 pub(crate) fn map_anonymous(size: usize) -> Result<*mut u8, String> {
     let ptr = unsafe {

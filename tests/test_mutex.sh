@@ -64,6 +64,44 @@ _L_test_mutex_named() {
     L_unittest_cmd -cjN ! L_builtin mutex open w /mutex_does_not_exist
 }
 
+# Robust mutex: a forked child acquires the lock and then exits normally without
+# unlocking. The kernel marks the mutex owner-dead, so the parent's next lock
+# must recover (EOWNERDEAD -> consistent) instead of deadlocking. The child
+# exits normally (no _exit(1)/kill) - this exercises the real "terminate" path.
+_L_test_mutex_robust() {
+    L_builtin mutex create -r m
+    ( L_builtin mutex lock -n "$m" )
+    L_unittest_cmd -c L_builtin mutex lock -n "$m"
+    L_builtin mutex unlock "$m"
+    L_builtin mutex destroy "$m"
+}
+
+# unlock -a releases every mutex this process currently holds at once.
+_L_test_mutex_unlock_all() {
+    L_builtin mutex create a
+    L_builtin mutex create b
+    L_unittest_cmd -c L_builtin mutex lock -n "$a"
+    L_unittest_cmd -c L_builtin mutex lock -n "$b"
+
+    L_unittest_cmd -c L_builtin mutex unlock -a
+
+    # Both are free again -> re-acquire succeeds.
+    L_unittest_cmd -c L_builtin mutex lock -n "$a"
+    L_unittest_cmd -c L_builtin mutex lock -n "$b"
+
+    L_builtin mutex unlock -a
+    L_builtin mutex close "$a"
+    L_builtin mutex close "$b"
+}
+
+# unlock -a with nothing held is a safe no-op.
+_L_test_mutex_unlock_all_empty() {
+    L_builtin mutex create a
+    L_unittest_cmd -c L_builtin mutex unlock -a
+    L_builtin mutex close "$a"
+}
+
+
 _L_test_mutex_usage() {
     # No subcommand at all -> usage error.
     L_unittest_cmd -cjN ! L_builtin mutex
@@ -76,6 +114,9 @@ _L_test_mutex_usage() {
 
     # Missing NAME.
     L_unittest_cmd -cjN ! L_builtin mutex open m
+
+    # unlock with neither a handle nor -a -> usage error.
+    L_unittest_cmd -cjN ! L_builtin mutex unlock
 }
 
 _L_test_mutex_help_short() {

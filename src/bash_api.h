@@ -94,6 +94,13 @@ SHELL_VAR *l_init_dynamic_array_var(
   const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc, int attrs
 );
 
+/* Initialize a dynamic associative array variable exposed to Rust.
+ * Creates an associative array variable and attaches the dynamic value /
+ * assignment callbacks. */
+SHELL_VAR *l_init_dynamic_assoc_var(
+  const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc, int attrs
+);
+
 /* Unbind (remove) a shell variable by name; returns 1 if it existed. */
 int l_unbind_variable(const char *name);
 

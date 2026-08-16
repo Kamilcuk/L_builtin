@@ -6,7 +6,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
+use crate::bash_api::{WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
 use crate::{beprintln, getopts};
 use std::os::fd::IntoRawFd;
@@ -56,8 +56,14 @@ pub unsafe extern "C" fn listen_subcommand(list: *mut WORD_LIST) -> c_int {
     };
 
     // Get IP (optional, defaults to 127.0.0.1) and PORT (optional, defaults to 0)
-    let ip_str = iter.next().and_then(|p| unsafe { p.as_str().ok() }).unwrap_or("127.0.0.1");
-    let port_str = iter.next().and_then(|p| unsafe { p.as_str().ok() }).unwrap_or("0");
+    let ip_str = iter
+        .next()
+        .and_then(|p| unsafe { p.as_str().ok() })
+        .unwrap_or("127.0.0.1");
+    let port_str = iter
+        .next()
+        .and_then(|p| unsafe { p.as_str().ok() })
+        .unwrap_or("0");
 
     if port_str == "0" && port_var.is_none() {
         beprintln!(ENAME, b": -p PORT_VAR option is required when port is 0");
@@ -90,8 +96,12 @@ pub unsafe extern "C" fn listen_subcommand(list: *mut WORD_LIST) -> c_int {
     // Bind the listenfd variable - use the raw C string pointer
     let sfd_str = crate::shared::I64Str::new(sfd as i64);
 
-    if unsafe { crate::bash_api::bind_variable(listenfd_var.as_ptr(), sfd_str.as_ptr(), 0) }.is_null() {
-        unsafe { libc::close(sfd); }
+    if unsafe { crate::bash_api::bind_variable(listenfd_var.as_ptr(), sfd_str.as_ptr(), 0) }
+        .is_null()
+    {
+        unsafe {
+            libc::close(sfd);
+        }
         beprintln!(ENAME, b": cannot bind variable");
         return EXECUTION_FAILURE;
     }

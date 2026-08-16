@@ -117,3 +117,87 @@ _L_test_shm_help_info() {
     L_unittest_contains "$out" "L_builtin shm info: usage: info"
     L_unittest_contains "$out" "Examples"
 }
+
+_L_test_shm_assoc_add_and_read() {
+    local shm="SHMTEST_ASSOC_ADD"
+    L_builtin shm rm "$shm" 2>/dev/null || :
+    L_builtin shm add -A "$shm" V
+    V=( [foo]=bar [baz]=qux )
+    L_unittest_eq "${V[foo]}" "bar"
+    L_unittest_eq "${V[baz]}" "qux"
+    # Order is not guaranteed for associative arrays, but both keys should exist
+    local keys
+    keys="$(printf '%s\n' "${!V[@]}" | sort)"
+    L_unittest_eq "$keys" $'baz\nfoo'
+    L_builtin shm rm "$shm"
+}
+
+_L_test_shm_assoc_single_key_rmw() {
+    local shm="SHMTEST_ASSOC_RMW"
+    L_builtin shm rm "$shm" 2>/dev/null || :
+    L_builtin shm add -A "$shm" V
+    V=( [a]=1 [b]=2 [c]=3 )
+    # A single-key assignment must not clobber the other elements
+    V[a]=X
+    V[c]=Y
+    L_unittest_eq "${V[a]}" "X"
+    L_unittest_eq "${V[b]}" "2"
+    L_unittest_eq "${V[c]}" "Y"
+    L_builtin shm rm "$shm"
+}
+
+_L_test_shm_assoc_info() {
+    local shm="SHMTEST_ASSOC_INFO"
+    L_builtin shm rm "$shm" 2>/dev/null || :
+    L_builtin shm add -A "$shm" V
+    V=( [p]=x [q]=y [r]=z )
+    local out
+    out="$(L_builtin shm info "$shm")"
+    # Order may vary, so check for presence of each key-value pair
+    # Note: associative array keys are quoted in the output (bash declare -p style)
+    L_unittest_contains "$out" '["p"]="x"'
+    L_unittest_contains "$out" '["q"]="y"'
+    L_unittest_contains "$out" '["r"]="z"'
+    L_builtin shm rm "$shm"
+}
+
+_L_test_shm_assoc_cross_process() {
+    local shm="SHMTEST_ASSOC_XPROC"
+    L_builtin shm rm "$shm" 2>/dev/null || :
+    L_builtin shm add -A "$shm" V
+    V=( [a]=1 [b]=2 [c]=3 )
+
+    local tmpf
+    tmpf="$(mktemp)"
+    bg() {
+        sleep 0.5
+        echo "bg: ${V[b]}" > "$1"
+    }
+    local pid=""
+    L_with_process_into pid bg "$tmpf"
+
+    V[b]=CHANGED
+    wait "$pid"
+
+    local out
+    out="$(<"$tmpf")"
+    L_unittest_eq "$out" "bg: CHANGED"
+    rm -f "$tmpf"
+    L_builtin shm rm "$shm"
+}
+
+_L_test_shm_mixed_indexed_and_assoc() {
+    local shm="SHMTEST_MIXED"
+    L_builtin shm rm "$shm" 2>/dev/null || :
+    L_builtin shm add "$shm" IDX
+    L_builtin shm add -A "$shm" ASSOC
+    IDX=(a b c)
+    ASSOC=( [foo]=bar [baz]=qux )
+    local out
+    out="$(L_builtin shm info "$shm")"
+    L_unittest_contains "$out" 'IDX=([0]="a" [1]="b" [2]="c")'
+    # Associative array keys are quoted in the output
+    L_unittest_contains "$out" '["foo"]="bar"'
+    L_unittest_contains "$out" '["baz"]="qux"'
+    L_builtin shm rm "$shm"
+}

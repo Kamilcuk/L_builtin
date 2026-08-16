@@ -16,8 +16,8 @@ use std::ffi::CString;
 use std::os::raw::c_int;
 
 use crate::bash_api::{
-    l_builtin_usage_long, this_cmd_name, Cpnt,
-    WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
+    l_builtin_usage_long, this_cmd_name, Cpnt, WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS,
+    EX_USAGE, WORD_LIST,
 };
 use crate::pthread::PthreadMutexGuard;
 use crate::subcmd::{CmdDesc, SubcommandFn};

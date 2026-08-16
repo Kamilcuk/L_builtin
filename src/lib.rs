@@ -7,36 +7,37 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+pub(crate) mod accept;
 pub(crate) mod bash_alloc;
 pub(crate) mod bash_api;
 pub(crate) mod bprint_bytes;
+pub(crate) mod cmd_barrier;
 pub(crate) mod cmd_core;
 pub(crate) mod cmd_lua;
-pub(crate) mod entrypoint;
-pub(crate) mod shared;
-pub(crate) mod getopts;
-pub(crate) mod intlookup;
-pub(crate) mod lseek;
-pub(crate) mod pipe;
-pub(crate) mod pthread;
-pub(crate) mod listen;
-pub(crate) mod accept;
-pub(crate) mod connect;
-pub(crate) mod shutdown;
-pub(crate) mod send;
-pub(crate) mod recv;
-pub(crate) mod sleep;
-pub(crate) mod subcmd;
-pub(crate) mod eventfd;
-pub(crate) mod memfd;
-pub(crate) mod timerfd;
-pub(crate) mod signalfd;
-pub(crate) mod cmd_barrier;
 pub(crate) mod cmd_mutex;
 pub(crate) mod cmd_semaphore;
 pub(crate) mod cmd_shm;
+pub(crate) mod connect;
+pub(crate) mod entrypoint;
+pub(crate) mod eventfd;
+pub(crate) mod getopts;
+pub(crate) mod intlookup;
+pub(crate) mod listen;
+pub(crate) mod lseek;
+pub(crate) mod memfd;
+pub(crate) mod pipe;
+pub(crate) mod pthread;
+pub(crate) mod recv;
+pub(crate) mod send;
+pub(crate) mod shared;
+pub(crate) mod shutdown;
+pub(crate) mod signalfd;
+pub(crate) mod sleep;
 pub(crate) mod splice;
+pub(crate) mod subcmd;
+pub(crate) mod timerfd;
 pub(crate) mod variadic;
+pub(crate) mod vardb;
 
 /// Route all Rust allocations through bash's allocator, so the whole process
 /// shares one heap regardless of how bash was configured. See `bash_alloc`.

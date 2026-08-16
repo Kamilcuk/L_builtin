@@ -6,11 +6,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
+use crate::bash_api::{WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
 use crate::{beprintln, getopts};
-use std::os::raw::{c_char, c_int};
 use std::ffi::CStr;
+use std::os::raw::{c_char, c_int};
 
 const ENAME: &str = "L_builtin send";
 
@@ -37,7 +37,7 @@ fn hex_decode(hex: &[u8]) -> Option<Vec<u8>> {
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
     for i in (0..hex.len()).step_by(2) {
-        let byte = match std::str::from_utf8(&hex[i..i+2]) {
+        let byte = match std::str::from_utf8(&hex[i..i + 2]) {
             Ok(s) => u8::from_str_radix(s, 16).ok()?,
             Err(_) => return None,
         };
@@ -50,11 +50,7 @@ fn cptr_to_str(ptr: *mut std::os::raw::c_char) -> Result<&'static str, ()> {
     if ptr.is_null() {
         return Err(());
     }
-    unsafe {
-        CStr::from_ptr(ptr)
-            .to_str()
-            .map_err(|_| ())
-    }
+    unsafe { CStr::from_ptr(ptr).to_str().map_err(|_| ()) }
 }
 
 /// # Safety
@@ -141,7 +137,14 @@ pub unsafe extern "C" fn send_subcommand(list: *mut WORD_LIST) -> c_int {
     };
 
     // Send data
-    let sent = unsafe { libc::send(fd, send_data.as_ptr() as *const libc::c_void, send_data.len(), 0) };
+    let sent = unsafe {
+        libc::send(
+            fd,
+            send_data.as_ptr() as *const libc::c_void,
+            send_data.len(),
+            0,
+        )
+    };
     if sent < 0 {
         beprintln!(ENAME, b": send failed: ", std::io::Error::last_os_error());
         return EXECUTION_FAILURE;

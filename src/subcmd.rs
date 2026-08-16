@@ -188,4 +188,3 @@ macro_rules! subcmd_getopts {
         )
     }};
 }
-

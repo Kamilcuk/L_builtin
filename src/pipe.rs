@@ -6,7 +6,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
+use crate::bash_api::{WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
 use crate::{beprintln, getopts};
 use std::os::raw::c_int;
@@ -57,7 +57,10 @@ pub unsafe extern "C" fn pipe_subcommand(list: *mut WORD_LIST) -> c_int {
     if !var.is_null() {
         let is_array = unsafe { crate::bash_api::l_array_p(var) };
         if is_array == 0 {
-            unsafe { libc::close(fds[0]); libc::close(fds[1]); }
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+            }
             beprintln!(ENAME, b": not an indexed array");
             return EXECUTION_FAILURE;
         }
@@ -67,7 +70,10 @@ pub unsafe extern "C" fn pipe_subcommand(list: *mut WORD_LIST) -> c_int {
     if var.is_null() {
         var = unsafe { crate::bash_api::make_new_array_variable(array_name_ptr) };
         if var.is_null() {
-            unsafe { libc::close(fds[0]); libc::close(fds[1]); }
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+            }
             beprintln!(ENAME, b": cannot create array variable");
             return EXECUTION_FAILURE;
         }

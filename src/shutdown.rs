@@ -98,4 +98,3 @@ pub unsafe extern "C" fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int {
 
     EXECUTION_SUCCESS
 }
-

@@ -4,8 +4,8 @@ use crate::bash_api::{
     WordListOwned, WordListView,
 };
 use crate::bprint_bytes::BDisplay;
-use crate::{beprintln, getopts};
 use crate::return_on_err;
+use crate::{beprintln, getopts};
 
 use std::ffi::{c_char, CStr};
 use std::io::Write;

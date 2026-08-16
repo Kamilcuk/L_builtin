@@ -6,7 +6,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListView, EX_USAGE, EXECUTION_SUCCESS, EXECUTION_FAILURE, WORD_LIST};
+use crate::bash_api::{WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::{beprintln, getopts};
 use std::os::fd::{AsRawFd, IntoRawFd};
 use std::os::raw::c_int;
@@ -71,7 +71,9 @@ pub unsafe extern "C" fn connect_subcommand(list: *mut WORD_LIST) -> c_int {
     };
 
     let sfd_str = crate::shared::SizeTStr::from_usize(stream.as_raw_fd() as usize);
-    if unsafe { crate::bash_api::bind_variable(clientfd_var.as_ptr(), sfd_str.as_ptr(), 0) }.is_null() {
+    if unsafe { crate::bash_api::bind_variable(clientfd_var.as_ptr(), sfd_str.as_ptr(), 0) }
+        .is_null()
+    {
         beprintln!(ENAME, b": cannot bind variable");
         return EXECUTION_FAILURE;
     }

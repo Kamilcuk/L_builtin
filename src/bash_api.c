@@ -188,6 +188,13 @@ int l_execute_command_string(const char *cmd)
     v->assign_func = afunc; \
   } while (0)
 
+#define INIT_DYNAMIC_ASSOC_VAR(var, gfunc, afunc) \
+  do { \
+    v = make_new_assoc_variable(var); \
+    v->dynamic_value = gfunc; \
+    v->assign_func = afunc; \
+  } while (0)
+
 /* Initialize a dynamic array variable (l_ prefix version) exposed to Rust.
  * Reimplements bash's init_dynamic_array_var: creates an array variable and
  * attaches the dynamic value / assignment callbacks. */
@@ -197,6 +204,20 @@ SHELL_VAR *l_init_dynamic_array_var(
 {
   SHELL_VAR *v;
   INIT_DYNAMIC_ARRAY_VAR((char *)name, getfunc, setfunc);
+  if (attrs)
+    VSETATTR(v, attrs);
+  return v;
+}
+
+/* Initialize a dynamic associative array variable exposed to Rust.
+ * Creates an associative array variable and attaches the dynamic value /
+ * assignment callbacks. */
+SHELL_VAR *l_init_dynamic_assoc_var(
+  const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc, int attrs
+)
+{
+  SHELL_VAR *v;
+  INIT_DYNAMIC_ASSOC_VAR((char *)name, getfunc, setfunc);
   if (attrs)
     VSETATTR(v, attrs);
   return v;

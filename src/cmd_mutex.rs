@@ -19,15 +19,14 @@ use std::ffi::CString;
 use std::os::raw::c_int;
 
 use crate::bash_api::{
-    this_cmd_name, WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS,
-    EX_USAGE, WORD_LIST,
+    this_cmd_name, WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
 };
 use crate::subcmd::{CmdDesc, SubcommandFn};
 use crate::{
     beprintln, getopts, l_builtin_error,
     shared::{
-        bind_handle, map_anonymous, map_named, parse_int, store_handle, take_handle,
-        timespec_from_now, unmap, HANDLE_KIND_MUTEX,
+        bind_handle, for_each_handle, map_anonymous, map_named, parse_int, store_handle,
+        take_handle, timespec_from_now, unmap, HANDLE_KIND_MUTEX,
     },
     subcmd_getopts,
 };
@@ -46,13 +45,24 @@ fn mutex_bytes() -> usize {
 }
 
 /// Initialize a mutex (creator only) with process-shared, error-checking attr.
-unsafe fn mutex_init(b: *mut Mutex) -> Result<(), String> {
+///
+/// `robust`: additionally set `PTHREAD_MUTEX_ROBUST` so that if the owning
+/// process terminates while holding the lock, the next `lock` observes
+/// `EOWNERDEAD` (and we recover via `pthread_mutex_consistent`) instead of
+/// deadlocking forever.
+unsafe fn mutex_init(b: *mut Mutex, robust: bool) -> Result<(), String> {
     let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
     if libc::pthread_mutexattr_init(&mut attr) != 0 {
         return Err("pthread_mutexattr_init failed".into());
     }
     libc::pthread_mutexattr_setpshared(&mut attr, libc::PTHREAD_PROCESS_SHARED);
     libc::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_ERRORCHECK);
+    if robust {
+        if libc::pthread_mutexattr_setrobust(&mut attr, libc::PTHREAD_MUTEX_ROBUST) != 0 {
+            libc::pthread_mutexattr_destroy(&mut attr);
+            return Err("pthread_mutexattr_setrobust failed".into());
+        }
+    }
     let rc = libc::pthread_mutex_init(&mut (*b).mtx, &attr);
     libc::pthread_mutexattr_destroy(&mut attr);
     if rc != 0 {
@@ -66,27 +76,30 @@ unsafe fn mutex_init(b: *mut Mutex) -> Result<(), String> {
 /// `nonblock`: `pthread_mutex_trylock` - 0 if acquired, non-zero if busy.
 /// `timeout` (seconds): `pthread_mutex_timedlock` against a `CLOCK_REALTIME`
 /// absolute deadline. Otherwise a blocking `pthread_mutex_lock`.
+///
+/// A robust mutex whose owner died yields `EOWNERDEAD`; we mark it consistent
+/// and treat the lock as acquired.
 unsafe fn mutex_lock(b: *mut Mutex, timeout: Option<f64>, nonblock: bool) -> c_int {
     let m = &mut (*b).mtx;
-    if nonblock {
-        return if libc::pthread_mutex_trylock(m) == 0 {
-            EXECUTION_SUCCESS
-        } else {
-            EXECUTION_FAILURE
-        };
-    }
-    if let Some(secs) = timeout {
+    let rc = if nonblock {
+        libc::pthread_mutex_trylock(m)
+    } else if let Some(secs) = timeout {
         let ts = timespec_from_now(secs);
-        return if libc::pthread_mutex_timedlock(m, &ts) == 0 {
-            EXECUTION_SUCCESS
-        } else {
-            EXECUTION_FAILURE
-        };
-    }
-    if libc::pthread_mutex_lock(m) == 0 {
-        EXECUTION_SUCCESS
+        libc::pthread_mutex_timedlock(m, &ts)
     } else {
-        EXECUTION_FAILURE
+        libc::pthread_mutex_lock(m)
+    };
+    match rc {
+        0 => EXECUTION_SUCCESS,
+        rc if rc == libc::EOWNERDEAD => {
+            if libc::pthread_mutex_consistent(m) == 0 {
+                EXECUTION_SUCCESS
+            } else {
+                l_builtin_error!(b"failed to recover inconsistent mutex");
+                EXECUTION_FAILURE
+            }
+        }
+        _ => EXECUTION_FAILURE,
     }
 }
 
@@ -100,9 +113,11 @@ unsafe fn mutex_unlock(b: *mut Mutex) -> c_int {
 
 pub unsafe extern "C" fn mutex_create_subcommand(list: *mut WORD_LIST) -> c_int {
     let mut name: Option<CString> = None;
+    let mut robust = false;
     let (var,) = subcmd_getopts!(
         MUTEX_CREATE_CMD,
         list,
+        flags: [ r => || robust = true ],
         options: [ n => |nm| name = Some(unsafe { nm.as_cstr() }.to_owned()) ],
         required: [ MUTEX ],
     );
@@ -124,7 +139,7 @@ pub unsafe extern "C" fn mutex_create_subcommand(list: *mut WORD_LIST) -> c_int 
             }
         }
     };
-    if let Err(e) = mutex_init(ptr as *mut Mutex) {
+    if let Err(e) = mutex_init(ptr as *mut Mutex, robust) {
         l_builtin_error!(e.as_bytes());
         unmap(ptr, size);
         return EXECUTION_FAILURE;
@@ -188,12 +203,26 @@ pub unsafe extern "C" fn mutex_lock_subcommand(list: *mut WORD_LIST) -> c_int {
 }
 
 pub unsafe extern "C" fn mutex_unlock_subcommand(list: *mut WORD_LIST) -> c_int {
-    MUTEX_UNLOCK_CMD.enter();
+    let mut all = false;
     let (var,) = subcmd_getopts!(
         MUTEX_UNLOCK_CMD,
         list,
-        required: [ MUTEX ],
+        flags: [ a => || all = true ],
+        optional: [ MUTEX ],
     );
+    if all {
+        for_each_handle(HANDLE_KIND_MUTEX, |_id, ptr| {
+            let _ = mutex_unlock(ptr as *mut Mutex);
+        });
+        return EXECUTION_SUCCESS;
+    }
+    let var = match var {
+        Some(v) => v,
+        None => {
+            l_builtin_error!(b"missing MUTEX (or use -a to unlock all held mutexes)");
+            return EX_USAGE;
+        }
+    };
     let id = match parse_int::<u64>(var.as_ptr()) {
         Some(v) => v,
         None => {
@@ -268,24 +297,28 @@ fn lookup_mutex(id: u64) -> Option<*mut Mutex> {
 
 const MUTEX_CMD: CmdDesc = CmdDesc::new(
     c"mutex",
-    c"create [-n NAME] MUTEX | open MUTEX NAME | lock [-n] [-t SECS] MUTEX | unlock MUTEX | close MUTEX | destroy MUTEX",
+    c"create [-n NAME] [-r] MUTEX | open MUTEX NAME | lock [-n] [-t SECS] MUTEX | unlock [-a] MUTEX | close MUTEX | destroy MUTEX",
     c"\
 Process-shared mutual-exclusion lock backed by shared memory.
 
 Subcommands:
-  create [-n NAME] MUTEX    Create a mutex. MUTEX receives an opaque integer
-                           handle (a bash variable). Without -n the mutex lives in
-                           anonymous shared memory (shared across forked processes,
-                           such as a background job started with &). With -n NAME it
-                           is backed by a named shared-memory object (shm_open) that
-                           unrelated processes can open.
+  create [-n NAME] [-r] MUTEX
+                            Create a mutex. MUTEX receives an opaque integer
+                            handle (a bash variable). Without -n the mutex lives in
+                            anonymous shared memory (shared across forked processes,
+                            such as a background job started with &). With -n NAME it
+                            is backed by a named shared-memory object (shm_open) that
+                            unrelated processes can open. With -r the mutex is robust:
+                            if the owning process terminates while holding it, the
+                            next lock recovers instead of deadlocking forever.
   open MUTEX NAME           Open an existing named mutex NAME and assign its handle
-                           to MUTEX.
+                            to MUTEX.
   lock MUTEX [-t SECS] [-n] Acquire the lock. -t SECS sets a timeout in seconds
-                           (e.g. 1.123); -n is non-blocking and returns immediately
-                           (0 if acquired, non-zero if already held).
-  unlock MUTEX              Release the lock. Fails if the current process does not
-                           hold it.
+                            (e.g. 1.123); -n is non-blocking and returns immediately
+                            (0 if acquired, non-zero if already held).
+  unlock [-a] MUTEX         Release the lock. Fails if the current process does not
+                            hold it. With -a, release every mutex this process
+                            currently holds (ignoring MUTEX).
   close MUTEX               Unmap the mutex in the current process without destroying
                            the shared resource.
   destroy MUTEX             Unmap and, for a named mutex, unlink its shared-memory
@@ -309,18 +342,22 @@ Examples:
 
 const MUTEX_CREATE_CMD: CmdDesc = CmdDesc::new(
     c"create",
-    c"create [-n NAME] MUTEX",
+    c"create [-n NAME] [-r] MUTEX",
     c"\
 Create a mutex and store its handle into the shell variable MUTEX.
 
 Without -n the mutex is created in anonymous shared memory and is shared across
 forked processes (for example a background job started with &). With -n NAME it
 is backed by a named shared-memory object (shm_open) that unrelated processes can
-later open.
+later open. With -r the mutex is robust: if the owning process terminates while
+holding it, the next lock recovers (instead of deadlocking forever) - the new
+owner must still be prepared for possibly inconsistent shared state.
 
 Examples:
   L_builtin mutex create var
+  L_builtin mutex create -r var
   L_builtin mutex create -n /my_mutex v
+  L_builtin mutex create -n -r /my_mutex v
 ",
 );
 
@@ -359,12 +396,16 @@ Examples:
 
 const MUTEX_UNLOCK_CMD: CmdDesc = CmdDesc::new(
     c"unlock",
-    c"unlock MUTEX",
+    c"unlock [-a] MUTEX",
     c"\
 Release the lock MUTEX. Fails if the current process does not hold the lock.
 
+With -a, release every mutex this process currently holds, ignoring MUTEX. This
+is useful as a cleanup at the end of a script.
+
 Examples:
   L_builtin mutex unlock $var
+  L_builtin mutex unlock -a
 ",
 );
 
