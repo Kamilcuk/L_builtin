@@ -16,13 +16,13 @@ use std::ffi::CString;
 use std::os::raw::c_int;
 
 use crate::bash_api::{
-    l_builtin_usage_long, this_cmd_name, Cpnt, WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS,
+    Cpnt, EXECUTION_FAILURE, EXECUTION_SUCCESS,
     EX_USAGE, WORD_LIST,
 };
 use crate::pthread::PthreadMutexGuard;
 use crate::subcmd::{CmdDesc, SubcommandFn};
 use crate::{
-    beprintln, getopts, l_builtin_error,
+    l_builtin_error,
     shared::{
         bind_handle, lookup_handle, map_anonymous, map_named, parse_int, store_handle, take_handle,
         timespec_from_now, HANDLE_KIND_BARRIER,
@@ -228,54 +228,24 @@ pub unsafe extern "C" fn barrier_open_subcommand(list: *mut WORD_LIST) -> c_int 
 }
 
 pub unsafe extern "C" fn barrier_wait_subcommand(list: *mut WORD_LIST) -> c_int {
-    BARRIER_WAIT_CMD.enter();
-    let mut timeout: Option<f64> = None;
+    let mut timeout_c: Option<Cpnt<'static>> = None;
     let mut nonblock = false;
-    let mut var: Option<Cpnt<'static>> = None;
-    // Parse manually so that options may appear in any order relative to the
-    // positional BARRIER (e.g. `wait "$var" -n` as well as `wait -n "$var"`).
-    let words: Vec<Cpnt<'static>> = unsafe { WordListView::from_raw(list) }
-        .into_iter()
-        .map(|w| Cpnt::new(w.as_ptr()))
-        .collect();
-    let mut i = 0;
-    while i < words.len() {
-        let bytes = unsafe { words[i].as_bytes() };
-        if bytes == b"-h".as_slice() || bytes == b"--help".as_slice() {
-            unsafe { l_builtin_usage_long() };
-            return EXECUTION_SUCCESS;
-        } else if bytes == b"-n".as_slice() {
-            nonblock = true;
-        } else if bytes == b"-t".as_slice() {
-            i += 1;
-            if i >= words.len() {
-                l_builtin_error!(b"option -t requires an argument");
+    let (var,) = subcmd_getopts!(
+        BARRIER_WAIT_CMD,
+        list,
+        flags: [ n => || nonblock = true ],
+        options: [ t => |t| timeout_c = Some(t) ],
+        required: [ BARRIER ],
+    );
+    let timeout: Option<f64> = match timeout_c {
+        Some(t) => match parse_int::<f64>(t.as_ptr()) {
+            Some(v) => Some(v),
+            None => {
+                l_builtin_error!(b"invalid timeout");
                 return EX_USAGE;
             }
-            match parse_int::<f64>(words[i].as_ptr()) {
-                Some(v) => timeout = Some(v),
-                None => {
-                    l_builtin_error!(b"invalid timeout");
-                    return EX_USAGE;
-                }
-            }
-        } else if bytes.first() == Some(&b'-') && bytes.len() > 1 {
-            l_builtin_error!(b"unknown option: ", bytes);
-            return EX_USAGE;
-        } else if var.is_some() {
-            l_builtin_error!(b"too many arguments");
-            return EX_USAGE;
-        } else {
-            var = Some(Cpnt::new(words[i].as_ptr()));
-        }
-        i += 1;
-    }
-    let var = match var {
-        Some(v) => v,
-        None => {
-            l_builtin_error!(b"missing BARRIER");
-            return EX_USAGE;
-        }
+        },
+        None => None,
     };
     let id = match parse_int::<u64>(var.as_ptr()) {
         Some(v) => v,
@@ -461,8 +431,8 @@ Options:
 
 Examples:
   L_builtin barrier wait $var
-  L_builtin barrier wait $var -t 1.123
-  L_builtin barrier wait $var -n
+  L_builtin barrier wait -t 1.123 $var
+  L_builtin barrier wait -n $var
 ",
 );
 
@@ -519,30 +489,19 @@ const BARRIER_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn barrier_subcommand(list: *mut WORD_LIST) -> c_int {
-    BARRIER_CMD.enter();
-    let rest = getopts!(list, [], []);
-    let mut iter = WordListView::from_raw(rest).into_iter();
-    let action = match iter.next() {
-        Some(a) => a,
-        None => {
-            beprintln!(
-                this_cmd_name(),
-                b": usage: L_builtin barrier <create|open|wait|close|reset|destroy> ..."
-            );
-            return EX_USAGE;
-        }
-    };
+    let (action, rest) = subcmd_getopts!(
+        BARRIER_CMD,
+        list,
+        required: [ACTION],
+        rest: REST,
+    );
     let action_bytes = unsafe { action.as_bytes() };
     let handler = match BARRIER_TABLE.lookup(action_bytes) {
         Some(h) => h,
         None => {
-            beprintln!(
-                this_cmd_name(),
-                b": unknown barrier subcommand: ",
-                action_bytes
-            );
+            l_builtin_error!(b"unknown barrier subcommand: ", action_bytes);
             return EX_USAGE;
         }
     };
-    handler(iter.as_ptr())
+    handler(rest.as_ptr())
 }

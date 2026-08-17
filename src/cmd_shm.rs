@@ -55,11 +55,11 @@ use crate::bash_api::{
     array_insert, array_remove, arrayind_t, assoc_remove, l_array_cell, l_array_max_index,
     l_assoc_cell, l_assoc_insert, l_init_dynamic_array_var, l_init_dynamic_assoc_var,
     ArrayIterator, AssocIterator, l_unbind_variable, this_cmd_name, variable,
-    is_valid_var_name, WordListView, SHELL_VAR, WORD_LIST,
-    EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE,
+    is_valid_var_name, SHELL_VAR, WORD_LIST,
+    EXECUTION_FAILURE, EXECUTION_SUCCESS,
 };
 use crate::subcmd::{CmdDesc, SubcommandFn};
-use crate::{beprintln, bprintln, getopts, l_builtin_error, subcmd_getopts};
+use crate::{beprintln, bprintln, l_builtin_error, subcmd_getopts};
 use crate::vardb::{DbLoc, DbPath, LockedDatabase, VarData, open_db_loc, resolve_loc};
 
 /// Bash variable attribute for associative arrays (att). From bash's
@@ -481,7 +481,7 @@ unsafe extern "C" fn shm_unbind_subcommand(list: *mut WORD_LIST) -> c_int {
             return EXECUTION_FAILURE;
         }
     }
-    for v in &vars {
+    for v in vars {
         let ckey = match CString::new(v.as_bytes()) {
             Ok(c) => c,
             Err(_) => continue,
@@ -814,16 +814,12 @@ const SHM_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 5> =
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn shm_subcommand(list: *mut WORD_LIST) -> c_int {
-    SHM_CMD.enter();
-    let rest = getopts!(list, [], []);
-    let mut iter = WordListView::from_raw(rest).into_iter();
-    let action = match iter.next() {
-        Some(a) => a,
-        None => {
-            beprintln!(this_cmd_name(), b": usage: L_builtin shm <add|remove|unbind|info|ls> ...");
-            return EX_USAGE;
-        }
-    };
+    let (action, rest) = subcmd_getopts!(
+        SHM_CMD,
+        list,
+        required: [ACTION],
+        rest: REST,
+    );
     let action_bytes = action.as_bytes();
     let handler = match SHM_TABLE.lookup(action_bytes) {
         Some(h) => h,
@@ -832,5 +828,5 @@ pub unsafe extern "C" fn shm_subcommand(list: *mut WORD_LIST) -> c_int {
             return EXECUTION_FAILURE;
         }
     };
-    handler(iter.as_ptr())
+    handler(rest.as_ptr())
 }

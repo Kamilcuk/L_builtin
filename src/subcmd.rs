@@ -111,8 +111,10 @@ pub type SubcommandFn = unsafe extern "C" fn(*mut WORD_LIST) -> c_int;
 /// `-h`/`--help` and any options via [`$crate::getopts!`], then parse the
 /// positional arguments via [`$crate::parse_positionals!`]. It is a thin
 /// forwarder; the variadic argument is written `rest: NAME` (zero or more) or
-/// `some: NAME` (one or more) instead of the bare `*`/`+` symbols. Any of the
-/// `flags:`, `options:`, `required:` and `optional:` groups may be omitted and
+/// `some: NAME` (one or more) instead of the bare `*`/`+` symbols, and binds a
+/// `WordListIterCpnt` over the remaining words (the same iterator
+/// `parse_positionals!` uses internally). Any of the `flags:`, `options:`,
+/// `required:`, `optional:`, `rest:` and `some:` groups may be omitted and
 /// defaults to empty.
 ///
 /// ```ignore
@@ -131,14 +133,15 @@ pub type SubcommandFn = unsafe extern "C" fn(*mut WORD_LIST) -> c_int;
 ///     options: [ n => |nm| name = nm.as_ptr() ], // options taking an argument - may be omitted
 ///     required: [ SRC ],                     // required positionals - may be omitted
 ///     optional: [ DEST ],                    // optional positionals - may be omitted
-///     rest: FILES,                           // zero-or-more (or `some: FILES`); may be omitted
+///     rest: FILES,                           // WordListIterCpnt over the rest (zero or more)
+///     some: FILES,                           // WordListIterCpnt over the rest (one or more)
 /// );
 /// ```
 ///
 /// # Example
 ///
 /// ```ignore
-/// let mut name: *mut c_char = std::ptr::null_mut();
+/// let mut name: *mut c_char = null_mut();
 /// let mut tag: &CStr = c"";
 /// let (src, dest, files) = subcmd_getopts!(
 ///     MY_CMD,
@@ -150,9 +153,9 @@ pub type SubcommandFn = unsafe extern "C" fn(*mut WORD_LIST) -> c_int;
 ///     ],
 ///     required: [ SRC ],
 ///     optional: [ DEST ],
-///     rest: FILES,                                 // Vec<Cpnt>, may be empty
+///     rest: FILES,                                 // WordListIterCpnt, may be empty
 /// );
-/// // `name` is `*mut c_char`, `tag` is `&CStr`, `files` is `Vec<Cpnt>`.
+/// // `name` is `*mut c_char`, `tag` is `&CStr`, `files` is a `WordListIterCpnt`.
 /// ```
 ///
 /// Omitting empty groups is allowed - the minimal form is simply:

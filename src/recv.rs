@@ -6,12 +6,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, getopts};
+use crate::l_builtin_error;
+use crate::{subcmd_getopts};
 use std::os::raw::{c_char, c_int};
-
-const ENAME: &str = "L_builtin recv";
 
 const CMD: CmdDesc = CmdDesc::new(
     c"recv",
@@ -54,21 +53,23 @@ fn hex_encode(data: &[u8]) -> Vec<u8> {
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
     let mut non_blocking = false;
     let mut interruptible = false;
     let mut f_var: *mut c_char = std::ptr::null_mut();
     let mut var: *mut c_char = std::ptr::null_mut();
-    let args = getopts!(
+    let (fd_cptr, size_cptr) = subcmd_getopts!(
+        CMD,
         list,
-        [ n => || non_blocking = true,
-          i => || interruptible = true ],
-        [ f => |f: crate::bash_api::Cpnt<'_>| f_var = f.as_ptr().cast(),
-          v => |v: crate::bash_api::Cpnt<'_>| var = v.as_ptr().cast() ]
+        flags: [
+            n => || non_blocking = true,
+            i => || interruptible = true,
+        ],
+        options: [
+            f => |f| f_var = f.as_ptr().cast(),
+            v => |v| var = v.as_ptr().cast(),
+        ],
+        required: [FD, SIZE],
     );
-
-    let view = unsafe { WordListView::from_raw(args) };
-    let mut iter = view.iter();
 
     // Get format (optional, defaults to "raw")
     #[derive(Copy, Clone)]
@@ -82,7 +83,7 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
             Some("hex") => Format::Hex,
             Some("raw") | None => Format::Raw,
             Some(_) => {
-                beprintln!(ENAME, b": invalid format (must be raw or hex)");
+                l_builtin_error!(b"invalid format (must be raw or hex)");
                 return EX_USAGE;
             }
         }
@@ -91,50 +92,38 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
     };
 
     // Get fd
-    let fd = match iter.next() {
-        Some(fd_cptr) => {
-            let fd_bytes = unsafe { fd_cptr.as_bytes() };
-            match std::str::from_utf8(fd_bytes) {
-                Ok(s) => match s.parse::<c_int>() {
-                    Ok(fd) => fd,
-                    Err(_) => {
-                        beprintln!(ENAME, b": invalid fd: ", fd_bytes);
-                        return EX_USAGE;
-                    }
-                },
+    let fd = {
+        let fd_bytes = unsafe { fd_cptr.as_bytes() };
+        match std::str::from_utf8(fd_bytes) {
+            Ok(s) => match s.parse::<c_int>() {
+                Ok(fd) => fd,
                 Err(_) => {
-                    beprintln!(ENAME, b": invalid fd encoding");
+                    l_builtin_error!(b"invalid fd: ", fd_bytes);
                     return EX_USAGE;
                 }
+            },
+            Err(_) => {
+                l_builtin_error!(b"invalid fd encoding");
+                return EX_USAGE;
             }
-        }
-        None => {
-            beprintln!(ENAME, b": missing FD argument");
-            return EX_USAGE;
         }
     };
 
     // Get size
-    let size = match iter.next() {
-        Some(size_cptr) => {
-            let size_bytes = unsafe { size_cptr.as_bytes() };
-            match std::str::from_utf8(size_bytes) {
-                Ok(s) => match s.parse::<usize>() {
-                    Ok(size) => size,
-                    Err(_) => {
-                        beprintln!(ENAME, b": invalid size: ", size_bytes);
-                        return EX_USAGE;
-                    }
-                },
+    let size = {
+        let size_bytes = unsafe { size_cptr.as_bytes() };
+        match std::str::from_utf8(size_bytes) {
+            Ok(s) => match s.parse::<usize>() {
+                Ok(size) => size,
                 Err(_) => {
-                    beprintln!(ENAME, b": invalid size encoding");
+                    l_builtin_error!(b"invalid size: ", size_bytes);
                     return EX_USAGE;
                 }
+            },
+            Err(_) => {
+                l_builtin_error!(b"invalid size encoding");
+                return EX_USAGE;
             }
-        }
-        None => {
-            beprintln!(ENAME, b": missing SIZE argument");
-            return EX_USAGE;
         }
     };
 
@@ -154,7 +143,7 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EINTR) {
                 if interruptible {
-                    beprintln!(ENAME, b": recv failed: Interrupted system call");
+                    l_builtin_error!(b"recv failed: Interrupted system call");
                     return EXECUTION_FAILURE;
                 }
                 // Interrupted by signal, retry
@@ -167,7 +156,7 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
                 received = 0;
                 break;
             }
-            beprintln!(ENAME, b": recv failed: ", err);
+            l_builtin_error!(b"recv failed: ", err);
             return EXECUTION_FAILURE;
         }
         received = result as usize;
@@ -186,7 +175,7 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
                 if unsafe { crate::bash_api::bind_variable(var_ptr, out.as_ptr().cast(), 0) }
                     .is_null()
                 {
-                    beprintln!(ENAME, b": cannot bind variable");
+                    l_builtin_error!(b"cannot bind variable");
                     return EXECUTION_FAILURE;
                 }
             }
@@ -194,7 +183,7 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
                 // raw format - buffer is already null-terminated, use directly
                 let out_ptr = buf.as_ptr() as *const c_char;
                 if unsafe { crate::bash_api::bind_variable(var_ptr, out_ptr, 0) }.is_null() {
-                    beprintln!(ENAME, b": cannot bind variable");
+                    l_builtin_error!(b"cannot bind variable");
                     return EXECUTION_FAILURE;
                 }
             }

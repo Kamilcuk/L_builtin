@@ -156,8 +156,9 @@ where
 /// as taking an argument is implied by the option living in the *second* bracket
 /// group, so write `n => ...`, never `n: => ...`.
 ///
-/// Returns the remaining-words pointer (`loptend`), the words after the end
-/// of options. Feed it to [`parse_positionals!`].
+/// Returns a [`WordListView`](crate::bash_api::WordListView) of the remaining
+/// words (the words after the end of options, i.e. `loptend`). Feed it to
+/// [`parse_positionals!`] or iterate it directly.
 ///
 /// On error prints using bash's help machinery and returns `EX_USAGE` from the
 /// enclosing function.
@@ -241,7 +242,7 @@ macro_rules! getopts {
             )*
             Ok(())
         }) {
-            Ok(()) => unsafe { $crate::getopts::loptend },
+            Ok(()) => unsafe { $crate::bash_api::WordListView::from_raw($crate::getopts::loptend) },
             Err(code) => return code,
         }
     }};
@@ -261,14 +262,17 @@ macro_rules! getopts {
 /// trailing `*`/`+`, not by inline `?`/`*` inside the first bracket:
 /// - First bracket `[a, b]`      - required positionals (`Cpnt`; missing -> `EX_USAGE`).
 /// - Second bracket `[c]`         - optional positionals (`Option<Cpnt>`).
-/// - Trailing `*files`            - zero or more (`Vec<Cpnt>`).
-/// - Trailing `+files`            - one or more (`Vec<Cpnt>`; empty -> `EX_USAGE`).
+/// - Trailing `*files`            - zero or more (`WordListIterCpnt` over the rest).
+/// - Trailing `+files`            - one or more (`WordListIterCpnt`; empty -> `EX_USAGE`).
 ///
 /// So `parse_positionals!(rest, [src], [dest], *files)` means: required `src`,
 /// optional `dest`, then zero-or-more `files`. The first bracket holds *only*
 /// required idents; the `?`/`*` modifiers must never appear inside it.
 ///
-/// Following the `*`/`+` spec the value is a `Vec<Cpnt>`.
+/// Following the `*`/`+` spec the value is a `WordListIterCpnt` over the
+/// remaining words (the same iterator `parse_positionals!` uses internally);
+/// walk it with `for x in $var`, or call `.as_ptr()` to get the raw
+/// `*mut WORD_LIST`.
 ///
 /// Returns a tuple `(arg1, arg2, ...)` of the bound positional values.
 ///
@@ -304,16 +308,14 @@ macro_rules! parse_positionals {
             $crate::getopts::has_variadic(SPECS)
         };
 
-        let mut _words = unsafe {
-            $crate::bash_api::WordListView::from_raw($words_ptr)
-        }.into_iter();
+        let mut _words = $words_ptr.into_iter();
 
         // 1. Required positional args
         $(
             let $req = match _words.next() {
                 Some(val) => val,
                 None => {
-                    $crate::beprintln!($crate::bash_api::this_cmd_name(), ": missing required argument");
+                    $crate::l_builtin_error!(b"missing required argument: ", stringify!($req));
                     return $crate::bash_api::EX_USAGE;
                 }
             };
@@ -326,27 +328,27 @@ macro_rules! parse_positionals {
             )*
         )?
 
-        // 3. Zero-or-more variadic (*files -> Vec<Cpnt>)
-        $(
-            let $var_zero = _words.by_ref().collect::<Vec<_>>();
-        )?
-
-        // 4. One-or-more variadic (+files -> Vec<Cpnt>)
-        $(
-            let $var_one = _words.by_ref().collect::<Vec<_>>();
-            if $var_one.is_empty() {
-                $crate::beprintln!($crate::bash_api::this_cmd_name(), ": missing required argument");
-                return $crate::bash_api::EX_USAGE;
-            }
-        )?
-
-        // 5. Check for trailing extra arguments if non-variadic
+        // 3. Check for trailing extra arguments if non-variadic
         if !HAS_VARIADIC {
             if let Some(_) = _words.next() {
-                $crate::beprintln!($crate::bash_api::this_cmd_name(), ": too many arguments");
+                $crate::l_builtin_error!(b"too many arguments");
                 return $crate::bash_api::EX_USAGE;
             }
         }
+
+        // 4. Zero-or-more variadic (*files -> WordListIterCpnt over the rest)
+        $(
+            let $var_zero = _words;
+        )?
+
+        // 5. One-or-more variadic (+files -> WordListIterCpnt over the rest)
+        $(
+            if _words.as_ptr().is_null() {
+                $crate::l_builtin_error!(b"missing required argument: ", stringify!($var_one));
+                return $crate::bash_api::EX_USAGE;
+            }
+            let $var_one = _words;
+        )?
 
         // Tuple of bound variables
         (

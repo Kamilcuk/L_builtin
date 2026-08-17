@@ -9,7 +9,7 @@
 
 use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, bprintln, getopts, parse_positionals};
+use crate::{beprintln, bprintln, subcmd_getopts};
 use std::os::raw::{c_char, c_int};
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -89,25 +89,27 @@ unsafe fn store_fd(var: *mut c_char, fd: c_int) -> bool {
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn signalfd_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
     let mut nonblock = false;
     let mut block = false;
     let mut fd_var: *mut c_char = std::ptr::null_mut();
-    let rest = getopts!(
+    let (signals,) = subcmd_getopts!(
+        CMD,
         list,
-        [ n => || nonblock = true,
-          b => || block = true ],
-        [ v => |v: crate::bash_api::Cpnt<'_>| fd_var = v.as_ptr().cast() ]
+        flags: [
+            n => || nonblock = true,
+            b => || block = true,
+        ],
+        options: [ v => |v| fd_var = v.as_ptr().cast() ],
+        rest: SIGNALS,
     );
-    let (signals,) = parse_positionals!(rest, [], *signals);
 
     // Build the signal set (all signals if none listed).
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe { libc::sigemptyset(&mut set) };
-    if signals.is_empty() {
+    if signals.as_ptr().is_null() {
         unsafe { libc::sigfillset(&mut set) };
     } else {
-        for sig in &signals {
+        for sig in signals {
             let name = match unsafe { sig.as_str() } {
                 Ok(s) => s,
                 Err(_) => {

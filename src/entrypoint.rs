@@ -223,8 +223,7 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
         }
         var = var_name;
     }
-    let view = unsafe { WordListView::from_raw(args) };
-    let mut list = view.into_iter();
+    let mut list = args.into_iter();
     let first_word = match list.next() {
         Some(first_word) => first_word,
         None => {

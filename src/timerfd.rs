@@ -8,10 +8,9 @@
 
 use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, bprintln, getopts, parse_positionals};
+use crate::l_builtin_error;
+use crate::{bprintln, subcmd_getopts};
 use std::os::raw::{c_char, c_int};
-
-const ENAME: &str = "L_builtin timerfd";
 
 const CMD: CmdDesc = CmdDesc::new(
     c"timerfd",
@@ -40,7 +39,7 @@ unsafe fn store_fd(var: *mut c_char, fd: c_int) -> bool {
     }
     let s = crate::shared::I64Str::new(fd as i64);
     if unsafe { crate::bash_api::bind_variable(var, s.as_ptr(), 0) }.is_null() {
-        beprintln!(ENAME, b": cannot bind variable");
+        l_builtin_error!(b"cannot bind variable");
         return false;
     }
     true
@@ -60,31 +59,32 @@ fn parse_clock(s: Option<&str>) -> Option<libc::clockid_t> {
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
     let mut nonblock = false;
     let mut clock: libc::clockid_t = libc::CLOCK_MONOTONIC;
     let mut initial: f64 = 0.0;
     let mut interval: f64 = 0.0;
     let mut fd_var: *mut c_char = std::ptr::null_mut();
-    let rest = getopts!(
+    subcmd_getopts!(
+        CMD,
         list,
-        [ n => || nonblock = true ],
-        [ c => |v: crate::bash_api::Cpnt<'_>| {
-            if let Some(c) = parse_clock(unsafe { v.as_str() }.ok()) {
-                clock = c;
-            } else {
-                beprintln!(ENAME, b": invalid clock");
-            }
-        },
-          s => |v: crate::bash_api::Cpnt<'_>| initial = unsafe {
+        flags: [ n => || nonblock = true ],
+        options: [
+            c => |v| {
+                if let Some(c) = parse_clock(unsafe { v.as_str() }.ok()) {
+                    clock = c;
+                } else {
+                    l_builtin_error!(b"invalid clock");
+                }
+            },
+            s => |v| initial = unsafe {
                 v.as_str().ok().and_then(|s| s.parse().ok()).unwrap_or(0.0)
             },
-          i => |v: crate::bash_api::Cpnt<'_>| interval = unsafe {
+            i => |v| interval = unsafe {
                 v.as_str().ok().and_then(|s| s.parse().ok()).unwrap_or(0.0)
             },
-          v => |v: crate::bash_api::Cpnt<'_>| fd_var = v.as_ptr().cast() ]
+            v => |v| fd_var = v.as_ptr().cast(),
+        ],
     );
-    let _ = parse_positionals!(rest, []);
 
     let mut flags = libc::TFD_CLOEXEC;
     if nonblock {
@@ -93,9 +93,8 @@ pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
 
     let fd = unsafe { libc::timerfd_create(clock, flags) };
     if fd < 0 {
-        beprintln!(
-            ENAME,
-            b": timerfd_create: ",
+        l_builtin_error!(
+            b"timerfd_create: ",
             std::io::Error::last_os_error()
         );
         return EXECUTION_FAILURE;
@@ -122,9 +121,8 @@ pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
             it_value: to_timespec(initial),
         };
         if unsafe { libc::timerfd_settime(fd, 0, &spec, std::ptr::null_mut()) } < 0 {
-            beprintln!(
-                ENAME,
-                b": timerfd_settime: ",
+            l_builtin_error!(
+                b"timerfd_settime: ",
                 std::io::Error::last_os_error()
             );
             unsafe { libc::close(fd) };

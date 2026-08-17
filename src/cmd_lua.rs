@@ -1,11 +1,11 @@
 //! Lua subcommand implementation using mlua
 use crate::bash_api::{
     expand_string, l_check_unbind_variable, l_expand_string_to_string_in_quotes, CStringOwned,
-    WordListOwned, WordListView,
+    WordListOwned,
 };
 use crate::bprint_bytes::BDisplay;
-use crate::return_on_err;
-use crate::{beprintln, getopts};
+use crate::l_builtin_error;
+use crate::{beprintln, subcmd_getopts};
 
 use std::ffi::{c_char, CStr};
 use std::io::Write;
@@ -42,7 +42,6 @@ impl BDisplay for mlua::Error {
         w.write_all(self.to_string().as_bytes()).ok();
     }
 }
-const ENAME: &str = "L_builtin lua";
 
 const CMD: CmdDesc = CmdDesc::new(
     c"lua",
@@ -151,21 +150,29 @@ Examples:
 /// # Safety
 #[no_mangle]
 pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
-    let args = getopts!(list, [], []);
-    let store = unsafe { WordListView::from_raw(args) };
-    let mut args = store.iter_bytes();
+    let (rest,) = subcmd_getopts!(
+        CMD,
+        list,
+        rest: REST,
+    );
+    let mut args = rest.map(|c| unsafe { c.as_bytes() });
     let script = match args.next() {
         Some(script) => script,
         None => {
             // No script was given - only options (or nothing).
-            beprintln!(ENAME, ": missing script");
+            l_builtin_error!(b"missing script");
             beprintln!("Usage: L_builtin lua [-v VAR] <script> [args...]");
             return EX_USAGE;
         }
     };
     let lua = Lua::new();
-    let _return_value = return_on_err!(ENAME, run_lua_script(&lua, script, args), 1);
+    let _return_value = match run_lua_script(&lua, script, args) {
+        Ok(val) => val,
+        Err(e) => {
+            l_builtin_error!(e);
+            return 1;
+        }
+    };
     0
 }
 

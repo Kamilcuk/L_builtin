@@ -9,10 +9,9 @@
 
 use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, bprintln, getopts, parse_positionals};
+use crate::l_builtin_error;
+use crate::{bprintln, subcmd_getopts};
 use std::os::raw::{c_char, c_int};
-
-const ENAME: &str = "L_builtin splice";
 
 const CMD: CmdDesc = CmdDesc::new(
     c"splice",
@@ -69,30 +68,34 @@ fn parse_flags(s: &str) -> Option<libc::c_uint> {
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn splice_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
     let mut var: *mut c_char = std::ptr::null_mut();
-    let rest = getopts!(list, [], [ v => |v: crate::bash_api::Cpnt<'_>| var = v.as_ptr().cast() ]);
-    let (fd_in, fd_out, len, flags) = parse_positionals!(rest, [fd_in, fd_out, len], [flags]);
+    let (fd_in, fd_out, len, flags) = subcmd_getopts!(
+        CMD,
+        list,
+        options: [ v => |v| var = v.as_ptr().cast() ],
+        required: [fd_in, fd_out, len],
+        optional: [flags],
+    );
 
     let (fd_in, fd_out, len) = {
         let a = match unsafe { fd_in.as_str() }.ok().and_then(|s| s.parse().ok()) {
             Some(v) => v,
             None => {
-                beprintln!(ENAME, b": invalid FD_IN");
+                l_builtin_error!(b"invalid FD_IN");
                 return EX_USAGE;
             }
         };
         let b = match unsafe { fd_out.as_str() }.ok().and_then(|s| s.parse().ok()) {
             Some(v) => v,
             None => {
-                beprintln!(ENAME, b": invalid FD_OUT");
+                l_builtin_error!(b"invalid FD_OUT");
                 return EX_USAGE;
             }
         };
         let c = match unsafe { len.as_str() }.ok().and_then(|s| s.parse().ok()) {
             Some(v) => v,
             None => {
-                beprintln!(ENAME, b": invalid LEN");
+                l_builtin_error!(b"invalid LEN");
                 return EX_USAGE;
             }
         };
@@ -104,12 +107,12 @@ pub unsafe extern "C" fn splice_subcommand(list: *mut WORD_LIST) -> c_int {
             Ok(s) => match parse_flags(s) {
                 Some(f) => f,
                 None => {
-                    beprintln!(ENAME, b": invalid FLAGS");
+                    l_builtin_error!(b"invalid FLAGS");
                     return EX_USAGE;
                 }
             },
             Err(_) => {
-                beprintln!(ENAME, b": invalid FLAGS encoding");
+                l_builtin_error!(b"invalid FLAGS encoding");
                 return EX_USAGE;
             }
         },
@@ -127,7 +130,7 @@ pub unsafe extern "C" fn splice_subcommand(list: *mut WORD_LIST) -> c_int {
         )
     };
     if moved < 0 {
-        beprintln!(ENAME, b": splice: ", std::io::Error::last_os_error());
+        l_builtin_error!(b"splice: ", std::io::Error::last_os_error());
         return EXECUTION_FAILURE;
     }
 
@@ -136,7 +139,7 @@ pub unsafe extern "C" fn splice_subcommand(list: *mut WORD_LIST) -> c_int {
     } else {
         let s = crate::shared::SizeTStr::from_usize(moved as usize);
         if unsafe { crate::bash_api::bind_variable(var, s.as_ptr(), 0) }.is_null() {
-            beprintln!(ENAME, b": cannot bind variable");
+            l_builtin_error!(b"cannot bind variable");
             return EXECUTION_FAILURE;
         }
     }

@@ -7,7 +7,7 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{
-    this_cmd_name, WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
+    this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
 };
 use crate::subcmd::CmdDesc;
 use crate::{beprintln, getopts};
@@ -36,8 +36,7 @@ pub unsafe extern "C" fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int {
     CMD.enter();
     let args = getopts!(list, [], []);
 
-    let view = unsafe { WordListView::from_raw(args) };
-    let mut iter = view.iter();
+    let mut iter = args.iter();
 
     // Get fd
     let fd = match iter.next() {

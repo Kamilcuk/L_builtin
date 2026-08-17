@@ -10,13 +10,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListIterOsString, WordListView, EX_NOTFOUND, WORD_LIST};
+use crate::bash_api::{WordListIterOsString, EX_NOTFOUND, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, getopts, intlookup};
+use crate::l_builtin_error;
+use crate::{beprintln, subcmd_getopts, intlookup};
 
 use std::os::raw::c_int;
-
-const ENAME: &str = "L_builtin core";
 
 const CMD: CmdDesc = CmdDesc::new(
     c"core",
@@ -67,14 +66,16 @@ const UU_DISPATCH_TABLE: crate::intlookup::U64::IntLookup<UuMain, { UU_DISPATCH_
 /// is safe
 #[no_mangle]
 pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
-    let args = getopts!(list, [], []);
-    let view = unsafe { WordListView::from_raw(args) };
-    let val = match view.iter().current() {
+    let (rest,) = subcmd_getopts!(
+        CMD,
+        list,
+        rest: REST,
+    );
+    let val = match unsafe { rest.current() } {
         Some(val) => val.as_bytes(),
         None => {
             // No subcommand was given - only options (or nothing).
-            beprintln!(ENAME, b": missing subcommand");
+            l_builtin_error!(b"missing subcommand");
             beprintln!(b"Usage: L_builtin core <subcommand> [args...]");
             beprintln!(b"Available: ls, stat, dirname, rm, tee");
             return EX_NOTFOUND;
@@ -83,10 +84,11 @@ pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
     let uumain = match UU_DISPATCH_TABLE.lookup(val) {
         Some(f) => f,
         None => {
-            beprintln!(ENAME, b": unknown subcommand: ", val);
+            l_builtin_error!(b"unknown subcommand: ", val);
             return EX_NOTFOUND;
         }
     };
-    let rest: UuArgs = view.iter_osstring();
-    uumain(rest)
+    let rest_view = unsafe { crate::bash_api::WordListView::from_raw(rest.as_ptr()) };
+    let uuargs: UuArgs = rest_view.iter_osstring();
+    uumain(uuargs)
 }

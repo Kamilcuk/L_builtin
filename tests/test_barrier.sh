@@ -8,17 +8,17 @@ _L_test_barrier_poll() {
     [[ "$h" =~ ^[0-9]+$ ]] || L_unittest_fail "handle is not an integer: '$h'"
 
     # First non-blocking arrival: 1/2, not satisfied yet.
-    L_unittest_cmd -ce 1 L_builtin barrier wait "$h" -n
+    L_unittest_cmd -ce 1 L_builtin barrier wait -n "$h"
 
     # Second arrival: 2/2, satisfied.
-    L_unittest_cmd -c L_builtin barrier wait "$h" -n
+    L_unittest_cmd -c L_builtin barrier wait -n "$h"
 
     # Sticky: still satisfied after the round is released.
-    L_unittest_cmd -c L_builtin barrier wait "$h" -n
+    L_unittest_cmd -c L_builtin barrier wait -n "$h"
 
     # Reset clears the satisfied state.
     L_builtin barrier reset "$h"
-    L_unittest_cmd -ce 1 L_builtin barrier wait "$h" -n
+    L_unittest_cmd -ce 1 L_builtin barrier wait -n "$h"
 
     L_builtin barrier close "$h"
 }
@@ -35,7 +35,7 @@ _L_test_barrier_cross_process() {
 
     local satisfied=0
     for ((i = 0; i < 100; i++)); do
-        L_builtin barrier wait "$h" -n && { satisfied=1; break; }
+        L_builtin barrier wait -n "$h" && { satisfied=1; break; }
         sleep 0.05
     done
 

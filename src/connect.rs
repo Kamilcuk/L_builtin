@@ -6,14 +6,13 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
-use crate::{beprintln, getopts};
+use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::l_builtin_error;
+use crate::{subcmd_getopts};
 use std::os::fd::{AsRawFd, IntoRawFd};
 use std::os::raw::c_int;
 
 use crate::subcmd::CmdDesc;
-
-const ENAME: &str = "L_builtin connect";
 
 const CMD: CmdDesc = CmdDesc::new(
     c"connect",
@@ -32,32 +31,18 @@ Returns success unless connection fails or variable binding fails.
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn connect_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
-    let args = getopts!(list, [], []);
-
-    let view = unsafe { WordListView::from_raw(args) };
-    let mut iter = view.iter();
-
-    // Get clientfd_var, IP, and PORT
-    let Some(clientfd_var) = iter.next() else {
-        beprintln!(ENAME, b": missing CLIENTFD_VAR argument");
-        return EX_USAGE;
-    };
-    let Some(ip) = iter.next() else {
-        beprintln!(ENAME, b": missing IP argument");
-        return EX_USAGE;
-    };
-    let Some(port) = iter.next() else {
-        beprintln!(ENAME, b": missing PORT argument");
-        return EX_USAGE;
-    };
+    let (clientfd_var, ip, port) = subcmd_getopts!(
+        CMD,
+        list,
+        required: [CLIENTFD_VAR, IP, PORT],
+    );
 
     let ip_str = unsafe { ip.as_str().unwrap_or("0.0.0.0") };
     let port_str = unsafe { port.as_str().unwrap_or("0") };
     let port_num: u16 = match port_str.parse() {
         Ok(p) => p,
         Err(_) => {
-            beprintln!(ENAME, b": invalid port: ", port_str.as_bytes());
+            l_builtin_error!(b"invalid port: ", port_str.as_bytes());
             return EX_USAGE;
         }
     };
@@ -65,7 +50,7 @@ pub unsafe extern "C" fn connect_subcommand(list: *mut WORD_LIST) -> c_int {
     let stream = match std::net::TcpStream::connect((ip_str, port_num)) {
         Ok(s) => s,
         Err(e) => {
-            beprintln!(ENAME, b": connect failed: ", e);
+            l_builtin_error!(b"connect failed: ", e);
             return EXECUTION_FAILURE;
         }
     };
@@ -74,7 +59,7 @@ pub unsafe extern "C" fn connect_subcommand(list: *mut WORD_LIST) -> c_int {
     if unsafe { crate::bash_api::bind_variable(clientfd_var.as_ptr(), sfd_str.as_ptr(), 0) }
         .is_null()
     {
-        beprintln!(ENAME, b": cannot bind variable");
+        l_builtin_error!(b"cannot bind variable");
         return EXECUTION_FAILURE;
     }
 

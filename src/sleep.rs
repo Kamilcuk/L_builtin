@@ -8,7 +8,7 @@
 
 use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, getopts, parse_positionals};
+use crate::{beprintln, subcmd_getopts};
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -31,10 +31,13 @@ Returns success unless sleep fails.
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
     let mut interruptible = false;
-    let rest = getopts!(list, [i => || interruptible=true], []);
-    let (seconds_cstr,) = parse_positionals!(rest, [SECONDS]);
+    let (seconds_cstr,) = subcmd_getopts!(
+        CMD,
+        list,
+        flags: [ i => || interruptible = true ],
+        required: [SECONDS],
+    );
     let seconds_str = match seconds_cstr.as_str() {
         Ok(s) => s,
         Err(_) => {

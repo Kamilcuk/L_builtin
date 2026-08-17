@@ -6,12 +6,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, getopts};
+use crate::l_builtin_error;
+use crate::{subcmd_getopts};
 use std::os::raw::c_int;
-
-const ENAME: &str = "L_builtin pipe";
 
 const CMD: CmdDesc = CmdDesc::new(
     c"pipe",
@@ -30,25 +29,19 @@ Returns success unless the pipe cannot be created or ARRAY is invalid.
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn pipe_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
-    let args = getopts!(list, [], []);
-
-    let view = unsafe { WordListView::from_raw(args) };
-    let mut iter = view.iter();
+    let (array_name_cptr,) = subcmd_getopts!(
+        CMD,
+        list,
+        required: [ARRAY],
+    );
 
     // Get array name - use the C string pointer directly
-    let array_name_ptr = match iter.next() {
-        Some(cptr) => cptr.as_ptr(),
-        None => {
-            beprintln!(ENAME, b": missing array argument");
-            return EX_USAGE;
-        }
-    };
+    let array_name_ptr = array_name_cptr.as_ptr();
 
     // Create pipe
     let mut fds: [c_int; 2] = [0, 0];
     if unsafe { libc::pipe(fds.as_mut_ptr()) } < 0 {
-        beprintln!(ENAME, b": pipe: ", std::io::Error::last_os_error());
+        l_builtin_error!(b"pipe: ", std::io::Error::last_os_error());
         return EXECUTION_FAILURE;
     }
 
@@ -61,7 +54,7 @@ pub unsafe extern "C" fn pipe_subcommand(list: *mut WORD_LIST) -> c_int {
                 libc::close(fds[0]);
                 libc::close(fds[1]);
             }
-            beprintln!(ENAME, b": not an indexed array");
+            l_builtin_error!(b"not an indexed array");
             return EXECUTION_FAILURE;
         }
     }
@@ -74,7 +67,7 @@ pub unsafe extern "C" fn pipe_subcommand(list: *mut WORD_LIST) -> c_int {
                 libc::close(fds[0]);
                 libc::close(fds[1]);
             }
-            beprintln!(ENAME, b": cannot create array variable");
+            l_builtin_error!(b"cannot create array variable");
             return EXECUTION_FAILURE;
         }
     }

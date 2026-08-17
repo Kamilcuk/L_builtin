@@ -17,11 +17,11 @@ use std::ffi::CString;
 use std::os::raw::{c_int, c_uint};
 
 use crate::bash_api::{
-    this_cmd_name, WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
+    EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
 };
 use crate::subcmd::{CmdDesc, SubcommandFn};
 use crate::{
-    beprintln, getopts, l_builtin_error,
+    l_builtin_error,
     shared::{
         bind_handle, lookup_handle, map_anonymous, parse_int, store_handle, take_handle,
         timespec_from_now, unmap, HANDLE_KIND_SEMAPHORE,
@@ -406,30 +406,19 @@ const SEMAPHORE_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn semaphore_subcommand(list: *mut WORD_LIST) -> c_int {
-    SEMAPHORE_CMD.enter();
-    let rest = getopts!(list, [], []);
-    let mut iter = WordListView::from_raw(rest).into_iter();
-    let action = match iter.next() {
-        Some(a) => a,
-        None => {
-            beprintln!(
-                this_cmd_name(),
-                b": usage: L_builtin semaphore <create|open|wait|post|close|destroy> ..."
-            );
-            return EX_USAGE;
-        }
-    };
+    let (action, rest) = subcmd_getopts!(
+        SEMAPHORE_CMD,
+        list,
+        required: [ACTION],
+        rest: REST,
+    );
     let action_bytes = unsafe { action.as_bytes() };
     let handler = match SEMAPHORE_TABLE.lookup(action_bytes) {
         Some(h) => h,
         None => {
-            beprintln!(
-                this_cmd_name(),
-                b": unknown semaphore subcommand: ",
-                action_bytes
-            );
+            l_builtin_error!(b"unknown semaphore subcommand: ", action_bytes);
             return EX_USAGE;
         }
     };
-    handler(iter.as_ptr())
+    handler(rest.as_ptr())
 }

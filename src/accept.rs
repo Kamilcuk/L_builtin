@@ -8,7 +8,7 @@
 
 use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, bufwrite, getopts, parse_positionals, shared};
+use crate::{beprintln, bufwrite, shared, subcmd_getopts};
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -29,10 +29,11 @@ Returns success unless accept fails or variable binding fails.
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
-    let rest = getopts!(list, [], []);
-    let (clientfd_var, addr_var, fd_cptr) =
-        parse_positionals!(rest, [CLIENTFD_VAR, ADDR_VAR, LISTENFD]);
+    let (clientfd_var, addr_var, fd_cptr) = subcmd_getopts!(
+        CMD,
+        list,
+        required: [CLIENTFD_VAR, ADDR_VAR, LISTENFD],
+    );
 
     let fd_bytes = unsafe { fd_cptr.as_bytes() };
     let Some(listenfd) = shared::parse_bytes::<c_int>(fd_bytes) else {

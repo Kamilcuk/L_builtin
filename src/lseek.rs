@@ -6,12 +6,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListView, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, getopts};
+use crate::l_builtin_error;
+use crate::{subcmd_getopts};
 use std::os::raw::{c_char, c_int};
-
-const ENAME: &str = "L_builtin lseek";
 
 const CMD: CmdDesc = CmdDesc::new(
     c"lseek",
@@ -37,73 +36,52 @@ Returns success unless an error occurs during lseek or variable binding.
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
     let mut var: *mut c_char = std::ptr::null_mut();
-    let args = getopts!(
+    let (fd_cptr, offset_cptr, whence_cptr) = subcmd_getopts!(
+        CMD,
         list,
-        [],
-        [ v => |v: crate::bash_api::Cpnt<'_>| var = v.as_ptr().cast() ]
+        options: [ v => |v| var = v.as_ptr().cast() ],
+        required: [FD, OFFSET],
+        optional: [WHENCE],
     );
 
-    let view = unsafe { WordListView::from_raw(args) };
-    let mut iter = view.iter();
-
     // Get fd
-    let fd = match iter.next() {
-        Some(fd_cptr) => {
-            let fd_bytes = unsafe { fd_cptr.as_bytes() };
-            match std::str::from_utf8(fd_bytes) {
-                Ok(s) => match s.parse::<c_int>() {
-                    Ok(fd) => fd,
-                    Err(_) => {
-                        beprintln!(ENAME, b": invalid fd: ", fd_bytes);
-                        return EX_USAGE;
-                    }
-                },
-                Err(_) => {
-                    beprintln!(ENAME, b": invalid fd encoding");
-                    return EX_USAGE;
-                }
+    let fd = match unsafe { fd_cptr.as_str() } {
+        Ok(s) => match s.parse::<c_int>() {
+            Ok(fd) => fd,
+            Err(_) => {
+                l_builtin_error!(b"invalid fd: ", unsafe { fd_cptr.as_bytes() });
+                return EX_USAGE;
             }
-        }
-        None => {
-            beprintln!(ENAME, b": missing fd argument");
+        },
+        Err(_) => {
+            l_builtin_error!(b"invalid fd encoding");
             return EX_USAGE;
         }
     };
 
     // Get offset
-    let offset = match iter.next() {
-        Some(offset_cptr) => {
-            let offset_bytes = unsafe { offset_cptr.as_bytes() };
-            match std::str::from_utf8(offset_bytes) {
-                Ok(s) => match s.parse::<i64>() {
-                    Ok(offset) => offset,
-                    Err(_) => {
-                        beprintln!(ENAME, b": invalid offset: ", offset_bytes);
-                        return EX_USAGE;
-                    }
-                },
-                Err(_) => {
-                    beprintln!(ENAME, b": invalid offset encoding");
-                    return EX_USAGE;
-                }
+    let offset = match unsafe { offset_cptr.as_str() } {
+        Ok(s) => match s.parse::<i64>() {
+            Ok(offset) => offset,
+            Err(_) => {
+                l_builtin_error!(b"invalid offset: ", unsafe { offset_cptr.as_bytes() });
+                return EX_USAGE;
             }
-        }
-        None => {
-            beprintln!(ENAME, b": missing offset argument");
+        },
+        Err(_) => {
+            l_builtin_error!(b"invalid offset encoding");
             return EX_USAGE;
         }
     };
 
     // Get whence (optional, defaults to SEEK_SET)
     let mut whence: c_int = libc::SEEK_SET;
-    if let Some(whence_cptr) = iter.next() {
-        let whence_bytes = unsafe { whence_cptr.as_bytes() };
-        let whence_str = match std::str::from_utf8(whence_bytes) {
+    if let Some(whence_cptr) = whence_cptr {
+        let whence_str = match unsafe { whence_cptr.as_str() } {
             Ok(s) => s,
             Err(_) => {
-                beprintln!(ENAME, b": invalid whence encoding");
+                l_builtin_error!(b"invalid whence encoding");
                 return EX_USAGE;
             }
         };
@@ -113,7 +91,7 @@ pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
             "CUR" | "1" => libc::SEEK_CUR,
             "END" | "2" => libc::SEEK_END,
             _ => {
-                beprintln!(ENAME, b": invalid whence: ", whence_bytes);
+                l_builtin_error!(b"invalid whence: ", unsafe { whence_cptr.as_bytes() });
                 return EX_USAGE;
             }
         };
@@ -122,7 +100,7 @@ pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
     // Call lseek
     let result = unsafe { libc::lseek(fd, offset, whence) };
     if result == -1 {
-        beprintln!(ENAME, b": lseek error: ", std::io::Error::last_os_error());
+        l_builtin_error!(b"lseek error: ", std::io::Error::last_os_error());
         return EXECUTION_FAILURE;
     }
 
@@ -133,7 +111,7 @@ pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
 
         unsafe {
             if crate::bash_api::bind_variable(var_ptr, result_str.as_ptr(), 0).is_null() {
-                beprintln!(ENAME, b": cannot bind variable");
+                l_builtin_error!(b"cannot bind variable");
                 return EXECUTION_FAILURE;
             }
         }
