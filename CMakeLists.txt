@@ -108,7 +108,9 @@ function(generate_bash_bindings gen_file bash_source)
             --allowlist-function make_new_assoc_variable
             --allowlist-function array_flush
             --allowlist-function array_insert
+            --allowlist-function array_remove
             --allowlist-function assoc_flush
+            --allowlist-function assoc_remove
             --allowlist-function assoc_keys_to_word_list
             --allowlist-function assoc_reference
             --allowlist-function make_word
@@ -129,6 +131,7 @@ function(generate_bash_bindings gen_file bash_source)
             --allowlist-var loptend
             --allowlist-var GETOPT_HELP
             --allowlist-var interactive_shell
+            --allowlist-var ARRAY
             --allowlist-type builtin
             --opaque-type SHELL_VAR
             --opaque-type ARRAY

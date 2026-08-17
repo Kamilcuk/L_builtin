@@ -20,6 +20,7 @@ ARRAY_ELEMENT *l_array_head(ARRAY *a) { return a->head; }
 ARRAY_ELEMENT *l_element_forw(ARRAY_ELEMENT *ae) { return element_forw(ae); }
 char *l_element_value(ARRAY_ELEMENT *ae) { return element_value(ae); }
 long long l_element_index(ARRAY_ELEMENT *ae) { return (long long)element_index(ae); }
+arrayind_t l_array_max_index(ARRAY *a) { return array_max_index(a); }
 int l_readonly_p(SHELL_VAR *var) { return readonly_p(var); }
 int l_invisible_p(SHELL_VAR *var) { return invisible_p(var); }
 int l_array_p(SHELL_VAR *var) { return array_p(var); }
@@ -109,14 +110,26 @@ void l_enter_subcommand(const char *prefix, const char *short_doc, const char *c
 {
   {
     assert(prefix && prefix[0]);
-    // this_command_name += " prefix"
+    // Snapshot the current name BEFORE reallocating: this_command_name may
+    // alias the buffer we are about to grow, so reading it after l_xrealloc
+    // would be a use-after-free (corrupting the prefix in `usage:` output).
     const size_t old_len = this_command_name ? strlen(this_command_name) : 0;
+    char *old_name = NULL;
+    if (old_len) {
+      old_name = l_xmalloc(old_len + 1);
+      memcpy(old_name, this_command_name, old_len + 1);
+    }
     const size_t prefix_len = strlen(prefix);
     const size_t space_len = old_len > 0 ? 1 : 0;
     char *const buf = this_command_name_buffer =
       l_xrealloc(this_command_name_buffer, old_len + space_len + prefix_len + 1);
     assert(buf);
-    memcpy(this_command_name_buffer, this_command_name, old_len);
+    if (old_name) {
+      memcpy(buf, old_name, old_len + 1);  // includes the NUL terminator
+      l_xfree(old_name);
+    } else {
+      buf[0] = '\0';
+    }
     if (space_len) {
       buf[old_len] = ' ';
     }

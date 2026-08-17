@@ -268,11 +268,11 @@ pub fn is_valid_var_name(name: &[u8]) -> bool {
         return false;
     }
     let first = name[0];
-    if !first.is_ascii_alphabetic() {
+    if !first.is_ascii_alphabetic() && first != b'_' {
         return false;
     }
     for &ch in &name[1..] {
-        if !ch.is_ascii_alphanumeric() {
+        if !ch.is_ascii_alphanumeric() && ch != b'_' {
             return false;
         }
     }
@@ -304,6 +304,112 @@ mod tests {
     }
 }
 
+///////////////////////////////////////////////////////////////////////////
+// Bash ARRAY / HASH_TABLE iterators
+
+/// Iterate over a bash indexed array, yielding `(index, value)` pairs. The
+/// value is a NUL-terminated `CStr` (or the empty NUL string when the element
+/// is null).
+pub struct ArrayIterator {
+    head: *mut ARRAY_ELEMENT,
+    current: *mut ARRAY_ELEMENT,
+}
+
+impl ArrayIterator {
+    pub unsafe fn new(arr: *mut ARRAY) -> Self {
+        let head = l_array_head(arr);
+        Self {
+            head,
+            current: if head.is_null() {
+                std::ptr::null_mut()
+            } else {
+                l_element_forw(head)
+            },
+        }
+    }
+}
+
+impl Iterator for ArrayIterator {
+    type Item = (i64, &'static CStr);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current == self.head {
+            return None;
+        }
+        unsafe {
+            let idx = l_element_index(self.current);
+            let val = l_element_value(self.current);
+            let cstr = if val.is_null() {
+                CStr::from_bytes_with_nul_unchecked(b"\0")
+            } else {
+                CStr::from_ptr(val)
+            };
+            self.current = l_element_forw(self.current);
+            Some((idx, cstr))
+        }
+    }
+}
+
+/// Iterate over a bash associative array, yielding `(key, value)` pairs. Both
+/// keys and values are NUL-terminated `CStr`s (or the empty NUL string when
+/// null).
+pub struct AssocIterator {
+    keys_list: *mut WORD_LIST,
+    current: *mut WORD_LIST,
+    hash: *mut HASH_TABLE,
+}
+
+impl AssocIterator {
+    pub unsafe fn new(hash: *mut HASH_TABLE) -> Self {
+        let keys = assoc_keys_to_word_list(hash);
+        Self {
+            keys_list: keys,
+            current: keys,
+            hash,
+        }
+    }
+}
+
+impl Iterator for AssocIterator {
+    type Item = (&'static CStr, &'static CStr);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while !self.current.is_null() {
+            unsafe {
+                let wl = self.current;
+                self.current = (*wl).next;
+                let word_ptr = (*wl).word;
+                if word_ptr.is_null() {
+                    continue;
+                }
+                let key_ptr = (*word_ptr).word;
+                if key_ptr.is_null() {
+                    continue;
+                }
+                let key_cstr = CStr::from_ptr(key_ptr);
+                let val_ptr = assoc_reference(self.hash, key_ptr);
+                let val_cstr = if val_ptr.is_null() {
+                    CStr::from_bytes_with_nul_unchecked(b"\0")
+                } else {
+                    CStr::from_ptr(val_ptr)
+                };
+                return Some((key_cstr, val_cstr));
+            }
+        }
+        None
+    }
+}
+
+impl Drop for AssocIterator {
+    fn drop(&mut self) {
+        if !self.keys_list.is_null() {
+            unsafe {
+                dispose_words(self.keys_list);
+            }
+        }
+    }
+}
+
 #[macro_export]
 macro_rules! l_builtin_error {
     ( $( $arg:expr ),+ $(,)? ) => {
@@ -318,7 +424,7 @@ macro_rules! l_builtin_warning {
     };
 }
 
-fn l_builtin_usage() {
+pub(crate) fn l_builtin_usage() {
     let short_doc = unsafe {
         if current_builtin.is_null() || (*current_builtin).short_doc.is_null() {
             b"\0".as_ptr() as *const c_char

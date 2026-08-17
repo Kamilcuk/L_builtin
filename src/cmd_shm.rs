@@ -1,32 +1,44 @@
-//! L_builtin `shm` subcommand: shared-memory variables backed by an LMDB
-//! database (heed) stored in `/dev/shm`.
+//! L_builtin `shm` subcommand: shared-memory variables backed by a `rkyv`
+//! database.
 //!
-//! The database holds multiple bash *array* variables (both indexed and
-//! associative), keyed by the variable name. Each variable's full array is
-//! serialized on every assignment and deserialized on every read, so the value
-//! is shared across every process that maps the same `SHM_NAME` (for example a
-//! background job started with `&`).
+//! Each bound bash variable gets an entry in the shared database keyed by its
+//! bare name (see [`crate::vardb`]). Indexed arrays are stored as an
+//! index-to-value map; associative arrays as a key-to-value map. Every element
+//! value is stored without its trailing NUL; the load path re-adds the NUL when
+//! handing the string to bash.
+//!
+//! The value is shared across every process that maps the same database (for
+//! example a background job started with `&`): every assignment is written
+//! through to the rkyv blob and a read refreshes the local bash variable from
+//! the blob.
+//!
+//! The database is selected by one of `-s NAME` (POSIX shared memory),
+//! `-n NAME` (anonymous in-memory mapping), `-f PATH` (regular file); with none
+//! of them the default in-memory mapping named `DEFAULT` is used.
 //!
 //! Interface:
-//!   L_builtin shm add [-A] SHM_NAME VAR_NAME
-//!       Bind bash array variable VAR_NAME to the value stored under VAR_NAME
-//!       in the shared-memory database SHM_NAME. With -A, create an associative
-//!       array instead of an indexed array.
-//!   L_builtin shm rm SHM_NAME [VAR_NAME...]
-//!       Remove VAR_NAME(s) from the SHM_NAME database. With no VAR_NAME,
-//!       remove the whole SHM_NAME database (and its backing files).
-//!   L_builtin shm info SHM_NAME
-//!       Print every variable stored in SHM_NAME.
+//!   L_builtin shm add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME
+//!       Bind bash variable VAR_NAME (indexed, or associative with -A) to a
+//!       shared database.
+//!   L_builtin shm rm [-s NAME | -n NAME | -f PATH]
+//!       Remove the whole database (unbind its variables, unlink backing).
+//!   L_builtin shm unbind [-s NAME | -n NAME | -f PATH] VAR_NAME [VAR_NAME...]
+//!       Unbind variable(s) from this shell (drop registry entry); the data
+//!       stays in the database.
+//!   L_builtin shm info [-s NAME | -n NAME | -f PATH]
+//!       Print every variable stored in the database.
+//!   L_builtin shm ls [-s NAME | -n NAME | -f PATH]
+//!       List databases and the variables bound to each.
 //!
-//! Example (indexed array):
-//!   L_builtin shm add MYSHM MYVAR
+//! Example (indexed array, default database):
+//!   L_builtin shm add MYVAR
 //!   ( sleep 1; echo "${MYVAR[@]}" ) &
 //!   MYVAR=( a b c )
 //!   wait
 //!   # the background job prints "a b c"
 //!
-//! Example (associative array):
-//!   L_builtin shm add -A MYSHM MYVAR
+//! Example (associative array, POSIX shared memory):
+//!   L_builtin shm add -A -s MYSHM MYVAR
 //!   MYVAR=( [foo]=bar [baz]=qux )
 //!   # shared across processes
 
@@ -34,498 +46,114 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, OsStr};
+use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
-use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::bash_api::{
-    array_flush, array_insert, arrayind_t, assoc_flush, assoc_keys_to_word_list, assoc_reference,
-    dispose_words, l_array_cell, l_array_head, l_assoc_cell, l_assoc_insert, l_element_forw,
-    l_element_index, l_element_value, l_init_dynamic_array_var, l_init_dynamic_assoc_var,
-    l_unbind_variable, this_cmd_name, variable, WordListView, ARRAY, EXECUTION_FAILURE,
-    EXECUTION_SUCCESS, EX_USAGE, HASH_TABLE, SHELL_VAR, WORD_LIST,
+    array_insert, array_remove, arrayind_t, assoc_remove, l_array_cell, l_array_max_index,
+    l_assoc_cell, l_assoc_insert, l_init_dynamic_array_var, l_init_dynamic_assoc_var,
+    ArrayIterator, AssocIterator, l_unbind_variable, this_cmd_name, variable,
+    is_valid_var_name, WordListView, SHELL_VAR, WORD_LIST,
+    EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE,
 };
 use crate::subcmd::{CmdDesc, SubcommandFn};
 use crate::{beprintln, bprintln, getopts, l_builtin_error, subcmd_getopts};
+use crate::vardb::{DbLoc, DbPath, LockedDatabase, VarData, open_db_loc, resolve_loc};
 
-use heed::types::Bytes;
-use heed::{Database, Env, MdbError};
-use std::os::unix::ffi::OsStrExt;
-
-/// Bash variable attribute for associative arrays (att_assoc).
-/// From bash's variables.h: #define att_assoc 0x0000040
+/// Bash variable attribute for associative arrays (att). From bash's
+/// variables.h: #define att_assoc 0x0000040
 const ATT_ASSOC: c_int = 0x0000040;
 
-/// Default LMDB map size (1 MiB). Grows automatically on `MDB_MAP_FULL`.
-const INITIAL_MAP_SIZE: usize = 1024 * 1024;
-
-/// Golden ratio used to grow the map when it fills up.
-const GROWTH_FACTOR: f64 = 1.6180339887498949;
-
-/// A cloneable LMDB environment handle.
-type ShmEnv = Env<heed::WithTls>;
-/// A cloneable database handle (default unnamed database, byte keys/values).
-type ShmDb = Database<Bytes, Bytes>;
-
 thread_local! {
-    /// Registry: bash variable name -> SHM_NAME (which database it lives in).
-    /// Stored per-thread because bash is single-threaded; interior mutation then
-    /// needs no cross-thread lock, so `RefCell` gives safe mutability without a
-    /// `Mutex` (which a `static` would otherwise require for its `Sync` bound).
-    static REGISTRY: RefCell<HashMap<CString, LockedDatabase>> = RefCell::new(HashMap::new());
+    /// Registry: bash variable name -> opened shared database for its name.
+    static REGISTRY: std::cell::RefCell<HashMap<CString, Arc<LockedDatabase>>> =
+        std::cell::RefCell::new(HashMap::new());
 }
 
-fn shm_dir(shm: &CStr) -> PathBuf {
-    Path::new("/dev/shm")
-        .join("l_builtin")
-        .join(OsStr::from_bytes(shm.to_bytes()))
+/// Find (or open) the existing database for `loc`: file-backed and POSIX-shm
+/// databases are reopened by name/path, while an in-memory `Mem` database can
+/// only be shared with forked children and so must already be bound (it is found
+/// through the registry).
+fn get_db_loc(loc: &DbLoc) -> Result<Arc<LockedDatabase>, String> {
+    match loc {
+        DbLoc::Mem(name) => REGISTRY.with(|r| {
+            r.borrow()
+                .values()
+                .find(|db| matches!(&db.path, DbPath::Mem(n) if n.as_bytes() == name.to_bytes()))
+                .cloned()
+                .ok_or_else(|| {
+                    format!("shm: no anonymous database named {}", name.to_str().unwrap_or(""))
+                })
+        }),
+        DbLoc::Shm(_) | DbLoc::File(_) => open_db_loc(loc).map(Arc::new),
+    }
 }
 
-/// Build a NUL-terminated C string (as bytes) from a byte slice. The project
-/// avoids dynamic string wrappers, so we use a plain `Vec<u8>` with a NUL.
-fn to_cbytes(s: &[u8]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(s.len() + 1);
-    v.extend_from_slice(s);
-    v.push(0);
-    v
+/// A stable key for a database location, matching the keys produced by
+/// [`db_key`] for an opened database.
+fn loc_key(loc: &DbLoc) -> String {
+    let path = match loc {
+        DbLoc::File(p) => DbPath::File(p.clone()),
+        DbLoc::Shm(n) => DbPath::Shm(n.clone()),
+        DbLoc::Mem(n) => DbPath::Mem(n.clone()),
+    };
+    db_key(&path)
 }
 
-/// Open (or fetch from cache) the (Env, Db) for a SHM_NAME, creating the
-/// backing directory and database on first use.
-fn get_shm(shm: &CStr) -> Result<(ShmEnv, ShmDb), String> {
-    {
-        if let Some(e) = ENVS.with(|c| c.borrow().get(shm).map(|e| (e.0.clone(), e.1.clone()))) {
-            return Ok(e);
+/// Unlink the backing object/file for a database location. An in-memory (memfd)
+/// database has no backing object to unlink; its data disappears when the last
+/// reference is dropped.
+fn unlink_db_backing(loc: &DbLoc) {
+    match loc {
+        DbLoc::File(p) => {
+            let _ = std::fs::remove_file(p);
         }
-    }
-    let dir = shm_dir(shm);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("shm: cannot create {}: {}", dir.display(), e))?;
-    let env = unsafe {
-        heed::EnvOpenOptions::new()
-            .map_size(INITIAL_MAP_SIZE)
-            .max_dbs(1)
-            .open(&dir)
-    }
-    .map_err(|e| format!("shm: cannot open env {}: {}", dir.display(), e))?;
-    let mut wtxn = env
-        .write_txn()
-        .map_err(|e| format!("shm: write txn: {}", e))?;
-    let db: ShmDb = env
-        .create_database(&mut wtxn, None)
-        .map_err(|e| format!("shm: create db: {}", e))?;
-    wtxn.commit().map_err(|e| format!("shm: commit: {}", e))?;
-    ENVS.with(|c| {
-        c.borrow_mut()
-            .insert(shm.to_owned(), (env.clone(), db.clone()))
-    });
-    Ok((env, db))
-}
-
-/// Grow `base` by the golden ratio and align the result up to a whole page.
-/// The returned size is always strictly greater than `base`.
-fn align_to_page_size(base: usize) -> usize {
-    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
-    let mut new_size = ((base as f64) * GROWTH_FACTOR).ceil() as usize;
-    // Align up to a whole page.
-    new_size = (new_size + page - 1) / page * page;
-    if new_size <= base {
-        new_size = base + page;
-    }
-    new_size
-}
-
-/// Put a value, growing the LMDB map on `MDB_MAP_FULL` until it fits.
-///
-/// The write transaction is opened once and held across the resize. LMDB's
-/// writer mutex (held by that transaction) serializes the resize across all
-/// processes mapping the same environment, so no external lock is needed. The
-/// `put` is retried on the same transaction after each growth.
-fn put_value(env: &ShmEnv, db: &ShmDb, key: &[u8], value: &[u8]) -> Result<(), String> {
-    let mut wtxn = env
-        .write_txn()
-        .map_err(|e| format!("shm: write txn: {}", e))?;
-    let mut attempt = 0;
-    loop {
-        attempt += 1;
-        if attempt > 64 {
-            return Err("shm: map resize limit exceeded".into());
-        }
-        match db.put(&mut wtxn, key, value) {
-            Ok(()) => {
-                wtxn.commit().map_err(|e| format!("shm: commit: {}", e))?;
-                return Ok(());
-            }
-            Err(heed::Error::Mdb(MdbError::MapFull)) => {
-                let new_size = align_to_page_size(env.info().map_size);
-                unsafe {
-                    env.resize(new_size)
-                        .map_err(|e| format!("shm: resize: {}", e))?
-                };
-                // Map grew while the txn is still open; retry the put on it.
-            }
-            Err(e) => return Err(format!("shm: put: {}", e)),
-        }
+        DbLoc::Shm(name) => LockedDatabase::unlink_shm(name),
+        DbLoc::Mem(_) => {}
     }
 }
 
-/// On-disk layout for one array variable: a sequence of records
-/// `[index: i64 LE][value bytes][NUL]`. The NUL terminator lets us hand a raw
-/// pointer straight into `array_insert` (which copies the string), so no
-/// intermediate (index, bytes) vector is needed.
-///
-/// Iterate the records, calling `f(index, value)` for each. `value` points at a
-/// NUL-terminated string inside `buf`, so it may be passed directly to a C
-/// function that copies it.
-fn each_element(buf: &[u8], mut f: impl FnMut(arrayind_t, &[u8])) {
-    let mut off = 0;
-    while off + 8 <= buf.len() {
-        let idx = arrayind_t::from_le_bytes(buf[off..off + 8].try_into().unwrap());
-        off += 8;
-        let start = off;
-        let end = match buf[off..].iter().position(|&b| b == 0) {
-            Some(p) => off + p,
-            // Missing terminator: treat the rest as the (unterminated) value.
-            None => buf.len(),
-        };
-        f(idx, &buf[start..end]);
-        off = end + 1;
-    }
-}
-
-/// On-disk layout for one associative array variable: a sequence of records
-/// `[key_len: u32 LE][key bytes][value bytes][NUL]`. The value is NUL-terminated;
-/// the key is NOT NUL-terminated in the stored format (its length is given by
-/// `key_len`). When loading, we create a temporary NUL-terminated copy of the
-/// key for `l_assoc_insert` (which expects a NUL-terminated key string).
-///
-/// Iterate the records, calling `f(key, value)` for each. `key` is a slice of
-/// `key_len` bytes (NOT NUL-terminated). `value` points at a NUL-terminated
-/// string inside `buf`.
-fn each_assoc_element(buf: &[u8], mut f: impl FnMut(&[u8], &[u8])) {
-    let mut off = 0;
-    while off + 4 <= buf.len() {
-        let key_len = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize;
-        off += 4;
-        if off + key_len > buf.len() {
-            break;
-        }
-        let key = &buf[off..off + key_len];
-        off += key_len;
-        let start = off;
-        let end = match buf[off..].iter().position(|&b| b == 0) {
-            Some(p) => off + p,
-            // Missing terminator: treat the rest as the (unterminated) value.
-            None => buf.len(),
-        };
-        let val = &buf[start..end];
-        f(key, val);
-        off = end + 1;
-    }
-}
-
-/// Load an associative array variable's on-disk buffer directly into a bash
-/// HASH_TABLE, inserting each record in the same loop. Flushes the hash first.
-unsafe fn load_assoc_into_bash(hash: *mut HASH_TABLE, buf: &[u8]) {
-    assoc_flush(hash);
-    each_assoc_element(buf, |key, val| {
-        // `key` is NOT NUL-terminated in the stored format, but `l_assoc_insert`
-        // expects a NUL-terminated key (it uses l_strdup/strlen). Create a
-        // temporary NUL-terminated copy.
-        let mut key_with_nul = Vec::with_capacity(key.len() + 1);
-        key_with_nul.extend_from_slice(key);
-        key_with_nul.push(0);
-        // `val` IS NUL-terminated by the record's terminator.
-        unsafe {
-            l_assoc_insert(
-                hash,
-                key_with_nul.as_ptr() as *const c_char,
-                val.as_ptr() as *const c_char,
-            )
-        };
-    });
-}
-
-/// Dump a bash HASH_TABLE straight into an on-disk buffer: key length followed
-/// by the key, then the NUL-terminated value, for every entry.
-unsafe fn dump_assoc_from_bash(hash: *mut HASH_TABLE) -> Vec<u8> {
-    let mut out = Vec::new();
-    let keys = assoc_keys_to_word_list(hash);
-    if keys.is_null() {
-        return out;
-    }
-    let mut wl = keys;
-    while !wl.is_null() {
-        let word_ptr = (*wl).word;
-        if !word_ptr.is_null() {
-            let key_ptr = (*word_ptr).word;
-            if !key_ptr.is_null() {
-                let key = CStr::from_ptr(key_ptr).to_bytes();
-                let val_ptr = assoc_reference(hash, key_ptr);
-                let val = if val_ptr.is_null() {
-                    &[][..]
-                } else {
-                    CStr::from_ptr(val_ptr).to_bytes()
-                };
-                out.extend_from_slice(&(key.len() as u32).to_le_bytes());
-                out.extend_from_slice(key);
-                out.extend_from_slice(val);
-                out.push(0);
+/// Unbind every bash variable in this shell that is bound to the database with
+/// the given key, and drop the corresponding REGISTRY entries. The database
+/// contents themselves are left untouched.
+fn unbind_registry_vars(key: &str) {
+    let mut to_remove: Vec<CString> = Vec::new();
+    REGISTRY.with(|r| {
+        let reg = r.borrow();
+        for (var, db) in reg.iter() {
+            if db_key(&db.path) == key {
+                to_remove.push(var.clone());
             }
         }
-        wl = (*wl).next;
-    }
-    dispose_words(keys);
-    out
-}
-
-/// Load an array variable's on-disk buffer directly into a bash ARRAY,
-/// inserting each record in the same loop. Flushes the array first.
-unsafe fn load_array_into_bash(arr: *mut ARRAY, buf: &[u8]) {
-    array_flush(arr);
-    each_element(buf, |idx, val| {
-        // `val` is NUL-terminated by the record's terminator, so `val.as_ptr()`
-        // is a valid C string `array_insert` will copy.
-        unsafe { array_insert(arr, idx, val.as_ptr() as *mut c_char) };
     });
+    for var in to_remove {
+        unsafe { l_unbind_variable(var.as_ptr() as *const c_char) };
+        REGISTRY.with(|r| {
+            r.borrow_mut().remove(&var);
+        });
+    }
 }
 
-/// Dump a bash ARRAY straight into an on-disk buffer: index followed by the
-/// NUL-terminated value, for every real element (skipping the circular dummy
-/// head, whose `ind` is -1).
-unsafe fn dump_array_from_bash(arr: *mut ARRAY) -> Vec<u8> {
-    let mut out = Vec::new();
-    let head = l_array_head(arr);
-    if head.is_null() {
-        return out;
-    }
-    let mut ae = l_element_forw(head);
-    while ae != head {
-        let idx = l_element_index(ae);
-        out.extend_from_slice(&idx.to_le_bytes());
-        let val = l_element_value(ae);
-        if !val.is_null() {
-            out.extend_from_slice(CStr::from_ptr(val).to_bytes());
-        }
-        out.push(0);
-        ae = l_element_forw(ae);
-    }
-    out
+/// Fetch the database registered for `var`. The handle always reloads the blob
+/// from disk, so no fork/pid handling is needed.
+fn get_shm(var: &CStr) -> Result<Arc<LockedDatabase>, String> {
+    REGISTRY.with(|r| r.borrow().get(var).cloned()).ok_or_else(|| {
+        format!(
+            "shm: variable {} is not bound to a shared database",
+            var.to_str().unwrap_or("")
+        )
+    })
 }
 
-/// Highest index present in a bash ARRAY, plus one (for append semantics).
-unsafe fn bash_array_append_index(arr: *mut ARRAY) -> arrayind_t {
-    let head = l_array_head(arr);
-    if head.is_null() {
-        return 0;
-    }
-    let mut max = -1 as arrayind_t;
-    let mut ae = l_element_forw(head);
-    while ae != head {
-        let idx = l_element_index(ae);
-        if idx > max {
-            max = idx;
-        }
-        ae = l_element_forw(ae);
-    }
-    if max < 0 {
-        0
+/// Return `p` unchanged, or a pointer to an empty NUL string when `p` is null.
+fn ptr_or_empty(p: *const c_char) -> *const c_char {
+    if p.is_null() {
+        b"\0".as_ptr() as *const c_char
     } else {
-        max + 1
+        p
     }
-}
-
-/// Read the raw on-disk buffer for a variable out of LMDB (empty if absent).
-fn read_raw_bytes(env: &ShmEnv, db: &ShmDb, key: &[u8]) -> Vec<u8> {
-    match env.read_txn() {
-        Ok(rtxn) => match db.get(&rtxn, key) {
-            Ok(Some(b)) => b.to_vec(),
-            _ => Vec::new(),
-        },
-        Err(_) => Vec::new(),
-    }
-}
-
-/// Dynamic-array getter: resolve VAR_NAME from LMDB and rebuild the array.
-unsafe extern "C" fn shm_getter(var: *mut variable) -> *mut variable {
-    let var_name = CStr::from_ptr((*var).name);
-    let shm_name = match REGISTRY.with(|r| r.borrow().get(var_name).cloned()) {
-        Some(s) => s,
-        None => return var,
-    };
-    let (env, db) = match get_shm(&shm_name) {
-        Ok(x) => x,
-        Err(_) => return var,
-    };
-    let rtxn = match env.read_txn() {
-        Ok(t) => t,
-        Err(_) => return var,
-    };
-    let value = match db.get(&rtxn, var_name.to_bytes()) {
-        Ok(Some(b)) => Some(b),
-        Ok(None) => None,
-        Err(_) => return var,
-    };
-    let arr = l_array_cell(var as *mut SHELL_VAR);
-    load_array_into_bash(
-        arr,
-        match value {
-            Some(b) => &b,
-            // Missing key: flush any stale contents to an empty array.
-            None => &[],
-        },
-    );
-    var
-}
-
-/// Dynamic-array setter: read the current array from LMDB, apply the single
-/// assigned element, persist the whole array back, and rebuild the local bash
-/// array so in-process reads stay consistent. Matches bash's
-/// `sh_var_assign_func_t`: `(var, value, ind, key)`.
-unsafe extern "C" fn shm_array_setter(
-    var: *mut variable,
-    value: *mut c_char,
-    ind: arrayind_t,
-    _key: *mut c_char,
-) -> *mut variable {
-    let var_name = CStr::from_ptr((*var).name);
-    let shm_name = match REGISTRY.with(|r| r.borrow().get(var_name).cloned()) {
-        Some(s) => s,
-        None => return var,
-    };
-    if let Ok((env, db)) = get_shm(&shm_name) {
-        // Read the current shared state, rebuild the local array, then apply
-        // the single assigned element (replace-or-append).
-        let existing = read_raw_bytes(&env, &db, var_name.to_bytes());
-        let arr = l_array_cell(var as *mut SHELL_VAR);
-        load_array_into_bash(arr, &existing);
-        let idx = if ind < 0 {
-            bash_array_append_index(arr)
-        } else {
-            ind
-        };
-        // `value` is already NUL-terminated by bash; `array_insert` copies it,
-        // so pass it straight through. A null value becomes the empty string.
-        let cval: *mut c_char = if value.is_null() {
-            b"\0".as_ptr() as *mut c_char
-        } else {
-            value
-        };
-        array_insert(arr, idx, cval);
-        let serialized = dump_array_from_bash(arr);
-        let _ = put_value(&env, &db, var_name.to_bytes(), &serialized);
-    }
-    var
-}
-
-/// Dynamic-associative-array getter: resolve VAR_NAME from LMDB and rebuild the
-/// associative array.
-unsafe extern "C" fn shm_assoc_getter(var: *mut variable) -> *mut variable {
-    let var_name = CStr::from_ptr((*var).name);
-    let shm_name = match REGISTRY.with(|r| r.borrow().get(var_name).cloned()) {
-        Some(s) => s,
-        None => return var,
-    };
-    let (env, db) = match get_shm(&shm_name) {
-        Ok(x) => x,
-        Err(_) => return var,
-    };
-    let rtxn = match env.read_txn() {
-        Ok(t) => t,
-        Err(_) => return var,
-    };
-    let value = match db.get(&rtxn, var_name.to_bytes()) {
-        Ok(Some(b)) => Some(b),
-        Ok(None) => None,
-        Err(_) => return var,
-    };
-    let hash = l_assoc_cell(var as *mut SHELL_VAR);
-    load_assoc_into_bash(
-        hash,
-        match value {
-            Some(b) => &b,
-            // Missing key: flush any stale contents to an empty hash.
-            None => &[],
-        },
-    );
-    var
-}
-
-/// Dynamic-associative-array setter: read the current hash from LMDB, apply the
-/// single assigned key-value pair, persist the whole hash back, and rebuild the
-/// local bash hash so in-process reads stay consistent. Matches bash's
-/// `sh_var_assign_func_t`: `(var, value, ind, key)`. For associative arrays,
-/// `ind` is ignored and `key` is the string key.
-unsafe extern "C" fn shm_assoc_setter(
-    var: *mut variable,
-    value: *mut c_char,
-    _ind: arrayind_t,
-    key: *mut c_char,
-) -> *mut variable {
-    let var_name = CStr::from_ptr((*var).name);
-    let shm_name = match REGISTRY.with(|r| r.borrow().get(var_name).cloned()) {
-        Some(s) => s,
-        None => return var,
-    };
-    if let Ok((env, db)) = get_shm(&shm_name) {
-        // Read the current shared state, rebuild the local hash, then apply
-        // the single assigned key-value pair.
-        let existing = read_raw_bytes(&env, &db, var_name.to_bytes());
-        let hash = l_assoc_cell(var as *mut SHELL_VAR);
-        load_assoc_into_bash(hash, &existing);
-        // `key` and `value` are already NUL-terminated by bash; `l_assoc_insert`
-        // copies them, so pass them straight through. A null value becomes the
-        // empty string.
-        let cval: *const c_char = if value.is_null() {
-            b"\0".as_ptr() as *const c_char
-        } else {
-            value
-        };
-        let ckey: *const c_char = if key.is_null() {
-            b"\0".as_ptr() as *const c_char
-        } else {
-            key
-        };
-        unsafe { l_assoc_insert(hash, ckey, cval) };
-        let serialized = dump_assoc_from_bash(hash);
-        let _ = put_value(&env, &db, var_name.to_bytes(), &serialized);
-    }
-    var
-}
-
-/// Try to detect if the stored data is an associative array format.
-/// Returns true if the data appears to be associative array format.
-fn is_assoc_format(buf: &[u8]) -> bool {
-    let mut off = 0;
-    while off + 4 <= buf.len() {
-        let key_len = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize;
-        off += 4;
-        if key_len > 4096 {
-            // Unreasonably large key, probably not assoc format
-            return false;
-        }
-        if off + key_len > buf.len() {
-            return false;
-        }
-        off += key_len;
-        // Find NUL terminator for value
-        if off >= buf.len() {
-            return false;
-        }
-        let val_end = match buf[off..].iter().position(|&b| b == 0) {
-            Some(p) => off + p,
-            None => return false,
-        };
-        off = val_end + 1;
-    }
-    off == buf.len()
-}
-fn remove_shm(shm: &CStr) {
-    REGISTRY.with(|r| r.borrow_mut().retain(|_, v| v != shm));
-    ENVS.with(|c| c.borrow_mut().remove(shm));
-    let _ = std::fs::remove_dir_all(shm_dir(shm));
 }
 
 /// Escape a byte string for inclusion inside double quotes.
@@ -543,24 +171,223 @@ fn escape_quoted(out: &mut Vec<u8>, bytes: &[u8]) {
     out.push(b'"');
 }
 
-/// `L_builtin shm add [-A] SHM_NAME VAR_NAME`
+/// Dynamic-array getter: rebuild the bash array from the shared database.
+/// Stateful: snapshot the indices bash currently holds and only insert/update
+/// the entries whose database value differs, then remove the indices the
+/// database no longer contains. This avoids reallocating the whole array on
+/// every read (see array_flush/rebuild discussion in the issue).
+unsafe extern "C" fn shm_array_getter(var: *mut variable) -> *mut variable {
+    let var_name = CStr::from_ptr((*var).name);
+    let db = match get_shm(var_name) {
+        Ok(x) => x,
+        Err(e) => {
+            l_builtin_error!(e);
+            return var;
+        }
+    };
+    if let Ok(repr) = db.read() {
+        let arr = l_array_cell(var as *mut SHELL_VAR);
+        // Snapshot the indices bash currently holds (by reference, no copy), so we
+        // can leave unchanged entries alone and drop the ones the database no
+        // longer contains.
+        let mut existing: HashMap<i64, &'static CStr> = HashMap::new();
+        for (idx, val) in ArrayIterator::new(arr) {
+            existing.insert(idx, val);
+        }
+        if let Some(map) = repr.vars.get(var_name).and_then(|v| v.as_array()) {
+            for (idx, val) in map {
+                let val_bytes = val.to_bytes();
+                // `existing` holds the bash value; drop it and insert only when the
+                // database value differs (new keys count as changed).
+                let changed = match existing.remove(idx) {
+                    Some(cur) => cur.to_bytes() != val_bytes,
+                    None => true,
+                };
+                if changed {
+                    array_insert(arr, *idx, val.as_ptr() as *mut c_char);
+                }
+            }
+        }
+        // Whatever remains was deleted from the database.
+        for idx in existing.keys() {
+            array_remove(arr, *idx);
+        }
+    }
+    var
+}
+
+/// Dynamic-array setter: update the local bash array, then persist the single
+/// assigned element to the shared database. Matches bash's
+/// `sh_var_assign_func_t`: `(var, value, ind, key)`.
+unsafe extern "C" fn shm_array_setter(
+    var: *mut variable,
+    value: *mut c_char,
+    ind: arrayind_t,
+    _key: *mut c_char,
+) -> *mut variable {
+    let var_name = CStr::from_ptr((*var).name);
+    let db = match get_shm(var_name) {
+        Ok(x) => x,
+        Err(e) => {
+            l_builtin_error!(e);
+            return var;
+        }
+    };
+    let name = CString::new(var_name.to_bytes()).unwrap_or_default();
+    let arr = l_array_cell(var as *mut SHELL_VAR);
+    let idx = if ind < 0 {
+        l_array_max_index(arr) + 1
+    } else {
+        ind
+    };
+    // `value` is already NUL-terminated by bash; `array_insert` copies it.
+    let cval_ptr: *mut c_char = ptr_or_empty(value as *const c_char) as *mut c_char;
+    array_insert(arr, idx, cval_ptr);
+    let cval = CStr::from_ptr(cval_ptr as *const c_char).to_owned();
+    let _ = db.with_write(move |repr| {
+        let vd = repr.vars.entry(name).or_insert_with(|| VarData::default());
+        vd.insert_index(idx, cval);
+    });
+    var
+}
+
+/// Dynamic-associative-array getter: rebuild the associative array from the
+/// shared database.
+unsafe extern "C" fn shm_assoc_getter(var: *mut variable) -> *mut variable {
+    let var_name = CStr::from_ptr((*var).name);
+    let db = match get_shm(var_name) {
+        Ok(x) => x,
+        Err(e) => {
+            l_builtin_error!(e);
+            return var;
+        }
+    };
+    if let Ok(repr) = db.read() {
+        let hash = l_assoc_cell(var as *mut SHELL_VAR);
+        // Snapshot the keys bash currently holds (by reference, no copy), so we can
+        // leave unchanged entries alone and drop the ones the database no longer
+        // contains.
+        let mut existing: HashMap<&'static CStr, &'static CStr> = HashMap::new();
+        for (k, v) in AssocIterator::new(hash) {
+            existing.insert(k, v);
+        }
+        if let Some(map) = repr.vars.get(var_name).and_then(|v| v.as_assoc()) {
+            for (k, v) in map {
+                let v_bytes = v.to_bytes();
+                // `existing` holds the bash value; drop it and insert only when the
+                // database value differs (new keys count as changed).
+                let changed = match existing.remove(k.as_c_str()) {
+                    Some(cur) => cur.to_bytes() != v_bytes,
+                    None => true,
+                };
+                if changed {
+                    l_assoc_insert(
+                        hash,
+                        k.as_ptr() as *const c_char,
+                        v.as_ptr() as *const c_char,
+                    );
+                }
+            }
+        }
+        // Whatever remains was deleted from the database. The keys are
+        // NUL-terminated (they came straight from bash's assoc), so pass the
+        // pointer through directly.
+        for (k, _v) in existing {
+            assoc_remove(hash, k.as_ptr() as *mut c_char);
+        }
+    }
+    var
+}
+
+/// Dynamic-associative-array setter: update the local bash hash, then persist
+/// the single assigned key-value pair to the shared database. Matches bash's
+/// `sh_var_assign_func_t`: `(var, value, ind, key)`. For associative arrays,
+/// `ind` is ignored and `key` is the string key.
+unsafe extern "C" fn shm_assoc_setter(
+    var: *mut variable,
+    value: *mut c_char,
+    _ind: arrayind_t,
+    key: *mut c_char,
+) -> *mut variable {
+    let var_name = CStr::from_ptr((*var).name);
+    let db = match get_shm(var_name) {
+        Ok(x) => x,
+        Err(e) => {
+            l_builtin_error!(e);
+            return var;
+        }
+    };
+    let name = CString::new(var_name.to_bytes()).unwrap_or_default();
+    let hash = l_assoc_cell(var as *mut SHELL_VAR);
+    // `key` and `value` are already NUL-terminated by bash; `l_assoc_insert`
+    // copies them.
+    let ckey_ptr: *const c_char = ptr_or_empty(key);
+    let cval_ptr: *const c_char = ptr_or_empty(value);
+    l_assoc_insert(hash, ckey_ptr, cval_ptr);
+    let ckey = CStr::from_ptr(ckey_ptr).to_owned();
+    let cval = CStr::from_ptr(cval_ptr).to_owned();
+    let _ = db.with_write(move |repr| {
+        let vd = repr.vars.entry(name).or_insert_with(|| VarData::default());
+        vd.insert_key(ckey, cval);
+    });
+    var
+}
+
+/// `L_builtin shm add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME`
+///
+/// Bind bash variable VAR_NAME (indexed, or associative with `-A`) to a shared
+/// database. The database is selected by `-s` (POSIX shared memory), `-n`
+/// (anonymous in-memory mapping) or `-f` (a regular file); with none of them the
+/// default `DEFAULT` in-memory database is used.
 unsafe extern "C" fn shm_add_subcommand(list: *mut WORD_LIST) -> c_int {
     let mut is_assoc = false;
-    let (shm, var) = subcmd_getopts!(
+    let mut shared: Option<CString> = None;
+    let mut anon: Option<CString> = None;
+    let mut full: Option<CString> = None;
+    let (var,) = subcmd_getopts!(
         SHM_ADD_CMD,
         list,
         flags: [ A => || is_assoc = true ],
-        required: [SHM_NAME, VAR_NAME],
+        options: [
+            s => |v| shared = Some(v.as_cstr().to_owned()),
+            n => |v| anon = Some(v.as_cstr().to_owned()),
+            f => |v| full = Some(v.as_cstr().to_owned()),
+        ],
+        required: [VAR_NAME],
     );
-    let shm_str = shm.as_cstr();
-    let var_str = var.as_cstr();
-    if let Err(e) = get_shm(&shm_str) {
-        beprintln!(this_cmd_name(), b": ", e.as_bytes());
-        return EXECUTION_FAILURE;
+    let loc = match resolve_loc(shared.as_deref(), full.as_deref(), anon.as_deref()) {
+        Ok(l) => l,
+        Err(e) => {
+            l_builtin_error!(e);
+            return EXECUTION_FAILURE;
+        }
+    };
+    if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
+        if !is_valid_var_name(n.to_bytes()) {
+            l_builtin_error!(b"shm: NAME must be a valid shell variable name");
+            return EXECUTION_FAILURE;
+        }
     }
+    let db = match get_db_loc(&loc) {
+        Ok(d) => d,
+        // A memfd database not yet created in this process: create it. POSIX
+        // shared memory and file backings are (re)opened by name via get_db_loc.
+        Err(_) => match open_db_loc(&loc) {
+            Ok(d) => Arc::new(d),
+            Err(e) => {
+                l_builtin_error!(e);
+                return EXECUTION_FAILURE;
+            }
+        },
+    };
+    let cname = var.as_cstr();
+    // Start the variable fresh: drop any previous binding of the same name in
+    // the shared database (which may have had the opposite type).
+    let _ = db.with_write(|repr| {
+        repr.vars.remove(cname);
+    });
     REGISTRY.with(|r| {
-        r.borrow_mut()
-            .insert(var_str.to_owned(), shm_str.to_owned())
+        r.borrow_mut().insert(cname.to_owned(), db)
     });
     let result = if is_assoc {
         l_init_dynamic_assoc_var(
@@ -570,7 +397,12 @@ unsafe extern "C" fn shm_add_subcommand(list: *mut WORD_LIST) -> c_int {
             ATT_ASSOC,
         )
     } else {
-        l_init_dynamic_array_var(var.as_ptr(), Some(shm_getter), Some(shm_array_setter), 0)
+        l_init_dynamic_array_var(
+            var.as_ptr(),
+            Some(shm_array_getter),
+            Some(shm_array_setter),
+            0,
+        )
     };
     if result.is_null() {
         beprintln!(this_cmd_name(), b": failed to bind variable");
@@ -579,190 +411,402 @@ unsafe extern "C" fn shm_add_subcommand(list: *mut WORD_LIST) -> c_int {
     EXECUTION_SUCCESS
 }
 
-/// `L_builtin shm rm SHM_NAME [VAR_NAME...]`
+/// `L_builtin shm rm [-s NAME | -n NAME | -f PATH]`
+///
+/// Remove the whole database: unbind every variable this shell has bound to it,
+/// drop the registry entries, and unlink the backing object/file (for `-s`/`-f`).
+/// Takes no positional arguments; the database is selected by the flags, or the
+/// default `DEFAULT` database when none are given.
 unsafe extern "C" fn shm_rm_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (shm, vars) = subcmd_getopts!(SHM_RM_CMD, list, required: [SHM_NAME], rest: VARS);
-    let shm_str = shm.as_cstr();
-    if vars.is_empty() {
-        remove_shm(&shm_str);
-        return EXECUTION_SUCCESS;
+    let mut shared: Option<CString> = None;
+    let mut anon: Option<CString> = None;
+    let mut full: Option<CString> = None;
+    subcmd_getopts!(
+        SHM_REMOVE_CMD,
+        list,
+        options: [
+            s => |v| shared = Some(v.as_cstr().to_owned()),
+            n => |v| anon = Some(v.as_cstr().to_owned()),
+            f => |v| full = Some(v.as_cstr().to_owned()),
+        ],
+    );
+    let loc = match resolve_loc(shared.as_deref(), full.as_deref(), anon.as_deref()) {
+        Ok(l) => l,
+        Err(e) => {
+            l_builtin_error!(e);
+            return EXECUTION_FAILURE;
+        }
+    };
+    if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
+        if !is_valid_var_name(n.to_bytes()) {
+            l_builtin_error!(b"shm: NAME must be a valid shell variable name");
+            return EXECUTION_FAILURE;
+        }
     }
-    let (env, db) = match get_shm(&shm_str) {
-        Ok(x) => x,
+    let key = loc_key(&loc);
+    unbind_registry_vars(&key);
+    unlink_db_backing(&loc);
+    EXECUTION_SUCCESS
+}
+
+/// `L_builtin shm unbind [-s NAME | -n NAME | -f PATH] VAR_NAME [VAR_NAME...]`
+///
+/// Unbind the named variable(s) from this shell: drop the registry entry and
+/// unbind the bash variable. This does NOT remove the variable's data from the
+/// shared database; another process may still read it.
+unsafe extern "C" fn shm_unbind_subcommand(list: *mut WORD_LIST) -> c_int {
+    let mut shared: Option<CString> = None;
+    let mut anon: Option<CString> = None;
+    let mut full: Option<CString> = None;
+    let (vars,) = subcmd_getopts!(
+        SHM_UNBIND_CMD,
+        list,
+        options: [
+            s => |v| shared = Some(v.as_cstr().to_owned()),
+            n => |v| anon = Some(v.as_cstr().to_owned()),
+            f => |v| full = Some(v.as_cstr().to_owned()),
+        ],
+        some: VARS,
+    );
+    let loc = match resolve_loc(shared.as_deref(), full.as_deref(), anon.as_deref()) {
+        Ok(l) => l,
         Err(e) => {
-            l_builtin_error!(e.as_bytes());
+            l_builtin_error!(e);
             return EXECUTION_FAILURE;
         }
     };
-    let mut wtxn = match env.write_txn() {
-        Ok(t) => t,
-        Err(e) => {
-            l_builtin_error!(e.to_string());
+    if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
+        if !is_valid_var_name(n.to_bytes()) {
+            l_builtin_error!(b"shm: NAME must be a valid shell variable name");
             return EXECUTION_FAILURE;
         }
-    };
+    }
     for v in &vars {
-        let name = v.as_cstr();
-        if db.delete(&mut wtxn, name.to_bytes()).is_err() {
-            // Not present; ignore.
-        }
-        REGISTRY.with(|r| r.borrow_mut().remove(name));
-        l_unbind_variable(name.as_ptr() as *const c_char);
-    }
-    if wtxn.commit().is_err() {
-        l_builtin_error!("commit failed");
-        return EXECUTION_FAILURE;
+        let ckey = match CString::new(v.as_bytes()) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        REGISTRY.with(|r| r.borrow_mut().remove(&ckey));
+        l_unbind_variable(ckey.as_ptr() as *const c_char);
     }
     EXECUTION_SUCCESS
 }
 
-/// `L_builtin shm info SHM_NAME`
-unsafe extern "C" fn shm_info_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (shm,) = subcmd_getopts!(SHM_INFO_CMD, list, required: [SHM_NAME]);
-    let shm_str = shm.as_cstr();
-    let (env, db) = match get_shm(&shm_str) {
-        Ok(x) => x,
-        Err(e) => {
-            l_builtin_error!(e.as_bytes());
-            return EXECUTION_FAILURE;
-        }
-    };
-    let rtxn = match env.read_txn() {
-        Ok(t) => t,
-        Err(e) => {
-            l_builtin_error!(e.to_string());
-            return EXECUTION_FAILURE;
-        }
-    };
-    let iter = match db.iter(&rtxn) {
-        Ok(i) => i,
-        Err(e) => {
-            l_builtin_error!(e.to_string());
-            return EXECUTION_FAILURE;
-        }
-    };
-    for item in iter {
-        let (key, value) = match item {
-            Ok(x) => x,
-            Err(_) => continue,
-        };
-        let mut line: Vec<u8> = Vec::new();
-        line.extend_from_slice(key);
-        line.extend_from_slice(b"=(");
-        let mut first = true;
-        if is_assoc_format(value) {
-            each_assoc_element(value, |k, val| {
-                if !first {
-                    line.push(b' ');
-                }
-                first = false;
-                line.extend_from_slice(b"[");
-                escape_quoted(&mut line, k);
-                line.extend_from_slice(b"]=");
-                escape_quoted(&mut line, val);
-            });
-        } else {
-            each_element(value, |idx, val| {
+/// A human-readable label for a database backing, used as a header in `ls`/
+/// `info` output.
+fn db_key(path: &DbPath) -> String {
+    match path {
+        DbPath::File(p) => p.to_string_lossy().into_owned(),
+        DbPath::Shm(n) => format!("shm:{}", n.to_string_lossy()),
+        DbPath::Mem(n) => format!("memfd:{}", n.to_string_lossy()),
+    }
+}
+
+/// Print one variable as a bash array assignment (`NAME=( ... )`).
+unsafe fn print_var_assignment(name: &CString, vd: &VarData) {
+    let mut line: Vec<u8> = Vec::new();
+    line.extend_from_slice(name.as_bytes());
+    line.extend_from_slice(b"=(");
+    let mut first = true;
+    match vd {
+        VarData::Array(map) => {
+            let mut entries: Vec<(&i64, &CString)> = map.iter().collect();
+            entries.sort_by_key(|(idx, _)| **idx);
+            for (idx, v) in entries {
                 if !first {
                     line.push(b' ');
                 }
                 first = false;
                 line.extend_from_slice(format!("[{}]=", idx).as_bytes());
-                escape_quoted(&mut line, val);
-            });
+                escape_quoted(&mut line, v.as_bytes());
+            }
         }
-        line.extend_from_slice(b")");
-        bprintln!(line);
+        VarData::Assoc(map) => {
+            for (k, v) in map {
+                if !first {
+                    line.push(b' ');
+                }
+                first = false;
+                line.extend_from_slice(b"[");
+                escape_quoted(&mut line, k.as_bytes());
+                line.extend_from_slice(b"]=");
+                escape_quoted(&mut line, v.as_bytes());
+            }
+        }
     }
+    line.extend_from_slice(b")");
+    bprintln!(line);
+}
+
+/// `L_builtin shm info [-s NAME | -n NAME | -f PATH]`
+///
+/// Print every variable stored in the database as bash array assignments. The
+/// database is selected by the flags, or the default `DEFAULT` database when
+/// none are given.
+unsafe extern "C" fn shm_info_subcommand(list: *mut WORD_LIST) -> c_int {
+    let mut shared: Option<CString> = None;
+    let mut anon: Option<CString> = None;
+    let mut full: Option<CString> = None;
+    subcmd_getopts!(
+        SHM_INFO_CMD,
+        list,
+        options: [
+            s => |v| shared = Some(v.as_cstr().to_owned()),
+            n => |v| anon = Some(v.as_cstr().to_owned()),
+            f => |v| full = Some(v.as_cstr().to_owned()),
+        ],
+    );
+    let loc = match resolve_loc(shared.as_deref(), full.as_deref(), anon.as_deref()) {
+        Ok(l) => l,
+        Err(e) => {
+            l_builtin_error!(e);
+            return EXECUTION_FAILURE;
+        }
+    };
+    if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
+        if !is_valid_var_name(n.to_bytes()) {
+            l_builtin_error!(b"shm: NAME must be a valid shell variable name");
+            return EXECUTION_FAILURE;
+        }
+    }
+    let db = match get_db_loc(&loc) {
+        Ok(x) => x,
+        Err(e) => {
+            l_builtin_error!(e.to_string());
+            return EXECUTION_FAILURE;
+        }
+    };
+    match db.read() {
+        Ok(repr) => {
+            for (name, vd) in &repr.vars {
+                print_var_assignment(name, vd);
+            }
+        }
+        Err(e) => {
+            l_builtin_error!(e.to_string());
+            return EXECUTION_FAILURE;
+        }
+    }
+    EXECUTION_SUCCESS
+}
+
+/// `L_builtin shm ls [-s NAME | -n NAME | -f PATH]`
+///
+/// Without any flag, list every database this session knows about together with
+/// the variables bound to each. With a backing flag, list only the variables
+/// bound to that database in this session's REGISTRY.
+unsafe extern "C" fn shm_ls_subcommand(list: *mut WORD_LIST) -> c_int {
+    let mut shared: Option<CString> = None;
+    let mut anon: Option<CString> = None;
+    let mut full: Option<CString> = None;
+    subcmd_getopts!(
+        SHM_LIST_CMD,
+        list,
+        options: [
+            s => |v| shared = Some(v.as_cstr().to_owned()),
+            n => |v| anon = Some(v.as_cstr().to_owned()),
+            f => |v| full = Some(v.as_cstr().to_owned()),
+        ],
+    );
+    if shared.is_some() || anon.is_some() || full.is_some() {
+        let loc = match resolve_loc(shared.as_deref(), full.as_deref(), anon.as_deref()) {
+            Ok(l) => l,
+            Err(e) => {
+                l_builtin_error!(e);
+                return EXECUTION_FAILURE;
+            }
+        };
+        if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
+            if !is_valid_var_name(n.to_bytes()) {
+                l_builtin_error!(b"shm: NAME must be a valid shell variable name");
+                return EXECUTION_FAILURE;
+            }
+        }
+        // List only the variables bound to the database in this session's
+        // REGISTRY (not every entry another process may have written to it).
+        let key = loc_key(&loc);
+        let mut names: Vec<CString> = REGISTRY.with(|r| {
+            r.borrow()
+                .iter()
+                .filter(|(_, db)| db_key(&db.path) == key)
+                .map(|(var, _)| var.clone())
+                .collect()
+        });
+        names.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+        for n in &names {
+            bprintln!(n.as_bytes());
+        }
+        return EXECUTION_SUCCESS;
+    }
+    REGISTRY.with(|r| {
+        let reg = r.borrow();
+        let mut groups: HashMap<String, Vec<CString>> = HashMap::new();
+        for (var, db) in reg.iter() {
+            groups.entry(db_key(&db.path)).or_default().push(var.clone());
+        }
+        let mut keys: Vec<&String> = groups.keys().collect();
+        keys.sort();
+        for k in keys {
+            let mut line: Vec<u8> = Vec::new();
+            line.extend_from_slice(b"DB ");
+            line.extend_from_slice(k.as_bytes());
+            line.extend_from_slice(b": ");
+            let mut first = true;
+            for v in &groups[k] {
+                if !first {
+                    line.push(b' ');
+                }
+                first = false;
+                line.extend_from_slice(v.as_bytes());
+            }
+            bprintln!(line);
+        }
+    });
     EXECUTION_SUCCESS
 }
 
 const SHM_CMD: CmdDesc = CmdDesc::new(
     c"shm",
-    c"add [-A] SHM_NAME VAR_NAME | rm SHM_NAME [VAR_NAME...] | info SHM_NAME",
+    c"add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME | rm [-s NAME | -n NAME | -f PATH] | unbind [-s NAME | -n NAME | -f PATH] VAR_NAME... | info [-s NAME | -n NAME | -f PATH] | ls [-s NAME | -n NAME | -f PATH]",
     c"\
-Shared-memory variables backed by an LMDB database in /dev/shm.
+Shared-memory variables backed by a rkyv database.
 
 Subcommands:
-  add [-A] SHM_NAME VAR_NAME
-                          Bind bash array variable VAR_NAME to the value
-                          stored under VAR_NAME in the SHM_NAME database.
-                          With -A, create an associative array instead of an
-                          indexed array.
-  rm  SHM_NAME [VAR_NAME...]
-                          Remove VAR_NAME(s) from the SHM_NAME database. With no
-                          VAR_NAME, remove the whole SHM_NAME database.
-  info SHM_NAME           Print every variable stored in SHM_NAME.
+  add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME
+                           Bind bash variable VAR_NAME (indexed, or associative
+                           with -A) to a shared database. -s selects a POSIX
+                           shared memory object named NAME; -n an anonymous
+                           in-memory mapping (memfd) named NAME; -f a regular file
+                           at PATH; with none the default in-memory mapping named
+                           DEFAULT is used. The value is stored under VAR_NAME.
+  rm [-s NAME | -n NAME | -f PATH]
+                            Remove the whole database: unbind every variable bound
+                            to it and unlink its backing object/file (for -s/-f).
+  unbind [-s NAME | -n NAME | -f PATH] VAR_NAME...
+                           Unbind the named variable(s) from this shell (drop the
+                           registry entry and unbind the bash variable); does not
+                           remove the data from the database.
+  info [-s NAME | -n NAME | -f PATH]
+                           Print every variable stored in the database (default:
+                           the DEFAULT database).
+  ls  [-s NAME | -n NAME | -f PATH]
+                           List databases. With no flag, list every database this
+                           session knows about with the variables bound to each;
+                           with a backing flag, list only the variables bound to
+                           that database in this session's REGISTRY.
 
-The variable (indexed or associative array) is serialized into LMDB on every
-assignment and is visible to every process that maps the same SHM_NAME (e.g. a
-background job started with &). The database grows automatically when full.
+The variable (indexed or associative array) is serialized into a rkyv blob on
+every assignment and is visible to every process that maps the same database
+ (e.g. a background job started with &, when using -s or -f or -n).
 ",
 );
 
 const SHM_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("add", shm_add_subcommand),
     ("rm", shm_rm_subcommand),
+    ("unbind", shm_unbind_subcommand),
     ("info", shm_info_subcommand),
+    ("ls", shm_ls_subcommand),
 ];
 
 const SHM_ADD_CMD: CmdDesc = CmdDesc::new(
     c"add",
-    c"add [-A] SHM_NAME VAR_NAME",
+    c"add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME",
     c"\
-Bind a bash array variable to a shared-memory database.
+Bind bash variable VAR_NAME (indexed, or associative with -A) to a shared
+database.
 
-VAR_NAME becomes a dynamic array whose value is stored under VAR_NAME
-in the LMDB database for SHM_NAME (in /dev/shm). Every assignment is written
-through to LMDB and is visible to every process that maps the same SHM_NAME,
-e.g. a background job started with &.
+The database is selected by one of:
+  -s NAME   a POSIX shared memory object (shm_open) named NAME;
+  -n NAME   an anonymous in-memory mapping (memfd_create) named NAME;
+  -f PATH   a regular file at PATH (a path on a disc);
+  neither   the default in-memory mapping named DEFAULT.
+Every assignment is written through to the blob and is visible to every process
+that maps the same database, e.g. a background job started with & (for -s/-f/-n).
 
-With -A, create an associative array (key-value pairs with string keys)
-instead of an indexed array (integer indices).
+With -A, create an associative array (key-value pairs with string keys) instead
+of an indexed array (integer indices). NAME (for -s/-n) must be a valid shell
+variable name; -f takes a path.
 
 Examples:
-  L_builtin shm add mydb v
-  v=(a b c)          # indexed array, stored in 'mydb', shared across processes
+  L_builtin shm add v
+  v=(a b c)          # default in-memory mapping 'DEFAULT', shared with forked children
   v[0]=changed       # a single-index write is visible to other processes
 
-  L_builtin shm add -A mydb v
-  v=( [foo]=bar [baz]=qux )  # associative array, shared across processes
-  v[foo]=changed     # a single-key write is visible to other processes
+  L_builtin shm add -s mydb v
+  v=(a b c)          # POSIX shared memory 'mydb', shared across processes
+
+  L_builtin shm add -f /tmp/mydb v
+  v=(a b c)          # regular file at /tmp/mydb
+
+  L_builtin shm add -A -s mydb v
+  v=( [foo]=bar [baz]=qux )  # associative array in shared memory 'mydb'
 ",
 );
 
-const SHM_RM_CMD: CmdDesc = CmdDesc::new(
+const SHM_REMOVE_CMD: CmdDesc = CmdDesc::new(
     c"rm",
-    c"rm SHM_NAME [VAR_NAME...]",
+    c"rm [-s NAME | -n NAME | -f PATH]",
     c"\
-Remove variable(s) from a shared-memory database.
+Remove the whole shared database: unbind every variable this shell has bound to
+it, drop the registry entries, and unlink the backing object/file (for -s/-f).
 
-With one or more VAR_NAME arguments, only those variables are removed from the
-SHM_NAME database (the variable is unbound in the shell). With no VAR_NAME, the
-entire SHM_NAME database and its backing files in /dev/shm are removed.
+The database is selected by the same -s/-n/-f flags as 'add'; with none given,
+the default 'DEFAULT' database is removed.
 
 Examples:
-  L_builtin shm rm mydb v        # remove one variable
-  L_builtin shm rm mydb v w      # remove several variables
-  L_builtin shm rm mydb          # remove the whole database
+  L_builtin shm rm -s mydb   # remove shared memory 'mydb' entirely
+  L_builtin shm rm -n mymem  # remove the in-memory mapping 'mymem'
+  L_builtin shm rm          # remove the default 'DEFAULT' database
+",
+);
+
+const SHM_UNBIND_CMD: CmdDesc = CmdDesc::new(
+    c"unbind",
+    c"unbind [-s NAME | -n NAME | -f PATH] VAR_NAME [VAR_NAME...]",
+    c"\
+Unbind the named variable(s) from this shell: drop the registry entry and unbind
+the bash variable. This does NOT remove the variable's data from the shared
+database; another process that has the variable bound may still read it.
+
+The database is selected by the same -s/-n/-f flags as 'add'; with none given,
+the default 'DEFAULT' database is used.
+
+Examples:
+  L_builtin shm unbind -s mydb v   # stop sharing 'v' from shared memory 'mydb'
+  L_builtin shm unbind v w         # unbind 'v' and 'w' from the default database
 ",
 );
 
 const SHM_INFO_CMD: CmdDesc = CmdDesc::new(
     c"info",
-    c"info SHM_NAME",
+    c"info [-s NAME | -n NAME | -f PATH]",
     c"\
 Print every variable stored in a shared-memory database.
 
-The output is a series of bash array assignments, one per variable, that can be
-eval'd to reconstruct the shared state.
+The database is selected by the same -s/-n/-f flags as 'add' (default: the
+'DEFAULT' database). The output is a series of bash array assignments, one per
+variable, that can be eval'd to reconstruct the shared state.
 
 Examples:
-  L_builtin shm info mydb
+  L_builtin shm info -s mydb
 ",
 );
 
-const SHM_TABLE: crate::intlookup::U32::IntLookup<SubcommandFn, 3> =
+const SHM_LIST_CMD: CmdDesc = CmdDesc::new(
+    c"ls",
+    c"ls [-s NAME | -n NAME | -f PATH]",
+    c"\
+List databases. With no flag, list every database this shell session currently
+knows about, together with the bash variables bound to each. With a backing flag,
+list only the variables bound to that database in this session's REGISTRY.
+
+Databases are shown by their backing kind and name: 'shm:NAME' for POSIX shared
+memory, 'memfd:NAME' for in-memory, and the file path for -f databases.
+",
+);
+
+const SHM_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 5> =
     crate::intlookup!(&SHM_SUBCOMMANDS);
 
 /// # Safety
@@ -776,7 +820,7 @@ pub unsafe extern "C" fn shm_subcommand(list: *mut WORD_LIST) -> c_int {
     let action = match iter.next() {
         Some(a) => a,
         None => {
-            beprintln!(this_cmd_name(), b": usage: L_builtin shm <add|rm|info> ...");
+            beprintln!(this_cmd_name(), b": usage: L_builtin shm <add|remove|unbind|info|ls> ...");
             return EX_USAGE;
         }
     };
@@ -785,7 +829,7 @@ pub unsafe extern "C" fn shm_subcommand(list: *mut WORD_LIST) -> c_int {
         Some(h) => h,
         None => {
             beprintln!(this_cmd_name(), b": unknown shm subcommand: ", action_bytes);
-            return EX_USAGE;
+            return EXECUTION_FAILURE;
         }
     };
     handler(iter.as_ptr())

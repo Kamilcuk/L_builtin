@@ -61,6 +61,7 @@ ARRAY_ELEMENT *l_array_head(ARRAY *a);
 ARRAY_ELEMENT *l_element_forw(ARRAY_ELEMENT *ae);
 char *l_element_value(ARRAY_ELEMENT *ae);
 long long l_element_index(ARRAY_ELEMENT *ae);
+arrayind_t l_array_max_index(ARRAY *a);
 
 int l_readonly_p(SHELL_VAR *var);
 int l_invisible_p(SHELL_VAR *var);
