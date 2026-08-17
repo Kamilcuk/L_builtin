@@ -30,6 +30,7 @@ Available subcommands:
     dirname  Strip last component from file name
     rm       Remove files or directories
     tee      Copy stdin to each FILE and stdout
+    sleep    Delay for a specified amount of time
 
 Use 'L_builtin core <subcommand> --help' for more information.
 ",
@@ -55,6 +56,7 @@ const UU_DISPATCH_ENTRIES: &[(&str, UuMain)] = &[
     ("rm", uu_entry!(uu_rm)),
     ("stat", uu_entry!(uu_stat)),
     ("tee", uu_entry!(uu_tee)),
+    ("sleep", uu_entry!(uu_sleep)),
 ];
 
 const UU_DISPATCH_TABLE: crate::intlookup::U64::IntLookup<UuMain, { UU_DISPATCH_ENTRIES.len() }> =

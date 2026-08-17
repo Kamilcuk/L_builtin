@@ -31,6 +31,10 @@ dispatched as `L_builtin <subcommand> ...` and loaded via `enable -f`.
 - The test harness `L_lib.sh` (pinned v2.0.2) is **auto-downloaded** to
   `build/L_lib.sh` on first `make test` (needs network). It provides
   `L_unittest_*`, `L_with_process_into`, etc.
+- Each `L_` harness function documents itself: run `L_lib.sh L_<func> -h`
+  (e.g. `L_lib.sh L_finally -h`) for its usage and semantics. `L_finally`
+  registers cleanup actions that run automatically at the end of a test
+  (use it instead of manual teardown).
 - Fork-based sharing tests use `L_with_process_into pid bg "$tmpf"`; the child
   inherits bound bash variables, and `bg` must redirect its output to `"$1"`
   (the tmpfile) itself — the harness does not capture stdout to the file.

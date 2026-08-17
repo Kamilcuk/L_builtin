@@ -703,6 +703,7 @@ dependencies = [
  "uu_dirname",
  "uu_ls",
  "uu_rm",
+ "uu_sleep",
  "uu_stat",
  "uu_tee",
  "uucore",
@@ -1435,6 +1436,16 @@ dependencies = [
  "thiserror",
  "uucore",
  "windows-sys",
+]
+
+[[package]]
+name = "uu_sleep"
+version = "0.9.0"
+source = "git+https://github.com/uutils/coreutils?rev=f66e155d80df3d82798324726e460675a02c5cd5#f66e155d80df3d82798324726e460675a02c5cd5"
+dependencies = [
+ "clap",
+ "fluent",
+ "uucore",
 ]
 
 [[package]]

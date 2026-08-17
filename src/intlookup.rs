@@ -392,3 +392,95 @@ macro_rules! intlookup {
         $crate::intlookup::infer_bits::<T_BITS, _, N>($ARR).build($ARR)
     }};
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::intlookup;
+
+    #[test]
+    fn lookup_exact_match() {
+        let t = intlookup!(&[
+            ("foo", 1u32),
+            ("bar", 2u32),
+            ("baz", 3u32),
+        ]);
+        assert_eq!(t.lookup(b"foo"), Some(1));
+        assert_eq!(t.lookup(b"bar"), Some(2));
+        assert_eq!(t.lookup(b"baz"), Some(3));
+        // Non-existent key.
+        assert_eq!(t.lookup(b"qux"), None);
+        // "fo" is a unique prefix of "foo", so it resolves; "ba" is shared by
+        // "bar" and "baz", so it is ambiguous and returns None.
+        assert_eq!(t.lookup(b"fo"), Some(1));
+        assert_eq!(t.lookup(b"ba"), None);
+    }
+
+    #[test]
+    fn lookup_shortest_unique_prefix() {
+        let t = intlookup!(&[
+            ("abc", 1u32),
+            ("xyz", 2u32),
+        ]);
+        // Each key has a unique first byte, so the shortest prefix resolves.
+        assert_eq!(t.lookup(b"a"), Some(1));
+        assert_eq!(t.lookup(b"x"), Some(2));
+        assert_eq!(t.lookup(b"ab"), Some(1));
+        assert_eq!(t.lookup(b"xy"), Some(2));
+    }
+
+    #[test]
+    fn lookup_ambiguous_prefix_is_none() {
+        let t = intlookup!(&[
+            ("ab", 1u32),
+            ("ac", 2u32),
+        ]);
+        // "a" is a shared prefix of two distinct keys with no exact "a" entry.
+        assert_eq!(t.lookup(b"a"), None);
+        assert_eq!(t.lookup(b"ab"), Some(1));
+        assert_eq!(t.lookup(b"ac"), Some(2));
+    }
+
+    #[test]
+    fn lookup_key_too_long_for_type() {
+        // Single 2-byte key selects u32 (4-byte capacity); a 5-byte lookup
+        // exceeds the packed integer width and must return None.
+        let t = intlookup!(&[("ab", 1u32)]);
+        assert_eq!(t.lookup(b"abcde"), None);
+        assert_eq!(t.lookup(b"ab"), Some(1));
+    }
+
+    #[test]
+    fn lookup_u128_long_keys() {
+        let t = intlookup!(&[
+            ("abcdefghi", 10u32),
+            ("abcdefghj", 20u32),
+        ]);
+        assert_eq!(t.lookup(b"abcdefghi"), Some(10));
+        assert_eq!(t.lookup(b"abcdefghj"), Some(20));
+        // 8-byte prefix shared by both longer keys, no exact entry -> ambiguous.
+        assert_eq!(t.lookup(b"abcdefgh"), None);
+    }
+
+    #[test]
+    fn iter_keys_are_sorted() {
+        let t = intlookup!(&[
+            ("zebra", 1u32),
+            ("apple", 2u32),
+            ("mango", 3u32),
+        ]);
+        let keys: Vec<String> = t.iter_keys().map(|k| k.as_str().to_string()).collect();
+        assert_eq!(keys, vec!["apple", "mango", "zebra"]);
+    }
+
+    #[test]
+    fn get_key_returns_ordered_entries() {
+        let t = intlookup!(&[
+            ("gamma", 1u32),
+            ("alpha", 2u32),
+        ]);
+        assert_eq!(t.get_key(0).unwrap().as_str(), "alpha");
+        assert_eq!(t.get_key(1).unwrap().as_str(), "gamma");
+        assert!(t.get_key(2).is_none());
+    }
+}
+

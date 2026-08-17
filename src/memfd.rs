@@ -1,103 +1,75 @@
 //! L_builtin `memfd` subcommand: create an anonymous memory-backed file
-//! descriptor with memfd_create(2).
+//! descriptor with memfd_create(2) and bind its fd to a shell variable.
 //!
-//! Usage: `L_builtin memfd [-x] [-v FD_VAR] [NAME]`
+//! Usage: `L_builtin memfd VAR [NAME]`
 
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
+use crate::bash_api::{bind_variable, EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
+use crate::l_builtin_error;
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, bprintln, getopts, parse_positionals};
-use std::os::raw::{c_char, c_int};
-
-const ENAME: &str = "L_builtin memfd";
+use crate::subcmd_getopts;
+use std::ffi::c_char;
+use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
     c"memfd",
-    c"[-x] [-v FD_VAR] [NAME]",
+    c"VAR [NAME]",
     c"\
 Create an anonymous memory-backed file (memfd_create(2)) and store its file
-descriptor in FD_VAR (or print it if -v is omitted). The fd is a regular
-file-like object living in RAM; its name appears in /proc/self/fd.
-
-Options:
-  -x   MFD_EXEC (fd may be MFD-executed; default is MFD_CLOEXEC | MFD_NOEXEC_SEAL)
-  -v   Store the resulting fd in the variable FD_VAR
+descriptor in the shell variable VAR. The fd is a regular file-like object
+living in RAM; its name appears in /proc/self/fd. NAME, if given, names the
+memfd (otherwise a default name is used). The memfd is created with
+MFD_CLOEXEC | MFD_NOEXEC_SEAL.
 
 Exit Status:
-Returns success unless memfd_create fails or the variable cannot be bound.
+  Returns success unless memfd_create fails or the variable cannot be bound.
 
 Examples:
-  // Create memfd with default name, default flags (CLOEXEC | NOEXEC_SEAL), print fd
-  L_builtin memfd
-  // Output: 3
+  // Create memfd with default name, store fd in MYFD
+  L_builtin memfd MYFD
 
-  // Create memfd with custom name, store fd in MYFD
-  L_builtin memfd -v MYFD mydata
-
-  // Create memfd with MFD_EXEC flag (allows fexecve)
-  L_builtin memfd -x myexec
+  // Create memfd named mydata, store fd in MYFD
+  L_builtin memfd MYFD mydata
 
   // Use memfd as temporary in-RAM storage
-  L_builtin memfd -v FD
-  echo data >&FD
-  cat <&FD
+  L_builtin memfd FD
+  echo data >&$FD
+  cat <&$FD
 ",
 );
-
-unsafe fn store_fd(var: *mut c_char, fd: c_int) -> bool {
-    if var.is_null() {
-        bprintln!(fd as i64);
-        return true;
-    }
-    let s = crate::shared::I64Str::new(fd as i64);
-    if unsafe { crate::bash_api::bind_variable(var, s.as_ptr(), 0) }.is_null() {
-        beprintln!(ENAME, b": cannot bind variable");
-        return false;
-    }
-    true
-}
 
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn memfd_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
-    let mut exec = false;
-    let mut fd_var: *mut c_char = std::ptr::null_mut();
-    let rest = getopts!(
+    let (var, name) = subcmd_getopts!(
+        CMD,
         list,
-        [ x => || exec = true ],
-        [ v => |v: crate::bash_api::Cpnt<'_>| fd_var = v.as_ptr().cast() ]
+        required: [VAR],
+        optional: [NAME],
     );
-    let (name,) = parse_positionals!(rest, [], [name]);
 
-    let name: Vec<u8> = match name {
-        Some(c) => {
-            let b = unsafe { c.as_bytes() };
-            let mut v = Vec::with_capacity(b.len() + 1);
-            v.extend_from_slice(b);
-            v.push(0);
-            v
-        }
-        None => b"L_builtin_memfd\0".to_vec(),
+    let name_ptr: *const c_char = match name {
+        // The WORD_LIST word is already a NUL-terminated C string.
+        Some(c) => c.as_ptr() as *const c_char,
+        None => c"L_builtin_memfd".as_ptr(),
     };
 
-    let flags: libc::c_uint = if exec {
-        libc::MFD_EXEC
-    } else {
-        libc::MFD_CLOEXEC | libc::MFD_NOEXEC_SEAL
-    };
+    let flags: libc::c_uint = libc::MFD_CLOEXEC | libc::MFD_NOEXEC_SEAL;
 
-    let fd = unsafe { libc::memfd_create(name.as_ptr().cast(), flags) };
+    let fd = unsafe { libc::memfd_create(name_ptr, flags) };
     if fd < 0 {
-        beprintln!(ENAME, b": memfd_create: ", std::io::Error::last_os_error());
+        l_builtin_error!(b"memfd_create: ", std::io::Error::last_os_error());
         return EXECUTION_FAILURE;
     }
-    if !unsafe { store_fd(fd_var, fd) } {
+    let var_ptr = var.as_ptr().cast::<c_char>();
+    let s = crate::shared::I64Str::new(fd as i64);
+    if unsafe { bind_variable(var_ptr, s.as_ptr(), 0) }.is_null() {
+        l_builtin_error!(b"cannot bind variable '", unsafe { var.as_bytes() }, b"'");
         unsafe { libc::close(fd) };
         return EXECUTION_FAILURE;
     }
