@@ -125,7 +125,7 @@ void l_enter_subcommand(const char *prefix, const char *short_doc, const char *c
       l_xrealloc(this_command_name_buffer, old_len + space_len + prefix_len + 1);
     assert(buf);
     if (old_name) {
-      memcpy(buf, old_name, old_len + 1);  // includes the NUL terminator
+      memcpy(buf, old_name, old_len + 1); // includes the NUL terminator
       l_xfree(old_name);
     } else {
       buf[0] = '\0';

@@ -40,6 +40,9 @@ const char *const L_builtin_doc[] = {
   "  signalfd   Deliver signals as a file descriptor",
   "  timerfd    Create a timer as a file descriptor",
   "  lseek      Reposition file offset",
+#ifdef L_DEV
+  "  unittest   Run the crate's Rust unit tests via 'cargo test'",
+#endif
   "",
   "Use 'L_builtin <subcommand> --help' for more information.",
   (char *)NULL

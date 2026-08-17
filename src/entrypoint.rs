@@ -64,6 +64,8 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("semaphore", crate::cmd_semaphore::semaphore_subcommand),
     #[cfg(not(feature = "bash_lt_4_3"))]
     ("capture", l_capture_subcommand),
+    #[cfg(feature = "dev")]
+    ("unittest", l_unittest_subcommand),
 ];
 
 const fn extract_first<const N: usize>(a: &[(&'static str, SubcommandFn)]) -> [&'static str; N] {
@@ -177,6 +179,26 @@ pub unsafe extern "C" fn l_capture_output(var: *const c_char, list: *mut WORD_LI
     capture_into_variable("L_builtin capture", var, false, || unsafe {
         l_execute_command_string(cmd.as_ptr().cast())
     })
+}
+
+/// Dev-only subcommand: runs the crate's Rust unit-test suite (`cargo test`).
+///
+/// The builtin is normally linked against bash, so `cargo test` would fail to
+/// link (undefined bash C symbols). The `test_stubs` module provides those
+/// symbols for the test build, so plain `cargo test` links and runs. Only
+/// compiled when the `dev` feature is enabled (CMake `L_DEV=1`).
+#[cfg(feature = "dev")]
+pub(crate) unsafe extern "C" fn l_unittest_subcommand(_list: *mut WORD_LIST) -> c_int {
+    use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS};
+    use crate::unittest::run_all;
+
+    beprintln!(b"running in-process unit tests ...");
+    let failed = run_all();
+    if failed == 0 {
+        EXECUTION_SUCCESS
+    } else {
+        EXECUTION_FAILURE
+    }
 }
 
 /// Top-level L_builtin entry point called by bash via L_builtin_struct.function

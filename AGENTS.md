@@ -13,9 +13,10 @@ dispatched as `L_builtin <subcommand> ...` and loaded via `enable -f`.
   `build/bash/system/bash ./runtests.sh build/Debug/system/L_builtin.so`.
 - `make sh` → interactive bash with the builtin already `enable`d (handy for
   manual poking).
-- `cargo build` / `cargo test` are **not** how you verify here:
-  `cargo test` fails to link (the crate depends on bash C symbols such as
-  `l_xrealloc`). Always verify through `make build` + `make test`.
+- `cargo test` links (test-only `src/test_stubs.rs` provides the bash
+  allocator symbols such as `l_xrealloc`/`l_xfree`), but it only runs the Rust
+  **unit** tests — it does NOT run the shell suite. Verify the shell suite
+  through `make build` + `make test`.
 
 ## Testing
 

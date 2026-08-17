@@ -77,6 +77,12 @@ if(L_BASH_VERSION LESS 40300)
     list(APPEND L_BUILTIN_RS_FEATURES bash_lt_4_3)
 endif()
 
+# Enable the dev-only feature when L_DEV is on. This gates the `unittest`
+# subcommand (and any other dev-only code) so it never ships in a release .so.
+if(L_DEV)
+    list(APPEND L_BUILTIN_RS_FEATURES dev)
+endif()
+
 ###############################################################################
 
 # Generate the Rust FFI bindings with bindgen (replaces the former cargo
@@ -329,6 +335,9 @@ set_target_properties(L_builtin_module PROPERTIES LINK_DEPENDS ${VERSION_SCRIPT}
 ###############################################################################
 
 if(L_DEV)
+    # Propagate L_DEV to the C compiler so dev-only `#ifdef L_DEV` sections in
+    # the C sources (e.g. the `unittest` help entry) are compiled in.
+    target_compile_definitions(L_builtin_module PRIVATE L_DEV=1)
     if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
         target_compile_options(L_builtin_module PRIVATE -Wall -Wextra -fanalyzer)
         target_compile_options(bash_loadables PRIVATE -Wall -Wextra)

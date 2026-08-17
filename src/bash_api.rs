@@ -279,28 +279,30 @@ pub fn is_valid_var_name(name: &[u8]) -> bool {
     true
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any(feature = "dev", test))]
+pub(crate) mod tests {
     use super::*;
 
-    #[test]
-    fn test_valid_var_names() {
-        assert!(is_valid_var_name(b"VAR"));
-        assert!(is_valid_var_name(b"var"));
-        assert!(is_valid_var_name(b"_var"));
-        assert!(is_valid_var_name(b"var123"));
-        assert!(is_valid_var_name(b"_"));
-        assert!(is_valid_var_name(b"VAR_123"));
+    crate::unittest_test! {
+        fn test_valid_var_names() {
+            assert!(is_valid_var_name(b"VAR"));
+            assert!(is_valid_var_name(b"var"));
+            assert!(is_valid_var_name(b"_var"));
+            assert!(is_valid_var_name(b"var123"));
+            assert!(is_valid_var_name(b"_"));
+            assert!(is_valid_var_name(b"VAR_123"));
+        }
     }
 
-    #[test]
-    fn test_invalid_var_names() {
-        assert!(!is_valid_var_name(b""));
-        assert!(!is_valid_var_name(b"123var"));
-        assert!(!is_valid_var_name(b"var-name"));
-        assert!(!is_valid_var_name(b"var.name"));
-        assert!(!is_valid_var_name(b"var name"));
-        assert!(!is_valid_var_name(b"-var"));
+    crate::unittest_test! {
+        fn test_invalid_var_names() {
+            assert!(!is_valid_var_name(b""));
+            assert!(!is_valid_var_name(b"123var"));
+            assert!(!is_valid_var_name(b"var-name"));
+            assert!(!is_valid_var_name(b"var.name"));
+            assert!(!is_valid_var_name(b"var name"));
+            assert!(!is_valid_var_name(b"-var"));
+        }
     }
 }
 

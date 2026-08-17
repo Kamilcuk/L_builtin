@@ -13,7 +13,8 @@ include Makefile.bash
 # glue, running bindgen and producing L_builtin.so.
 RELEASE ?=
 CMAKE_BUILD_TYPE ?= $(if $(RELEASE),Release,Debug)
-CMAKE_FLAGS = -D L_DEV=1 -D CMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
+L_DEV ?= 1
+CMAKE_FLAGS = -D L_DEV=$(L_DEV) -D CMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 CMAKE_EXTRA_FLAGS ?=
 BUILD = $(BUILD_DIR)/$(CMAKE_BUILD_TYPE)/$(BASH)
 $(BUILD)/L_builtin.so: $(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt Cargo.toml Cargo.lock
@@ -23,6 +24,12 @@ build: $(BUILD)/L_builtin.so
 TESTARGS ?= -Pn
 test: build
 	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh $(BUILD)/L_builtin.so $(ARGS) $(TESTARGS)
+	@echo "=== cargo test (Rust unit tests) ==="
+	cargo test
+ifeq ($(L_DEV),1)
+	@echo "=== L_builtin unittest (in-process, dev build only) ==="
+	$(BASH_EXE) -c 'enable -f $(BUILD)/L_builtin.so L_builtin; L_builtin unittest'
+endif
 release-build:
 	$(MAKE) CMAKE_BUILD_TYPE=Release build
 release-test:

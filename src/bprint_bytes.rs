@@ -314,37 +314,41 @@ macro_rules! beprintln {
     };
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[cfg(any(feature = "dev", test))]
+pub(crate) mod tests {
     use std::io::Cursor;
 
-    #[test]
-    fn test_basic() {
-        bprintln!(b"hello");
-        bprintln!(&[1, 2, 3]);
-        bprintln!(vec![4, 5, 6]);
-        bprintln!("hello");
-        bprintln!(String::from("world"));
+    crate::unittest_test! {
+        fn test_basic() {
+            bprintln!(b"hello");
+            bprintln!(&[1, 2, 3]);
+            bprintln!(vec![4, 5, 6]);
+            bprintln!("hello");
+            bprintln!(String::from("world"));
+        }
     }
-    #[test]
-    fn test_cstr() {
-        let s = std::ffi::CStr::from_bytes_with_nul(b"hello\0").unwrap();
-        bprintln!(s.as_ptr());
+    crate::unittest_test! {
+        fn test_cstr() {
+            let s = std::ffi::CStr::from_bytes_with_nul(b"hello\0").unwrap();
+            bprintln!(s.as_ptr());
+        }
     }
-    #[test]
-    fn test_multi() {
-        bprintln!(b"one", b"two", b"three");
+    crate::unittest_test! {
+        fn test_multi() {
+            bprintln!(b"one", b"two", b"three");
+        }
     }
-    #[test]
-    fn test_stderr() {
-        beprintln!(b"error");
+    crate::unittest_test! {
+        fn test_stderr() {
+            beprintln!(b"error");
+        }
     }
-    #[test]
-    fn test_bwriteln() {
-        let mut buf = Cursor::new(Vec::new());
-        bwriteln!(buf, b"hello");
-        bwriteln!(buf, "world");
-        assert_eq!(buf.into_inner(), b"hello\nworld\n");
+    crate::unittest_test! {
+        fn test_bwriteln() {
+            let mut buf = Cursor::new(Vec::new());
+            bwriteln!(buf, b"hello");
+            bwriteln!(buf, "world");
+            assert_eq!(buf.into_inner(), b"hello\nworld\n");
+        }
     }
 }

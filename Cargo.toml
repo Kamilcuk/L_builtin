@@ -23,7 +23,7 @@ dev = []
 libc = "0.2"
 thiserror = "2.0"
 nix = "0.31"
-# NOTE: no [build-dependencies] and no build.rs — the Rust crate is built by
+# NOTE: no [build-dependencies] and no build.rs - the Rust crate is built by
 # Corrosion under CMake, which runs bindgen (see CMakeLists.txt) and generates
 # the FFI bindings into ${CMAKE_SOURCE_DIR}/generated_rust/bash_api_gen.rs.
 rustix = { version = "1.1", features = ["param", "use-libc-auxv", "time"] }

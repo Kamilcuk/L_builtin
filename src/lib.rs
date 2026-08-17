@@ -37,7 +37,13 @@ pub(crate) mod splice;
 pub(crate) mod subcmd;
 pub(crate) mod timerfd;
 pub(crate) mod variadic;
+pub(crate) mod unittest;
 pub(crate) mod vardb;
+
+// Test-only stand-ins for bash C symbols (allocator) so `cargo test` links
+// without a bash process. Never compiled into the shipped `.so`.
+#[cfg(test)]
+mod test_stubs;
 
 /// Route all Rust allocations through bash's allocator, so the whole process
 /// shares one heap regardless of how bash was configured. See `bash_alloc`.
