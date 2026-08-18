@@ -210,7 +210,7 @@ pub fn open_db_loc(loc: &DbLoc) -> Result<LockedDatabase, String> {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("shm: cannot create {}: {}", parent.display(), e))?;
             }
-            LockedDatabase::open(p).map_err(|e| format!("shm: cannot open {}: {}", p.display(), e))
+            LockedDatabase::open_file(p).map_err(|e| format!("shm: cannot open {}: {}", p.display(), e))
         }
         DbLoc::Shm(name) => LockedDatabase::open_shm(name).map_err(|e| {
             format!(
@@ -278,7 +278,7 @@ impl LockedDatabase {
     /// Open (creating if necessary) the named database file at `db_path`. The
     /// same file backs both the cross-process `flock` and the serialized blob,
     /// and is kept open for the lifetime of the returned handle.
-    pub fn open(db_path: &Path) -> io::Result<Self> {
+    pub fn open_file(db_path: &Path) -> io::Result<Self> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -286,6 +286,7 @@ impl LockedDatabase {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(db_path)?;
         Ok(Self {
             path: DbPath::File(db_path.to_owned()),

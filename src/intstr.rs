@@ -21,8 +21,18 @@ impl<const N: usize> IntStr<N> {
 }
 
 pub trait ToIntStr {
-    type Output;
+    type Output: IntStrPtr;
     fn to_intstr(self) -> Self::Output;
+}
+
+pub trait IntStrPtr {
+    fn as_ptr(&self) -> *const c_char;
+}
+
+impl<const N: usize> IntStrPtr for IntStr<N> {
+    fn as_ptr(&self) -> *const c_char {
+        self.as_ptr()
+    }
 }
 
 macro_rules! impl_signed_int_str {
@@ -33,10 +43,8 @@ macro_rules! impl_signed_int_str {
                 let mut buf = [0u8; max_str_len_for_bits($bits)];
                 let mut i = buf.len() - 1;
                 buf[i] = 0;
-
                 let is_negative = self < 0;
                 let mut val = self;
-
                 if val == 0 {
                     i -= 1;
                     buf[i] = b'0';
@@ -48,12 +56,10 @@ macro_rules! impl_signed_int_str {
                         val /= 10;
                     }
                 }
-
                 if is_negative && i > 0 {
                     i -= 1;
                     buf[i] = b'-';
                 }
-
                 IntStr { buf, start: i }
             }
         }
@@ -68,7 +74,6 @@ macro_rules! impl_unsigned_int_str {
                 let mut buf = [0u8; max_str_len_for_bits($bits)];
                 let mut i = buf.len() - 1;
                 buf[i] = 0;
-
                 if self == 0 {
                     i -= 1;
                     buf[i] = b'0';
@@ -79,7 +84,6 @@ macro_rules! impl_unsigned_int_str {
                         self /= 10;
                     }
                 }
-
                 IntStr { buf, start: i }
             }
         }

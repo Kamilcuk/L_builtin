@@ -6,12 +6,28 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, WORD_LIST};
+use crate::cmdargs::BashVar;
+use crate::intstr::ToIntStr;
 use crate::l_builtin_error;
-use crate::subcmd::CmdDesc;
+use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
-use std::ffi::c_char;
 use std::os::raw::c_int;
+
+struct PipeGuard([c_int; 2]);
+
+impl Drop for PipeGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if self.0[0] >= 0 {
+                libc::close(self.0[0]);
+            }
+            if self.0[1] >= 0 {
+                libc::close(self.0[1]);
+            }
+        }
+    }
+}
 
 const CMD: CmdDesc = CmdDesc::new(
     c"pipe",
@@ -35,12 +51,12 @@ struct PipeArgs {
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
-pub unsafe fn pipe_subcommand(list: *mut WORD_LIST) -> Result<(), c_int> {
+pub unsafe fn pipe_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
     let args = PipeArgs::parse(list)?;
     // Create pipe
-    let mut fds: [c_int; 2] = [0, 0];
-    if unsafe { libc::pipe(fds.as_mut_ptr()) } < 0 {
+    let mut fds = PipeGuard([0, 0]);
+    if unsafe { libc::pipe(fds.0.as_mut_ptr()) } < 0 {
         l_builtin_error!(b"pipe: ", std::io::Error::last_os_error());
         return Err(EXECUTION_FAILURE);
     }
@@ -49,11 +65,7 @@ pub unsafe fn pipe_subcommand(list: *mut WORD_LIST) -> Result<(), c_int> {
     if !var.is_null() {
         let is_array = unsafe { crate::bash_api::l_array_p(var) };
         if is_array == 0 {
-            unsafe {
-                libc::close(fds[0]);
-                libc::close(fds[1]);
-            }
-            l_builtin_error!(b"not an indexed array");
+            l_builtin_error!(b"not an indexed array", args.array_name.as_ptr());
             return Err(EXECUTION_FAILURE);
         }
     }
@@ -62,11 +74,7 @@ pub unsafe fn pipe_subcommand(list: *mut WORD_LIST) -> Result<(), c_int> {
     if var.is_null() {
         var = unsafe { crate::bash_api::make_new_array_variable(args.array_name.as_ptr()) };
         if var.is_null() {
-            unsafe {
-                libc::close(fds[0]);
-                libc::close(fds[1]);
-            }
-            l_builtin_error!(b"cannot create array variable");
+            l_builtin_error!(b"cannot create array variable", args.array_name.as_ptr());
             return Err(EXECUTION_FAILURE);
         }
     }
@@ -75,12 +83,15 @@ pub unsafe fn pipe_subcommand(list: *mut WORD_LIST) -> Result<(), c_int> {
     unsafe { crate::bash_api::array_flush(array) };
 
     // Insert read fd (index 0)
-    let read_fd = crate::shared::I64Str::new(fds[0] as i64);
-    unsafe { crate::bash_api::array_insert(array, 0, read_fd.as_ptr().cast_mut()) };
+    let read_fd: i64 = fds.0[0] as i64;
+    unsafe { crate::bash_api::array_insert(array, 0, read_fd.to_intstr().as_ptr().cast_mut()) };
 
     // Insert write fd (index 1)
-    let write_fd = crate::shared::I64Str::new(fds[1] as i64);
-    unsafe { crate::bash_api::array_insert(array, 1, write_fd.as_ptr().cast_mut()) };
+    let write_fd: i64 = fds.0[1] as i64;
+    unsafe { crate::bash_api::array_insert(array, 1, write_fd.to_intstr().as_ptr().cast_mut()) };
+
+    // Prevent guard from closing the file descriptors since ownership is handed off to bash array
+    std::mem::forget(fds);
 
     Ok(())
 }

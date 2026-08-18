@@ -17,14 +17,12 @@ use cmdargs_derive::CmdArgs;
 use std::ffi::CString;
 use std::os::raw::c_int;
 
-use crate::bash_api::{
-    EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST,
-};
+use crate::bash_api::{Cpnt, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
-use crate::handles::{HandleRegistry, map_anonymous, unmap};
+use crate::handles::{map_anonymous, unmap, HandleRegistry};
 use crate::l_builtin_error;
-use crate::shared::{I64Str, timespec_from_now};
-use crate::subcmd::{CmdDesc, SubcommandFn};
+use crate::shared::timespec_from_now;
+use crate::subcmd::{CmdDesc, CmdResult, SubcommandFn};
 
 #[derive(CmdArgs)]
 struct SemaphoreCreateArgs {
@@ -101,34 +99,34 @@ fn semaphore_bytes() -> usize {
 /// `nonblock`: `sem_trywait` - 0 if decremented, non-zero if the count was 0.
 /// `timeout` (seconds): `sem_timedwait` against a `CLOCK_REALTIME` absolute
 /// deadline. Otherwise a blocking `sem_wait`.
-unsafe fn semaphore_wait(sem: *mut libc::sem_t, timeout: Option<f64>, nonblock: bool) -> c_int {
+unsafe fn semaphore_wait(sem: *mut libc::sem_t, timeout: Option<f64>, nonblock: bool) -> CmdResult {
     if nonblock {
         return if libc::sem_trywait(sem) == 0 {
-            EXECUTION_SUCCESS
+            Ok(())
         } else {
-            EXECUTION_FAILURE
+            Err(EXECUTION_FAILURE)
         };
     }
     if let Some(secs) = timeout {
         let ts = timespec_from_now(secs);
         return if libc::sem_timedwait(sem, &ts) == 0 {
-            EXECUTION_SUCCESS
+            Ok(())
         } else {
-            EXECUTION_FAILURE
+            Err(EXECUTION_FAILURE)
         };
     }
     if libc::sem_wait(sem) == 0 {
-        EXECUTION_SUCCESS
+        Ok(())
     } else {
-        EXECUTION_FAILURE
+        Err(EXECUTION_FAILURE)
     }
 }
 
-unsafe fn semaphore_post(sem: *mut libc::sem_t) -> c_int {
+unsafe fn semaphore_post(sem: *mut libc::sem_t) -> CmdResult {
     if libc::sem_post(sem) == 0 {
-        EXECUTION_SUCCESS
+        Ok(())
     } else {
-        EXECUTION_FAILURE
+        Err(EXECUTION_FAILURE)
     }
 }
 
@@ -147,12 +145,9 @@ unsafe fn semaphore_teardown(ptr: *mut u8, name: Option<CString>, unlink: bool) 
     }
 }
 
-pub unsafe extern "C" fn semaphore_create_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn semaphore_create_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SEMAPHORE_CREATE_CMD.enter();
-    let args = match SemaphoreCreateArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = SemaphoreCreateArgs::parse(list)?;
     let name: Option<CString> = args
         .name
         .map(|p| unsafe { std::ffi::CStr::from_ptr(p) }.to_owned());
@@ -161,7 +156,7 @@ pub unsafe extern "C" fn semaphore_create_subcommand(list: *mut WORD_LIST) -> c_
         let sem = libc::sem_open(n.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600, value);
         if sem.is_null() {
             l_builtin_error!(b"sem_open failed: ", std::io::Error::last_os_error());
-            return EXECUTION_FAILURE;
+            return Err(EXECUTION_FAILURE);
         }
         sem as *mut u8
     } else {
@@ -169,107 +164,89 @@ pub unsafe extern "C" fn semaphore_create_subcommand(list: *mut WORD_LIST) -> c_
             Ok(p) => p,
             Err(e) => {
                 l_builtin_error!(e.as_bytes());
-                return EXECUTION_FAILURE;
+                return Err(EXECUTION_FAILURE);
             }
         };
         if libc::sem_init(p as *mut libc::sem_t, 1, value) != 0 {
             l_builtin_error!(b"sem_init failed: ", std::io::Error::last_os_error());
             unmap(p, semaphore_bytes());
-            return EXECUTION_FAILURE;
+            return Err(EXECUTION_FAILURE);
         }
         p
-};
-    let id = SEMAPHORE_REGISTRY.with(|s| s.store(ptr, name));
-    match args.var.set_u64(id) {
-        Ok(()) => EXECUTION_SUCCESS,
-        Err(e) => return e,
-    }
-}
-pub unsafe extern "C" fn semaphore_open_subcommand(list: *mut WORD_LIST) -> c_int {
-    SEMAPHORE_OPEN_CMD.enter();
-    let args = match SemaphoreOpenArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
     };
+    let id = SEMAPHORE_REGISTRY.with(|s| s.store(ptr, name));
+    args.var.set_int(id)?;
+    Ok(())
+}
+
+pub unsafe fn semaphore_open_subcommand(list: *mut WORD_LIST) -> CmdResult {
+    SEMAPHORE_OPEN_CMD.enter();
+    let args = SemaphoreOpenArgs::parse(list)?;
     let name_c = unsafe { Cpnt::new(args.name as *mut c_char).as_cstr().to_owned() };
     let sem = libc::sem_open(name_c.as_ptr(), libc::O_RDWR, 0o600, 0);
     if sem.is_null() {
         l_builtin_error!(b"sem_open failed: ", std::io::Error::last_os_error());
-        return EXECUTION_FAILURE;
+        return Err(EXECUTION_FAILURE);
     }
     let id = SEMAPHORE_REGISTRY.with(|s| s.store(sem as *mut u8, Some(name_c)));
-    match args.var.set_u64(id) {
-        Ok(()) => EXECUTION_SUCCESS,
-        Err(e) => return e,
-    }
+    args.var.set_int(id)?;
+    Ok(())
 }
 
-pub unsafe extern "C" fn semaphore_wait_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn semaphore_wait_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SEMAPHORE_WAIT_CMD.enter();
-    let args = match SemaphoreWaitArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = SemaphoreWaitArgs::parse(list)?;
     let timeout = args.timeout;
     let nonblock = args.nonblock;
     let ptr = match lookup_semaphore(args.var) {
         Some(p) => p,
         None => {
             l_builtin_error!(b"unknown semaphore handle");
-            return EXECUTION_FAILURE;
+            return Err(EXECUTION_FAILURE);
         }
     };
     semaphore_wait(ptr, timeout, nonblock)
 }
 
-pub unsafe extern "C" fn semaphore_post_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn semaphore_post_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SEMAPHORE_POST_CMD.enter();
-    let args = match SemaphorePostArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = SemaphorePostArgs::parse(list)?;
     let ptr = match lookup_semaphore(args.var) {
         Some(p) => p,
         None => {
             l_builtin_error!(b"unknown semaphore handle");
-            return EXECUTION_FAILURE;
+            return Err(EXECUTION_FAILURE);
         }
     };
     semaphore_post(ptr)
 }
 
-pub unsafe extern "C" fn semaphore_close_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn semaphore_close_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SEMAPHORE_CLOSE_CMD.enter();
-    let args = match SemaphoreCloseArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = SemaphoreCloseArgs::parse(list)?;
     let entry = match SEMAPHORE_REGISTRY.with(|s| s.take(args.var)) {
         Some(e) => e,
         None => {
             l_builtin_error!(b"unknown semaphore handle");
-            return EXECUTION_FAILURE;
+            return Err(EXECUTION_FAILURE);
         }
     };
     unsafe { semaphore_teardown(entry.ptr, entry.name, false) };
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
-pub unsafe extern "C" fn semaphore_destroy_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn semaphore_destroy_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SEMAPHORE_DESTROY_CMD.enter();
-    let args = match SemaphoreDestroyArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = SemaphoreDestroyArgs::parse(list)?;
     let entry = match SEMAPHORE_REGISTRY.with(|s| s.take(args.var)) {
         Some(e) => e,
         None => {
             l_builtin_error!(b"unknown semaphore handle");
-            return EXECUTION_FAILURE;
+            return Err(EXECUTION_FAILURE);
         }
     };
     unsafe { semaphore_teardown(entry.ptr, entry.name, true) };
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
 fn lookup_semaphore(id: u64) -> Option<*mut libc::sem_t> {
@@ -423,19 +400,15 @@ const SEMAPHORE_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn semaphore_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn semaphore_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SEMAPHORE_CMD.enter();
-    let args = match SemaphoreDispatchArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = SemaphoreDispatchArgs::parse(list)?;
     let action_bytes = unsafe { std::ffi::CStr::from_ptr(args.action) }.to_bytes();
     let handler = match SEMAPHORE_TABLE.lookup(action_bytes) {
         Some(h) => h,
         None => {
             l_builtin_error!(b"unknown semaphore subcommand: ", action_bytes);
-            return EX_USAGE;
+            return Err(EX_USAGE);
         }
     };
     handler(args.rest.as_ptr())

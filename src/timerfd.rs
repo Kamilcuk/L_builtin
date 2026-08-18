@@ -6,12 +6,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, WORD_LIST};
 use crate::bprintln;
-use crate::l_builtin_error;
-use crate::subcmd::CmdDesc;
-use cmdargs_derive::CmdArgs;
 use crate::cmdargs::BashVar;
+use crate::l_builtin_error;
+use crate::subcmd::{CmdDesc, CmdResult};
+use cmdargs_derive::CmdArgs;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
@@ -35,8 +35,6 @@ Returns success unless timerfd_create fails or the variable cannot be bound.
 ",
 );
 
-);
-
 fn parse_clock(s: Option<&str>) -> Option<libc::clockid_t> {
     let c = match s.map(str::to_ascii_uppercase).as_deref() {
         None | Some("MONOTONIC" | "CLOCK_MONOTONIC") => libc::CLOCK_MONOTONIC,
@@ -48,7 +46,7 @@ fn parse_clock(s: Option<&str>) -> Option<libc::clockid_t> {
 
 /// # Safety
 ///
-Safe when called from bash with a valid WORD_LIST pointer.
+/// Safe when called from bash with a valid WORD_LIST pointer.
 #[derive(CmdArgs)]
 struct TimerfdArgs {
     #[flag('n')]
@@ -56,7 +54,6 @@ struct TimerfdArgs {
     #[opt('c')]
     clock: Option<*const c_char>,
     #[opt('s')]
-    s')]
     initial: Option<f64>,
     #[opt('i')]
     interval: Option<f64>,
@@ -67,14 +64,10 @@ struct TimerfdArgs {
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn timerfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
 
-    let args = match TimerfdArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = TimerfdArgs::parse(list)?;
 
     let nonblock = args.nonblock;
     let mut clock: libc::clockid_t = libc::CLOCK_MONOTONIC;
@@ -98,7 +91,7 @@ pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
     let fd = unsafe { libc::timerfd_create(clock, flags) };
     if fd < 0 {
         l_builtin_error!(b"timerfd_create: ", std::io::Error::last_os_error());
-        return EXECUTION_FAILURE;
+        return Err(EXECUTION_FAILURE);
     }
 
     fn to_timespec(secs: f64) -> libc::timespec {
@@ -124,17 +117,14 @@ pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
         if unsafe { libc::timerfd_settime(fd, 0, &spec, std::ptr::null_mut()) } < 0 {
             l_builtin_error!(b"timerfd_settime: ", std::io::Error::last_os_error());
             unsafe { libc::close(fd) };
-            return EXECUTION_FAILURE;
+            return Err(EXECUTION_FAILURE);
         }
     }
 
     if let Some(var) = &fd_var {
-        if let Err(e) = var.set_i64(fd as i64) {
-            unsafe { libc::close(fd) };
-            return e;
-        }
+        var.set_int(fd as i64)?;
     } else {
         bprintln!(fd as i64);
     }
-    EXECUTION_SUCCESS
+    Ok(())
 }

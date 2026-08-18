@@ -14,11 +14,9 @@ use crate::bash_api::{
     WordListIterCpnt, WordListIterOsString, WordListView, EX_NOTFOUND, WORD_LIST,
 };
 use crate::l_builtin_error;
-use crate::subcmd::CmdDesc;
+use crate::subcmd::{CmdDesc, CmdResult};
 use crate::{beprintln, intlookup};
 use cmdargs_derive::CmdArgs;
-
-use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
     c"core",
@@ -76,13 +74,9 @@ struct CoreDispatchArgs {
 /// # Safety
 ///
 /// is safe
-#[no_mangle]
-pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn l_core_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
-    let args = match CoreDispatchArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = CoreDispatchArgs::parse(list)?;
     let rest_view = args.rest;
     let val = match rest_view.current() {
         Some(val) => val.as_bytes(),
@@ -91,17 +85,22 @@ pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
             l_builtin_error!(b"missing subcommand");
             beprintln!(b"Usage: L_builtin core <subcommand> [args...]");
             beprintln!(b"Available: ls, stat, dirname, rm, tee");
-            return EX_NOTFOUND;
+            return Err(EX_NOTFOUND);
         }
     };
     let uumain = match UU_DISPATCH_TABLE.lookup(val) {
         Some(f) => f,
         None => {
             l_builtin_error!(b"unknown subcommand: ", val);
-            return EX_NOTFOUND;
+            return Err(EX_NOTFOUND);
         }
     };
     let rest_view_lv = WordListView::from_raw(rest_view.as_ptr());
     let uuargs: UuArgs = rest_view_lv.iter_osstring();
-    uumain(uuargs)
+    let r = uumain(uuargs);
+    if r == 0 {
+        Ok(())
+    } else {
+        Err(r)
+    }
 }

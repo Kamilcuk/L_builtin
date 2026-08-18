@@ -12,6 +12,7 @@ use crate::bash_api::{
     bind_variable, find_variable, l_readonly_p, EXECUTION_FAILURE, EXECUTION_SUCCESS,
 };
 use crate::beprintln;
+use crate::subcmd::CmdResult;
 
 /// Bind `value` to the shell variable `var`, returning `EXECUTION_SUCCESS` on
 /// success or `EXECUTION_FAILURE` if the bind failed (e.g. a readonly variable).
@@ -175,31 +176,36 @@ pub(crate) fn capture_into_variable(
     ename: &str,
     var: *const c_char,
     trimnewlines: bool,
-    f: impl FnOnce() -> c_int,
-) -> c_int {
-    let mut memfd = return_on_err2!(ename, "cannot capture stdout", Memfd::new(), 1);
+    f: impl FnOnce() -> CmdResult,
+) -> CmdResult {
+    let mut memfd = return_on_err2!(ename, "cannot capture stdout", Memfd::new(), Err(1));
     let result = {
         let _guard = return_on_err2!(
             ename,
             "cannot redirect stdout",
             RedirectStdout::new(&memfd.file),
-            1
+            Err(1)
         );
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
     };
-    let ret = return_on_err2!(ename, "captured command panicked", result, 1);
-    return_on_err2!(ename, "couldn't write to memfd", memfd.file.write(b"\0"), 1);
+    let ret = return_on_err2!(ename, "captured command panicked", result, Err(1));
+    return_on_err2!(
+        ename,
+        "couldn't write to memfd",
+        memfd.file.write(b"\0"),
+        Err(1)
+    );
     let mut mmap = return_on_err2!(
         ename,
         "couldn't mmap",
         unsafe { MmapMut::map_mut(&memfd.file) },
-        1
+        Err(1)
     );
     if trimnewlines {
         trim_trailing_newlines_in_zero_terminated_array_place(&mut mmap)
     }
     let res = unsafe { bind_shell_variable(var, mmap.as_ptr().cast()) };
-    return_on_err!(ename, res, 1);
+    return_on_err!(ename, res, Err(1));
     ret
 }
 

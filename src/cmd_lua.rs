@@ -21,7 +21,7 @@ use crate::bash_api::{
     l_invisible_p, l_readonly_p, l_value_cell, make_new_array_variable, make_new_assoc_variable,
     WordListIterCpnt, EX_USAGE, SHELL_VAR, WORD_LIST,
 };
-use crate::subcmd::CmdDesc;
+use crate::subcmd::{CmdDesc, CmdResult};
 
 #[cfg(not(feature = "bash_lt_4_3"))]
 use crate::bash_api::l_execute_command_string;
@@ -155,13 +155,9 @@ struct LuaDispatchArgs {
 }
 
 /// # Safety
-#[no_mangle]
-pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn l_lua_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
-    let args = match LuaDispatchArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = LuaDispatchArgs::parse(list)?;
     let view = args.rest;
     let mut script_and_args = view.map(|c| unsafe { c.as_bytes() });
     let script = match script_and_args.next() {
@@ -170,7 +166,7 @@ pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
             // No script was given - only options (or nothing).
             l_builtin_error!(b"missing script");
             beprintln!("Usage: L_builtin lua [-v VAR] <script> [args...]");
-            return EX_USAGE;
+            return Err(EX_USAGE);
         }
     };
     let lua = Lua::new();
@@ -178,10 +174,10 @@ pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
         Ok(val) => val,
         Err(e) => {
             l_builtin_error!(e);
-            return 1;
+            return Err(1);
         }
     };
-    0
+    Ok(())
 }
 
 /// Run a Lua script and return its result as an mlua::Value.

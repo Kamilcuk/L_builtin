@@ -6,9 +6,9 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::l_builtin_error;
-use crate::subcmd::CmdDesc;
+use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
 
@@ -63,54 +63,50 @@ struct FlockArgs {
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn flock_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn flock_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
-
-    let args = match FlockArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
-
-    let exclusive = args.exclusive_x || args.exclusive_e;
-    let shared = args.shared;
-    let unlock = args.unlock;
-    let nonblock = args.nonblock;
-    let fd = args.fd;
-    if fd < 0 {
-        l_builtin_error!(b"invalid fd");
-        return EX_USAGE;
+    let args = FlockArgs::parse(list)?;
+    if args.fd < 0 {
+        l_builtin_error!(b"invalid fd", args.fd);
+        return Err(EX_USAGE);
     }
 
     let mut op: c_int = 0;
     let mut chosen = 0;
-    if exclusive {
+    if args.exclusive_x || args.exclusive_e {
         op |= libc::LOCK_EX;
         chosen += 1;
     }
-    if shared {
+    if args.shared {
         op |= libc::LOCK_SH;
         chosen += 1;
     }
-    if unlock {
+    if args.unlock {
         op |= libc::LOCK_UN;
         chosen += 1;
     }
     if chosen > 1 {
         l_builtin_error!(b"-x/-s/-u are mutually exclusive");
-        return EX_USAGE;
+        return Err(EX_USAGE);
     }
     if chosen == 0 {
         op |= libc::LOCK_EX;
     }
-    if nonblock {
+    if args.nonblock {
         op |= libc::LOCK_NB;
     }
 
-    let r = unsafe { libc::flock(fd, op) };
+    let r = unsafe { libc::flock(args.fd, op) };
     if r < 0 {
-        l_builtin_error!(b"flock: ", std::io::Error::last_os_error());
-        return EXECUTION_FAILURE;
+        l_builtin_error!(
+            b"flock(",
+            args.fd,
+            ", ",
+            op,
+            "): ",
+            std::io::Error::last_os_error()
+        );
+        return Err(EXECUTION_FAILURE);
     }
-    EXECUTION_SUCCESS
+    Ok(())
 }

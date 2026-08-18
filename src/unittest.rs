@@ -12,8 +12,13 @@
 
 #![allow(dead_code)]
 
+use cmdargs_derive::CmdArgs;
+
 #[cfg(feature = "dev")]
-use crate::beprintln;
+use crate::{
+    beprintln,
+    subcmd::{cint_to_cmd_result, CmdResult},
+};
 
 /// A single unit test: a name plus a parameterless function that panics
 /// (`assert!`/regular panic) on failure.
@@ -68,10 +73,38 @@ pub static TEST_SUITES: &[(&str, &[TestCase])] = &[
     ),
 ];
 
-/// Run every registered test, catching panics, and return the failure count.
-/// A per-test status and a summary line are printed to stderr.
+/// Define a unit test that works both as a `cargo test` `#[test]` and as a
+/// registry entry for the in-process `unittest` subcommand.
+///
+/// - under `cargo test`: emitted as a `#[test]` function.
+/// - under the `dev` feature: emitted as a plain `pub fn` (listed in
+///   `TEST_SUITES` so `unittest` can run it).
+/// - under both: a single `#[test]` function (no duplicate-symbol clash).
+/// - under neither: nothing is emitted (release `.so` carries no tests).
+#[macro_export]
+macro_rules! unittest_test {
+    (fn $name:ident() $body:block) => {
+        #[cfg(any(feature = "dev", test))]
+        #[cfg_attr(test, test)]
+        pub fn $name() {
+            $body
+        }
+    };
+}
+
+#[derive(CmdArgs)]
+struct UnittestArgs {}
+
+/// Dev-only subcommand: runs the crate's Rust unit-test suite (`cargo test`).
+///
+/// The builtin is normally linked against bash, so `cargo test` would fail to
+/// link (undefined bash C symbols). The `test_stubs` module provides those
+/// symbols for the test build, so plain `cargo test` links and runs. Only
+/// compiled when the `dev` feature is enabled (CMake `L_DEV=1`).
 #[cfg(feature = "dev")]
-pub fn run_all() -> usize {
+pub(crate) unsafe fn l_unittest_subcommand(list: *mut WORD_LIST) -> CmdResult {
+    let _args = UnittestArgs::parse(list)?;
+    beprintln!(b"running in-process unit tests ...");
     let mut failed = 0usize;
     for (group, tests) in TEST_SUITES.iter() {
         beprintln!(group.as_bytes(), b":");
@@ -91,24 +124,6 @@ pub fn run_all() -> usize {
     let total: usize = TEST_SUITES.iter().map(|(_, t)| t.len()).sum();
     let summary = format!("test result: {} passed; {} failed", total - failed, failed);
     beprintln!(summary.as_bytes());
-    failed
-}
-
-/// Define a unit test that works both as a `cargo test` `#[test]` and as a
-/// registry entry for the in-process `unittest` subcommand.
-///
-/// - under `cargo test`: emitted as a `#[test]` function.
-/// - under the `dev` feature: emitted as a plain `pub fn` (listed in
-///   `TEST_SUITES` so `unittest` can run it).
-/// - under both: a single `#[test]` function (no duplicate-symbol clash).
-/// - under neither: nothing is emitted (release `.so` carries no tests).
-#[macro_export]
-macro_rules! unittest_test {
-    (fn $name:ident() $body:block) => {
-        #[cfg(any(feature = "dev", test))]
-        #[cfg_attr(test, test)]
-        pub fn $name() {
-            $body
-        }
-    };
+    let code = if failed > 200 { 200 } else { failed };
+    cint_to_cmd_result(code.try_into().unwrap())
 }

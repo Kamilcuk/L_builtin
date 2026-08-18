@@ -23,9 +23,9 @@ pub(crate) mod connect;
 pub(crate) mod entrypoint;
 pub(crate) mod eventfd;
 pub(crate) mod flock;
-pub(crate) mod getopts;
 pub(crate) mod handles;
 pub(crate) mod intlookup;
+pub(crate) mod intstr;
 pub(crate) mod listen;
 pub(crate) mod lseek;
 pub(crate) mod memfd;
@@ -43,7 +43,6 @@ pub(crate) mod timerfd;
 pub(crate) mod unittest;
 pub(crate) mod vardb;
 pub(crate) mod variadic;
-pub(crate) mod intstr;
 
 // Test-only stand-ins for bash C symbols (allocator) so `cargo test` links
 // without a bash process. Never compiled into the shipped `.so`.

@@ -6,12 +6,10 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::subcmd::CmdDesc;
+use crate::bash_api::{EX_RETRYFAIL, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
-use crate::bash_api::{
-    this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
-};
-use crate::{beprintln, bufwrite};
+use crate::subcmd::{CmdDesc, CmdResult};
+use crate::{bufwrite, l_builtin_error};
 use cmdargs_derive::CmdArgs;
 use std::os::raw::{c_char, c_int};
 
@@ -30,6 +28,8 @@ Returns success unless accept fails or variable binding fails.
 
 #[derive(CmdArgs)]
 struct AcceptArgs {
+    #[opt('t')]
+    timeout_ms: Option<i32>,
     #[positional]
     clientfd_var: BashVar,
     #[positional]
@@ -38,40 +38,8 @@ struct AcceptArgs {
     listenfd: c_int,
 }
 
-/// # Safety
-///
-/// Safe when called from bash with valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
-    CMD.enter();
-    let args = match AcceptArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
-
-    let listenfd = args.listenfd;
-
-    // Call accept
-    let mut addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
-    let mut addrlen = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
-    let clientfd = unsafe {
-        libc::accept(
-            listenfd,
-            &mut addr as *mut _ as *mut libc::sockaddr,
-            &mut addrlen,
-        )
-    };
-    if clientfd < 0 {
-        beprintln!(
-            this_cmd_name(),
-            b": accept failed: ",
-            std::io::Error::last_os_error()
-        );
-        return EXECUTION_FAILURE;
-    }
-
-    // Format address
-    let addr_buf = if addr.ss_family == libc::AF_INET as libc::sa_family_t {
+fn addr_to_ip_port(addr: libc::sockaddr_storage) -> [u8; 48] {
+    if addr.ss_family == libc::AF_INET as libc::sa_family_t {
         let s = &addr as *const _ as *const libc::sockaddr_in;
         let ip = unsafe { std::net::Ipv4Addr::from((*s).sin_addr.s_addr.to_ne_bytes()) };
         let port = u16::from_be(unsafe { (*s).sin_port });
@@ -83,19 +51,54 @@ pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
         bufwrite!(48, "{ip}:{port}")
     } else {
         bufwrite!(48, "unknown:0")
+    }
+}
+
+/// # Safety
+///
+/// Safe when called from bash with a valid WORD_LIST pointer.
+pub unsafe fn accept_subcommand(list: *mut WORD_LIST) -> CmdResult {
+    CMD.enter();
+    let args = AcceptArgs::parse(list)?;
+    // Handle timeout using poll if specified
+    if let Some(timeout) = args.timeout_ms {
+        let mut pfd = libc::pollfd {
+            fd: args.listenfd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ret = libc::poll(&mut pfd, 1, timeout);
+        if ret < 0 {
+            return Err(l_builtin_error!(
+                ": poll failed: ",
+                std::io::Error::last_os_error()
+            ));
+        } else if ret == 0 {
+            l_builtin_error!(b": accept timed out");
+            return Err(EX_RETRYFAIL);
+        }
+    }
+    // Call accept
+    let mut addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut addrlen = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    let clientfd = unsafe {
+        libc::accept(
+            args.listenfd,
+            &mut addr as *mut _ as *mut libc::sockaddr,
+            &mut addrlen,
+        )
     };
-
+    if clientfd < 0 {
+        return Err(l_builtin_error!(
+            ": accept failed: ",
+            std::io::Error::last_os_error()
+        ));
+    }
+    // Format address
+    let addr_buf = addr_to_ip_port(addr);
     // Bind clientfd variable - use the raw C string pointer
-    let clientfd_str = crate::shared::SizeTStr::from_usize(clientfd as usize);
-
-    if let Err(e) = args.clientfd_var.set(clientfd_str.as_ptr()) {
-        return e;
-    }
-
+    args.clientfd_var.set_int(clientfd)?;
     // Bind addr variable - use stack buffer
-    if let Err(e) = args.addr_var.set(addr_buf.as_ptr().cast()) {
-        return e;
-    }
-
-    EXECUTION_SUCCESS
+    args.addr_var.set(addr_buf.as_ptr().cast())?;
+    Ok(())
 }

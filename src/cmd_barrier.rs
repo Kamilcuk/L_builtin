@@ -17,12 +17,10 @@ use std::os::raw::c_int;
 
 use cmdargs_derive::CmdArgs;
 
-use crate::bash_api::{
-    Cpnt, WordListIterCpnt, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
-};
+use crate::bash_api::{Cpnt, WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
 use crate::pthread::PthreadMutexGuard;
-use crate::subcmd::{CmdDesc, SubcommandFn};
+use crate::subcmd::{CmdDesc, CmdResult, SubcommandFn};
 use crate::{
     handles::{map_anonymous, map_named, HandleRegistry},
     l_builtin_error,
@@ -101,25 +99,25 @@ unsafe fn barrier_arrive(bar: &mut Barrier) -> bool {
     bar.satisfied != 0
 }
 
-unsafe fn barrier_wait(b: *mut Barrier, timeout: Option<f64>, nonblock: bool) -> c_int {
+unsafe fn barrier_wait(b: *mut Barrier, timeout: Option<f64>, nonblock: bool) -> CmdResult {
     let bar = &mut *b;
     let _guard = match PthreadMutexGuard::lock(&mut bar.mtx as *mut _) {
         Ok(g) => g,
-        Err(_) => return EXECUTION_FAILURE,
+        Err(_) => return Err(EXECUTION_FAILURE),
     };
     if bar.satisfied != 0 {
-        return EXECUTION_SUCCESS;
+        return Ok(());
     }
     let ready = barrier_arrive(bar);
     if nonblock {
         return if ready {
-            EXECUTION_SUCCESS
+            Ok(())
         } else {
-            EXECUTION_FAILURE
+            Err(EXECUTION_FAILURE)
         };
     }
     if ready {
-        return EXECUTION_SUCCESS;
+        return Ok(());
     }
     loop {
         let rc = match timeout {
@@ -130,26 +128,26 @@ unsafe fn barrier_wait(b: *mut Barrier, timeout: Option<f64>, nonblock: bool) ->
             None => libc::pthread_cond_wait(&mut bar.cond, &mut bar.mtx),
         };
         if rc != 0 {
-            return EXECUTION_FAILURE;
+            return Err(EXECUTION_FAILURE);
         }
         if bar.satisfied != 0 {
             break;
         }
     }
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
 /// Clear the satisfied state and arrival count so the barrier can be reused.
-unsafe fn barrier_reset(b: *mut Barrier) -> c_int {
+unsafe fn barrier_reset(b: *mut Barrier) -> CmdResult {
     let bar = &mut *b;
     let _guard = match PthreadMutexGuard::lock(&mut bar.mtx as *mut _) {
         Ok(g) => g,
-        Err(_) => return EXECUTION_FAILURE,
+        Err(_) => return Err(EXECUTION_FAILURE),
     };
     bar.count = 0;
     bar.satisfied = 0;
     libc::pthread_cond_broadcast(&mut bar.cond);
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
 /// Store a barrier in the registry and return its opaque integer handle.
@@ -197,15 +195,12 @@ struct BarrierCreateSubcommand {
     count: u32,
 }
 
-pub unsafe extern "C" fn barrier_create_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn barrier_create_subcommand(list: *mut WORD_LIST) -> CmdResult {
     BARRIER_CREATE_CMD.enter();
-    let args = match BarrierCreateSubcommand::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = BarrierCreateSubcommand::parse(list)?;
     if args.count == 0 {
         l_builtin_error!(b"count must be >= 1");
-        return EX_USAGE;
+        return Err(EX_USAGE);
     }
     let size = barrier_bytes();
     let ptr = if let Some(n) = &args.name {
@@ -213,7 +208,7 @@ pub unsafe extern "C" fn barrier_create_subcommand(list: *mut WORD_LIST) -> c_in
             Ok(p) => p,
             Err(e) => {
                 l_builtin_error!(e.as_bytes());
-                return EXECUTION_FAILURE;
+                return Err(EXECUTION_FAILURE);
             }
         }
     } else {
@@ -221,14 +216,14 @@ pub unsafe extern "C" fn barrier_create_subcommand(list: *mut WORD_LIST) -> c_in
             Ok(p) => p,
             Err(e) => {
                 l_builtin_error!(e.as_bytes());
-                return EXECUTION_FAILURE;
+                return Err(EXECUTION_FAILURE);
             }
         }
     };
     if let Err(e) = unsafe { barrier_init(ptr as *mut Barrier, args.count) } {
         l_builtin_error!(e.as_bytes());
         unsafe { libc::munmap(ptr as *mut libc::c_void, size) };
-        return EXECUTION_FAILURE;
+        return Err(EXECUTION_FAILURE);
     }
     let id = store_barrier(
         ptr,
@@ -237,10 +232,8 @@ pub unsafe extern "C" fn barrier_create_subcommand(list: *mut WORD_LIST) -> c_in
             None => None,
         },
     );
-    match args.var.set_u64(id) {
-        Ok(()) => EXECUTION_SUCCESS,
-        Err(e) => return e,
-    }
+    args.var.set_int(id)?;
+    Ok(())
 }
 
 #[derive(CmdArgs)]
@@ -253,12 +246,9 @@ struct BarrierOpenArgs {
     name: *const c_char,
 }
 
-pub unsafe extern "C" fn barrier_open_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn barrier_open_subcommand(list: *mut WORD_LIST) -> CmdResult {
     BARRIER_OPEN_CMD.enter();
-    let args = match BarrierOpenArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = BarrierOpenArgs::parse(list)?;
     let name_c =
         unsafe { crate::bash_api::Cpnt::new(args.name as *mut c_char).as_cstr() }.to_owned();
     let size = barrier_bytes();
@@ -266,14 +256,12 @@ pub unsafe extern "C" fn barrier_open_subcommand(list: *mut WORD_LIST) -> c_int 
         Ok(p) => p,
         Err(e) => {
             l_builtin_error!(e.as_bytes());
-            return EXECUTION_FAILURE;
+            return Err(EXECUTION_FAILURE);
         }
     };
     let id = store_barrier(ptr, Some(name_c));
-    match args.barrier.set_u64(id) {
-        Ok(()) => EXECUTION_SUCCESS,
-        Err(e) => return e,
-    }
+    args.barrier.set_int(id)?;
+    Ok(())
 }
 
 #[derive(CmdArgs)]
@@ -286,15 +274,12 @@ struct BarrierWaitSubcommand {
     id: u64,
 }
 
-pub unsafe extern "C" fn barrier_wait_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn barrier_wait_subcommand(list: *mut WORD_LIST) -> CmdResult {
     BARRIER_WAIT_CMD.enter();
-    let args = match BarrierWaitSubcommand::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = BarrierWaitSubcommand::parse(list)?;
     let ptr = match lookup_ptr(args.id) {
         Some(p) => p,
-        None => return EXECUTION_FAILURE,
+        None => return Err(EXECUTION_FAILURE),
     };
     unsafe { barrier_wait(ptr, args.timeout, args.nonblock) }
 }
@@ -305,20 +290,17 @@ struct BarrierCloseArgs {
     id: u64,
 }
 
-pub unsafe extern "C" fn barrier_close_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn barrier_close_subcommand(list: *mut WORD_LIST) -> CmdResult {
     BARRIER_CLOSE_CMD.enter();
-    let args = match BarrierCloseArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = BarrierCloseArgs::parse(list)?;
     let entry = match take_barrier(args.id) {
         Some(e) => e,
-        None => return EXECUTION_FAILURE,
+        None => return Err(EXECUTION_FAILURE),
     };
     let (ptr, _name) = entry;
     let size = barrier_bytes();
     unsafe { libc::munmap(ptr as *mut libc::c_void, size) };
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
 #[derive(CmdArgs)]
@@ -327,15 +309,12 @@ struct BarrierResetArgs {
     barrier: u64,
 }
 
-pub unsafe extern "C" fn barrier_reset_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn barrier_reset_subcommand(list: *mut WORD_LIST) -> CmdResult {
     BARRIER_RESET_CMD.enter();
-    let args = match BarrierResetArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = BarrierResetArgs::parse(list)?;
     let ptr = match lookup_ptr(args.barrier) {
         Some(p) => p,
-        None => return EXECUTION_FAILURE,
+        None => return Err(EXECUTION_FAILURE),
     };
     unsafe { barrier_reset(ptr) }
 }
@@ -346,15 +325,12 @@ struct BarrierDestroyArgs {
     barrier: u64,
 }
 
-pub unsafe extern "C" fn barrier_destroy_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn barrier_destroy_subcommand(list: *mut WORD_LIST) -> CmdResult {
     BARRIER_DESTROY_CMD.enter();
-    let args = match BarrierDestroyArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = BarrierDestroyArgs::parse(list)?;
     let entry = match take_barrier(args.barrier) {
         Some(e) => e,
-        None => return EXECUTION_FAILURE,
+        None => return Err(EXECUTION_FAILURE),
     };
     let (ptr, name) = entry;
     let size = barrier_bytes();
@@ -364,7 +340,7 @@ pub unsafe extern "C" fn barrier_destroy_subcommand(list: *mut WORD_LIST) -> c_i
             libc::shm_unlink(n.as_ptr());
         }
     }
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
 const BARRIER_CMD: CmdDesc = CmdDesc::new(
@@ -518,19 +494,15 @@ struct BarrierDispatchArgs {
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn barrier_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn barrier_subcommand(list: *mut WORD_LIST) -> CmdResult {
     BARRIER_CMD.enter();
-    let args = match BarrierDispatchArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = BarrierDispatchArgs::parse(list)?;
     let action_bytes = unsafe { std::ffi::CStr::from_ptr(args.action) }.to_bytes();
     let handler = match BARRIER_TABLE.lookup(action_bytes) {
         Some(h) => h,
         None => {
             l_builtin_error!(b"unknown barrier subcommand: ", action_bytes);
-            return EX_USAGE;
+            return Err(EX_USAGE);
         }
     };
     handler(args.rest.as_ptr())

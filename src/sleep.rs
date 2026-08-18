@@ -6,11 +6,10 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::beprintln;
-use crate::subcmd::CmdDesc;
+use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
-use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
     c"sleep",
@@ -23,13 +22,10 @@ If -i is provided, the sleep will not automatically retry on signal interruption
 (EINTR). Instead, it will fail with an error. By default, sleep retries on EINTR.
 
 Exit Status:
-Returns success unless sleep fails.
+  Returns success unless sleep fails.
 ",
 );
 
-/// # Safety
-///
-/// Safe when called from bash with valid WORD_LIST pointer.
 #[derive(CmdArgs)]
 struct SleepArgs {
     #[flag('i')]
@@ -38,18 +34,14 @@ struct SleepArgs {
     seconds: f64,
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn sleep_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
-    let args = match SleepArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = SleepArgs::parse(list)?;
     let seconds = args.seconds;
 
     if seconds < 0.0 {
         beprintln!(this_cmd_name(), b": invalid sleep duration");
-        return EX_USAGE;
+        return Err(EX_USAGE);
     }
 
     let mut ts = libc::timespec {
@@ -70,15 +62,15 @@ pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
         if err.raw_os_error() == Some(libc::EINTR) {
             if args.interruptible {
                 beprintln!(this_cmd_name(), b": sleep failed: Interrupted system call");
-                return EXECUTION_FAILURE;
+                return Err(EXECUTION_FAILURE);
             }
             // Interrupted by signal, continue sleeping with remaining time
             ts = rem;
             continue;
         }
         beprintln!(this_cmd_name(), b": sleep failed: ", err);
-        return EXECUTION_FAILURE;
+        return Err(EXECUTION_FAILURE);
     }
 
-    EXECUTION_SUCCESS
+    Ok(())
 }

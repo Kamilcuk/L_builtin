@@ -6,13 +6,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
-use crate::l_builtin_error;
-use crate::subcmd::CmdDesc;
-use cmdargs_derive::CmdArgs;
+use crate::bash_api::{EXECUTION_FAILURE, WORD_LIST};
 use crate::cmdargs::BashVar;
+use crate::l_builtin_error;
+use crate::subcmd::{CmdDesc, CmdResult};
+use cmdargs_derive::CmdArgs;
 use std::ffi::c_char;
-use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
     c"lseek",
@@ -63,7 +62,7 @@ struct LseekArgs {
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-pub unsafe fn lseek_subcommand(list: *mut WORD_LIST) -> Result<(), c_int> {
+pub unsafe fn lseek_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
     let args = LseekArgs::parse(list)?;
     let result = libc::lseek(args.fd, args.offset, args.whence);
@@ -72,7 +71,7 @@ pub unsafe fn lseek_subcommand(list: *mut WORD_LIST) -> Result<(), c_int> {
         return Err(EXECUTION_FAILURE);
     }
     if let Some(var) = args.var {
-        var.set_i64(result)?;
+        var.set_int(result)?;
     }
     Ok(())
 }

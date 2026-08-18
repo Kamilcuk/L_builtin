@@ -9,15 +9,17 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::ffi::CStr;
+
+use cmdargs_derive::CmdArgs;
 
 use crate::bash_api::{
-    builtin_error, c_char, c_int, is_valid_var_name, this_cmd_name, WordListView, EX_USAGE,
-    WORD_LIST,
+    c_char, c_int, this_cmd_name, WordListView,
+    EX_USAGE, WORD_LIST,
 };
+use crate::cmdargs::WordListIterCpnt;
 use crate::shared::{capture_into_variable, flush_stdout_buffers};
-use crate::subcmd::{SubcommandFn, SubcommandGuard};
-use crate::{beprintln, bprintln, getopts, intlookup, variadic};
+use crate::subcmd::{cmd_result_to_cint, CmdResult, SubcommandFn, SubcommandGuard};
+use crate::{beprintln, bprintln, intlookup, l_builtin_usage_error};
 
 #[cfg(not(feature = "bash_lt_4_3"))]
 use crate::bash_api::l_execute_command_string;
@@ -65,7 +67,7 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("sleep", crate::sleep::sleep_subcommand),
     ("core", crate::cmd_core::l_core_subcommand),
     ("lua", crate::cmd_lua::l_lua_subcommand),
-    ("ext", l_cmd_ext),
+    ("ext", c_wrap!(l_cmd_ext)),
     ("eventfd", crate::eventfd::eventfd_subcommand),
     ("memfd", crate::memfd::memfd_subcommand),
     ("timerfd", crate::timerfd::timerfd_subcommand),
@@ -80,7 +82,7 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     #[cfg(not(feature = "bash_lt_4_3"))]
     ("capture", l_capture_subcommand),
     #[cfg(feature = "dev")]
-    ("unittest", l_unittest_subcommand),
+    ("unittest", crate::unittest::l_unittest_subcommand),
 ];
 
 const fn extract_first<const N: usize>(a: &[(&'static str, SubcommandFn)]) -> [&'static str; N] {
@@ -165,7 +167,7 @@ all work uniformly.
 
 /// # Safety
 #[cfg(not(feature = "bash_lt_4_3"))]
-pub unsafe extern "C" fn l_capture_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn l_capture_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CAPTURE_CMD.enter();
     let mut args = WordListView::from_raw(list).into_iter();
     // var is a slice from bash WORD_LIST; use the original C string pointer.
@@ -174,91 +176,61 @@ pub unsafe extern "C" fn l_capture_subcommand(list: *mut WORD_LIST) -> c_int {
     let var_ptr = match args.next() {
         None => {
             beprintln!(b"L_builtin capture: usage: L_builtin capture VAR <command> [args...]");
-            return EX_USAGE;
+            return Err(EX_USAGE);
         }
         Some(v) => v,
     };
     if args.current().is_none() {
         beprintln!(b"L_builtin capture: missing command");
-        return EX_USAGE;
+        return Err(EX_USAGE);
     }
     l_capture_output(var_ptr.as_ptr().cast(), args.as_ptr())
 }
 
 #[cfg(not(feature = "bash_lt_4_3"))]
-#[no_mangle]
-pub unsafe extern "C" fn l_capture_output(var: *const c_char, list: *mut WORD_LIST) -> c_int {
+pub unsafe fn l_capture_output(var: *const c_char, list: *mut WORD_LIST) -> CmdResult {
     let args = WordListView::from_raw(list).into_iter();
     let cmd = build_eval_command(args.map(|c| unsafe { c.as_bytes() }));
     assert!(!cmd.is_empty());
-    capture_into_variable("L_builtin capture", var, false, || unsafe {
-        l_execute_command_string(cmd.as_ptr().cast())
+    capture_into_variable("L_builtin capture", var, false, || {
+        let rc = unsafe { l_execute_command_string(cmd.as_ptr().cast()) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(rc)
+        }
     })
 }
 
-/// Dev-only subcommand: runs the crate's Rust unit-test suite (`cargo test`).
-///
-/// The builtin is normally linked against bash, so `cargo test` would fail to
-/// link (undefined bash C symbols). The `test_stubs` module provides those
-/// symbols for the test build, so plain `cargo test` links and runs. Only
-/// compiled when the `dev` feature is enabled (CMake `L_DEV=1`).
-#[cfg(feature = "dev")]
-pub(crate) unsafe extern "C" fn l_unittest_subcommand(_list: *mut WORD_LIST) -> c_int {
-    use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS};
-    use crate::unittest::run_all;
-
-    beprintln!(b"running in-process unit tests ...");
-    let failed = run_all();
-    if failed == 0 {
-        EXECUTION_SUCCESS
-    } else {
-        EXECUTION_FAILURE
-    }
+#[derive(CmdArgs)]
+struct EntrypointArgs {
+    #[opt('v')]
+    var: Option<BashVar>,
+    #[rest]
+    rest: WordListIterCpnt<'static>,
 }
 
 /// Top-level L_builtin entry point called by bash via L_builtin_struct.function
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
-    // Parse top-level options (-v VAR) before dispatching to subcommand
-    let mut var: *mut c_char = std::ptr::null_mut();
-    let mut var_name: *mut c_char = std::ptr::null_mut();
-    let args = getopts!(
-        list,
-        [],
-        [ v => |v| var_name = v.as_ptr().cast() ]
-    );
-    // Validate variable name if -v was provided
-    if !var_name.is_null() {
-        let name = unsafe { CStr::from_ptr(var_name).to_bytes() };
-        if !is_valid_var_name(name) {
-            variadic!(builtin_error, c"-v: invalid variable name '%s'", var_name);
-            return EX_USAGE;
-        }
-        var = var_name;
-    }
-    let mut list = args.into_iter();
+    flush_stdout_buffers();
+    let ret = cmd_result_to_cint(entrypoint(list));
+    flush_stdout_buffers();
+    ret
+}
+
+pub unsafe fn entrypoint(list: *mut WORD_LIST) -> CmdResult {
+    let args = EntrypointArgs::parse(list)?;
+    let mut list = args.rest;
     let first_word = match list.next() {
         Some(first_word) => first_word,
-        None => {
-            variadic!(builtin_error, c"missing subcommand");
-            l_builtin_print_usage();
-            return EX_USAGE;
-        }
+        None => return Err(l_builtin_usage_error!("missing subcommand")),
     };
     let first = unsafe { first_word.as_bytes() };
     // Find the subcommand for this name using intlookup's packed table.
     let subcommand = match SUBCOMMAND_TABLE.lookup(first) {
         Some(f) => f,
-        None => {
-            // beprintln!(this_cmd_name(), b": unknown subcommand:", first);
-            variadic!(
-                builtin_error,
-                c"unknown subcommand: %s",
-                first_word.as_ptr(),
-            );
-            l_builtin_print_usage();
-            return EX_USAGE;
-        }
+        None => return Err(l_builtin_usage_error!("unknown subcommand: ", first_word)),
     };
     // Construct the guard before dispatching so current_builtin's doc pointers
     // (set by the subcommand's CmdDesc::enter) are restored when l_entrypoint
@@ -266,15 +238,12 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
     let _guard = SubcommandGuard::new();
     // Flush before the handler so buffered bash/C output cannot be reordered
     // against direct fd writes from Rust.
-    flush_stdout_buffers();
-    let ret = if !var.is_null() {
+    if let Some(ret) = args.var {
         // -v VAR was provided: capture subcommand stdout into VAR
-        capture_into_variable("L_builtin", var, true, || unsafe {
+        capture_into_variable("L_builtin", ret.as_ptr(), true, || unsafe {
             subcommand(list.as_ptr())
         })
     } else {
         unsafe { subcommand(list.as_ptr()) }
-    };
-    flush_stdout_buffers();
-    ret
+    }
 }

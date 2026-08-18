@@ -12,7 +12,7 @@ fi
 f="$(dirname "$(readlink -f "$0")")"/L_builtin.so
 setx enable -f "$f" L_builtin
 if (( $# == 1 )); then
-  setx eval "b $*"
+  setx eval "$*"
 else
-  setx "$@"
+  setx L_builtin "$@"
 fi

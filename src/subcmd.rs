@@ -104,5 +104,23 @@ impl Drop for SubcommandGuard {
     }
 }
 
-pub type CmdResult = Result<(), c_int>;
-pub type SubcommandFn = unsafe fn(*mut WORD_LIST) -> Result<(), c_int>;
+///////////////////////////////////////////////////////////////
+
+pub(crate) type CmdResult = Result<(), c_int>;
+
+pub(crate) fn cmd_result_to_cint(res: CmdResult) -> c_int {
+    match res {
+        Ok(()) => 0,
+        Err(code) => code,
+    }
+}
+
+pub(crate) fn cint_to_cmd_result(res: c_int) -> CmdResult {
+    if res == 0 {
+        Ok(())
+    } else {
+        Err(res)
+    }
+}
+
+pub(crate) type SubcommandFn = unsafe fn(*mut WORD_LIST) -> CmdResult;

@@ -59,9 +59,9 @@ use crate::bash_api::{
     array_insert, array_remove, arrayind_t, assoc_remove, is_valid_var_name, l_array_cell,
     l_array_max_index, l_assoc_cell, l_assoc_insert, l_init_dynamic_array_var,
     l_init_dynamic_assoc_var, l_unbind_variable, variable, ArrayIterator, AssocIterator,
-    WordListIterCpnt, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, SHELL_VAR, WORD_LIST,
+    WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, SHELL_VAR, WORD_LIST,
 };
-use crate::subcmd::{CmdDesc, SubcommandFn};
+use crate::subcmd::{CmdDesc, CmdResult, SubcommandFn};
 use crate::vardb::{open_db_loc, DbLoc, DbPath, LockedDatabase, VarData};
 use crate::{beprintln, bprintln, l_builtin_error};
 
@@ -379,16 +379,16 @@ struct ShmUnbindArgs {
 /// Validate that at most one of `-s`, `-n`, `-f` was supplied. Shared by every
 /// `shm` args struct via its inherent `post` implementation.
 impl ShmLocArgs {
-    fn post(&self) -> Result<(), c_int> {
+    fn post(&self) -> CmdResult {
         let n = [self.s, self.n, self.f]
             .iter()
             .filter(|o| o.is_some())
             .count();
         if n > 1 {
             l_builtin_error!(b"shm: -s, -n and -f are mutually exclusive");
-            return Result::Err(EX_USAGE);
+            return Err(EX_USAGE);
         }
-        Result::Ok(())
+        Ok(())
     }
 
     /// Resolve the backing database location for this parsed set of flags, after
@@ -415,13 +415,13 @@ impl ShmLocArgs {
 }
 
 impl ShmAddArgs {
-    fn post(&self) -> Result<(), c_int> {
+    fn post(&self) -> CmdResult {
         self.loc.post()
     }
 }
 
 impl ShmUnbindArgs {
-    fn post(&self) -> Result<(), c_int> {
+    fn post(&self) -> CmdResult {
         self.loc.post()
     }
 }
@@ -446,16 +446,10 @@ fn resolve_loc(shared: Option<&CStr>, full: Option<&CStr>, anon: Option<&CStr>) 
 /// database. The database is selected by `-s` (POSIX shared memory), `-n`
 /// (anonymous in-memory mapping) or `-f` (a regular file); with none of them the
 /// default `DEFAULT` in-memory database is used.
-unsafe extern "C" fn shm_add_subcommand(list: *mut WORD_LIST) -> c_int {
+unsafe fn shm_add_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SHM_ADD_CMD.enter();
-    let args = match ShmAddArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
-    let loc = match args.loc.resolve_dbloc() {
-        Ok(l) => l,
-        Err(c) => return c,
-    };
+    let args = ShmAddArgs::parse(list)?;
+    let loc = args.loc.resolve_dbloc()?;
     let db = match get_db_loc(&loc) {
         Ok(d) => d,
         // A memfd database not yet created in this process: create it. POSIX
@@ -464,7 +458,7 @@ unsafe extern "C" fn shm_add_subcommand(list: *mut WORD_LIST) -> c_int {
             Ok(d) => Arc::new(d),
             Err(e) => {
                 l_builtin_error!(e);
-                return EXECUTION_FAILURE;
+                return Err(EXECUTION_FAILURE);
             }
         },
     };
@@ -492,9 +486,9 @@ unsafe extern "C" fn shm_add_subcommand(list: *mut WORD_LIST) -> c_int {
     };
     if result.is_null() {
         l_builtin_error!(b": failed to bind variable ", args.var);
-        return EXECUTION_FAILURE;
+        return Err(EXECUTION_FAILURE);
     }
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
 /// `L_builtin shm rm [-s NAME | -n NAME | -f PATH]`
@@ -503,20 +497,14 @@ unsafe extern "C" fn shm_add_subcommand(list: *mut WORD_LIST) -> c_int {
 /// drop the registry entries, and unlink the backing object/file (for `-s`/`-f`).
 /// Takes no positional arguments; the database is selected by the flags, or the
 /// default `DEFAULT` database when none are given.
-unsafe extern "C" fn shm_rm_subcommand(list: *mut WORD_LIST) -> c_int {
+unsafe fn shm_rm_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SHM_REMOVE_CMD.enter();
-    let args = match ShmLocArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
-    let loc = match args.resolve_dbloc() {
-        Ok(l) => l,
-        Err(c) => return c,
-    };
+    let args = ShmLocArgs::parse(list)?;
+    let loc = args.resolve_dbloc()?;
     let key = loc_key(&loc);
     unbind_registry_vars(&key);
     unlink_db_backing(&loc);
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
 /// `L_builtin shm unbind [-s NAME | -n NAME | -f PATH] VAR_NAME [VAR_NAME...]`
@@ -524,15 +512,12 @@ unsafe extern "C" fn shm_rm_subcommand(list: *mut WORD_LIST) -> c_int {
 /// Unbind the named variable(s) from this shell: drop the registry entry and
 /// unbind the bash variable. This does NOT remove the variable's data from the
 /// shared database; another process may still read it.
-unsafe extern "C" fn shm_unbind_subcommand(list: *mut WORD_LIST) -> c_int {
+unsafe fn shm_unbind_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SHM_UNBIND_CMD.enter();
-    let args = match ShmUnbindArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = ShmUnbindArgs::parse(list)?;
     if args.vars.as_ptr().is_null() {
         l_builtin_error!(b"shm: missing required argument: VARS");
-        return EX_USAGE;
+        return Err(EX_USAGE);
     }
     for c in args.vars {
         let v = c.as_ptr() as *const c_char;
@@ -543,7 +528,7 @@ unsafe extern "C" fn shm_unbind_subcommand(list: *mut WORD_LIST) -> c_int {
         REGISTRY.with(|r| r.borrow_mut().remove(&ckey));
         l_unbind_variable(v);
     }
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
 /// A human-readable label for a database backing, used as a header in `ls`/
@@ -597,35 +582,16 @@ unsafe fn print_var_assignment(name: &CString, vd: &VarData) {
 /// Print every variable stored in the database as bash array assignments. The
 /// database is selected by the flags, or the default `DEFAULT` database when
 /// none are given.
-unsafe extern "C" fn shm_info_subcommand(list: *mut WORD_LIST) -> c_int {
+unsafe fn shm_info_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SHM_INFO_CMD.enter();
-    let args = match ShmLocArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
-    let loc = match args.resolve_dbloc() {
-        Ok(l) => l,
-        Err(c) => return c,
-    };
-    let db = match get_db_loc(&loc) {
-        Ok(x) => x,
-        Err(e) => {
-            l_builtin_error!(e.to_string());
-            return EXECUTION_FAILURE;
-        }
-    };
-    match db.read() {
-        Ok(repr) => {
-            for (name, vd) in &repr.vars {
-                print_var_assignment(name, vd);
-            }
-        }
-        Err(e) => {
-            l_builtin_error!(e.to_string());
-            return EXECUTION_FAILURE;
-        }
+    let args = ShmLocArgs::parse(list)?;
+    let loc = args.resolve_dbloc()?;
+    let db = get_db_loc(&loc).map_err(|e| l_builtin_error!(e))?;
+    let repr = db.read().map_err(|e| l_builtin_error!(e))?;
+    for (name, vd) in &repr.vars {
+        print_var_assignment(name, vd);
     }
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
 /// `L_builtin shm ls [-s NAME | -n NAME | -f PATH]`
@@ -633,17 +599,11 @@ unsafe extern "C" fn shm_info_subcommand(list: *mut WORD_LIST) -> c_int {
 /// Without any flag, list every database this session knows about together with
 /// the variables bound to each. With a backing flag, list only the variables
 /// bound to that database in this session's REGISTRY.
-unsafe extern "C" fn shm_ls_subcommand(list: *mut WORD_LIST) -> c_int {
+unsafe fn shm_ls_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SHM_LIST_CMD.enter();
-    let args = match ShmLocArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = ShmLocArgs::parse(list)?;
     if args.s.is_some() || args.n.is_some() || args.f.is_some() {
-        let loc = match args.resolve_dbloc() {
-            Ok(l) => l,
-            Err(c) => return c,
-        };
+        let loc = args.resolve_dbloc()?;
         // List only the variables bound to the database in this session's
         // REGISTRY (not every entry another process may have written to it).
         let key = loc_key(&loc);
@@ -658,7 +618,7 @@ unsafe extern "C" fn shm_ls_subcommand(list: *mut WORD_LIST) -> c_int {
         for n in &names {
             bprintln!(n.as_bytes());
         }
-        return EXECUTION_SUCCESS;
+        return Ok(());
     }
     REGISTRY.with(|r| {
         let reg = r.borrow();
@@ -687,7 +647,7 @@ unsafe extern "C" fn shm_ls_subcommand(list: *mut WORD_LIST) -> c_int {
             bprintln!(line);
         }
     });
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
 const SHM_CMD: CmdDesc = CmdDesc::new(
@@ -845,19 +805,15 @@ struct ShmDispatchArgs {
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn shm_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn shm_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SHM_CMD.enter();
-    let args = match ShmDispatchArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = ShmDispatchArgs::parse(list)?;
     let action_bytes = unsafe { CStr::from_ptr(args.action) }.to_bytes();
     let handler = match SHM_TABLE.lookup(action_bytes) {
         Some(h) => h,
         None => {
             l_builtin_error!(b": unknown shm subcommand: ", action_bytes);
-            return EXECUTION_FAILURE;
+            return Err(EXECUTION_FAILURE);
         }
     };
     handler(args.rest.as_ptr())

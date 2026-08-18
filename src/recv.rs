@@ -6,12 +6,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
-use crate::cmdargs::{BashVar, CStr};
+use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
+use crate::cmdargs::{BashVar, Cpnt};
+use crate::subcmd::{CmdDesc, CmdResult};
 use crate::l_builtin_error;
-use crate::subcmd::CmdDesc;
 use cmdargs_derive::CmdArgs;
-use std::ffi::c_int;
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -57,6 +56,15 @@ enum Format {
     Hex,
 }
 
+fn parse_format(cptr: Cpnt) -> Result<Format, String> {
+    match unsafe { cptr.as_str() } {
+        Ok("hex") => Ok(Format::Hex),
+        Ok("raw") => Ok(Format::Raw),
+        Ok(s) => Err(format!("invalid format, must be 'raw' or 'hex': {s}")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 #[derive(CmdArgs)]
 struct RecvArgs {
     #[flag('n')]
@@ -64,12 +72,7 @@ struct RecvArgs {
     #[flag('i')]
     interruptible: bool,
     #[opt('f', default=Format::Raw)]
-    #[parse(|cptr| match unsafe { cptr.as_str() } {
-            Some("hex") => Some(Format::Hex),
-            Some("raw") => Some(Format::Raw),
-            _ => Err(format!(b"invalid format, must be 'raw' or 'hex'", cptr.as_str())),
-        }
-    )]
+    #[parse(parse_format)]
     format: Format,
     #[opt('v')]
     var: Option<BashVar>,
@@ -82,7 +85,7 @@ struct RecvArgs {
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
-pub unsafe fn recv_subcommand(list: *mut WORD_LIST) -> Result<(), c_int> {
+pub unsafe fn recv_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
     let args = RecvArgs::parse(list)?;
     // Allocate buffer
@@ -122,11 +125,11 @@ pub unsafe fn recv_subcommand(list: *mut WORD_LIST) -> Result<(), c_int> {
     buf[received] = 0; // null terminate
     // If -v RECV_VAR is provided, store the result
     if let Some(var) = args.var {
-        match format {
+        match args.format {
             Format::Hex => {
                 // hex format - NUL-terminated byte vector, no C-string type
                 let out = hex_encode(&buf[..received]);
-                var.set(out)?;
+                var.set(out.as_ptr().cast())?;
             }
             Format::Raw => {
                 // raw format - buffer is already null-terminated, use directly

@@ -6,11 +6,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
-use crate::l_builtin_error;
-use crate::subcmd::CmdDesc;
-use cmdargs_derive::CmdArgs;
+use crate::bash_api::{EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
+use crate::intstr::ToIntStr;
+use crate::l_builtin_error;
+use crate::subcmd::{CmdDesc, CmdResult};
+use cmdargs_derive::CmdArgs;
 use std::os::raw::{c_char, c_int};
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -23,7 +24,7 @@ in the shell variable VAR.
 Options:
   -n   EFD_NONBLOCK
   -s   EFD_SEMAPHORE
-  -c   EFD_CLOEXEC (toggle; on by default)
+  -C   no EFD_CLOEXEC, is set by default
 
 VAR is the variable the resulting fd is bound to (required). INITVAL
 initializes the counter (default 0) and is optional.
@@ -52,51 +53,40 @@ struct EventfdArgs {
     nonblock: bool,
     #[flag('s')]
     semaphore: bool,
-    #[flag('c')]
-    cloexec: bool,
+    #[flag('C')]
+    nocloexec: bool,
     #[positional]
     var: BashVar,
-    #[optional]
-    initval: Option<u32>,
+    #[optional(default = 0u32)]
+    initval: u32,
 }
 
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn eventfd_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn eventfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
-
-    let args = match EventfdArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
-
-    let nonblock = args.nonblock;
-    let semaphore = args.semaphore;
-    let cloexec = !args.cloexec;
-
-    let initval: u32 = args.initval.unwrap_or(0);
-
+    let args = EventfdArgs::parse(list)?;
     let mut flags = 0;
-    if nonblock {
+    if args.nonblock {
         flags |= libc::EFD_NONBLOCK;
     }
-    if semaphore {
+    if args.semaphore {
         flags |= libc::EFD_SEMAPHORE;
     }
-    if cloexec {
+    if !args.nocloexec {
         flags |= libc::EFD_CLOEXEC;
     }
-
-    let fd = unsafe { libc::eventfd(initval, flags) };
+    let fd = unsafe { libc::eventfd(args.initval, flags) };
     if fd < 0 {
-        l_builtin_error!(b"eventfd: ", std::io::Error::last_os_error());
-        return EXECUTION_FAILURE;
+        return Err(l_builtin_error!(
+            b"eventfd: ",
+            std::io::Error::last_os_error()
+        ));
     }
-    if let Err(e) = args.var.set(crate::shared::I64Str::new(fd as i64).as_ptr()) {
+    if let Err(e) = args.var.set(fd.to_intstr().as_ptr()) {
         unsafe { libc::close(fd) };
-        return e;
+        return Err(e);
     }
-    EXECUTION_SUCCESS
+    Ok(())
 }

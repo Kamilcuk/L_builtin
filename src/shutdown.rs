@@ -6,9 +6,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
-use crate::subcmd::CmdDesc;
-use crate::{beprintln, getopts};
+use cmdargs_derive::CmdArgs;
+
+use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
+use crate::beprintln;
+use crate::cmdargs::Cpnt;
+use crate::subcmd::{CmdDesc, CmdResult};
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -26,72 +29,45 @@ Returns success unless shutdown fails.
 ",
 );
 
+fn parse_how(cptr: Cpnt) -> Result<c_int, String> {
+    match unsafe { cptr.as_str() } {
+        Ok("RD") | Ok("0") => Ok(libc::SHUT_RD),
+        Ok("WR") | Ok("1") => Ok(libc::SHUT_WR),
+        Ok("RDWR") | Ok("2") => Ok(libc::SHUT_RDWR),
+        Ok(_) => Err(format!(
+            "invalid how, must be one of: RD WR RDWR 0 1 2: {cptr}"
+        )),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[derive(CmdArgs)]
+struct ShutdownArgs {
+    #[positional]
+    fd: c_int,
+    #[optional(default=libc::SHUT_RDWR)]
+    #[parse(parse_how)]
+    how: c_int,
+}
+
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn shutdown_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn shutdown_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
-    let args = getopts!(list, [], []);
-
-    let mut iter = args.iter();
-
-    // Get fd
-    let fd = match iter.next() {
-        Some(fd_cptr) => {
-            let fd_bytes = unsafe { fd_cptr.as_bytes() };
-            match std::str::from_utf8(fd_bytes) {
-                Ok(s) => match s.parse::<c_int>() {
-                    Ok(fd) => fd,
-                    Err(_) => {
-                        beprintln!(this_cmd_name(), b": invalid fd: ", fd_bytes);
-                        return EX_USAGE;
-                    }
-                },
-                Err(_) => {
-                    beprintln!(this_cmd_name(), b": invalid fd encoding");
-                    return EX_USAGE;
-                }
-            }
-        }
-        None => {
-            beprintln!(this_cmd_name(), b": missing FD argument");
-            return EX_USAGE;
-        }
-    };
-
-    // Get how (optional, defaults to SHUT_RDWR)
-    let mut how: c_int = libc::SHUT_RDWR;
-    if let Some(how_cptr) = iter.next() {
-        let how_bytes = unsafe { how_cptr.as_bytes() };
-        let how_str = match std::str::from_utf8(how_bytes) {
-            Ok(s) => s,
-            Err(_) => {
-                beprintln!(this_cmd_name(), b": invalid shutdown mode encoding");
-                return EX_USAGE;
-            }
-        };
-
-        how = match how_str {
-            "RD" | "0" => libc::SHUT_RD,
-            "WR" | "1" => libc::SHUT_WR,
-            "RDWR" | "2" => libc::SHUT_RDWR,
-            _ => {
-                beprintln!(this_cmd_name(), b": invalid shutdown mode: ", how_bytes);
-                return EX_USAGE;
-            }
-        };
-    }
-
+    let args = ShutdownArgs::parse(list)?;
     // Call shutdown
-    if unsafe { libc::shutdown(fd, how) } < 0 {
+    if unsafe { libc::shutdown(args.fd, args.how) } < 0 {
         beprintln!(
             this_cmd_name(),
-            b": shutdown failed: ",
+            b": shutdown(",
+            args.fd,
+            ", ",
+            args.how,
+            ") failed: ",
             std::io::Error::last_os_error()
         );
-        return EXECUTION_FAILURE;
+        return Err(EXECUTION_FAILURE);
     }
-
-    EXECUTION_SUCCESS
+    Ok(())
 }

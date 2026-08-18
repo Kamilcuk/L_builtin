@@ -16,7 +16,7 @@ pub use crate::bash_api::{
     builtin_usage, internal_getopt, l_builtin_usage_long, list_optarg, loptend,
     reset_internal_getopt, Cpnt, WordListIterCpnt, WordListView, EX_USAGE, GETOPT_HELP, WORD_LIST,
 };
-pub use crate::shared::{I64Str, SizeTStr, U64Str};
+pub use crate::intstr::{IntStrPtr, ToIntStr};
 pub use std::ffi::{c_char, c_int, CStr};
 
 /// Convert a single bash word ([`Cpnt`]) into a typed Rust value.
@@ -59,10 +59,21 @@ macro_rules! define_parse_FromCpnt {
 }
 
 define_parse_FromCpnt!(i64);
+define_parse_FromCpnt!(u16);
 define_parse_FromCpnt!(u32);
 define_parse_FromCpnt!(usize);
 define_parse_FromCpnt!(u64);
 define_parse_FromCpnt!(f64);
+
+impl FromCpnt for &'static str {
+    type Err = String;
+    unsafe fn from_cpnt(cptr: Cpnt) -> Result<Self, Self::Err> {
+        CStr::from_ptr(cptr.as_ptr() as *const c_char)
+            .to_str()
+            .map(|s| s as &'static str)
+            .map_err(|e| e.to_string())
+    }
+}
 
 impl FromCpnt for *mut c_char {
     type Err = std::convert::Infallible;
@@ -75,6 +86,13 @@ impl FromCpnt for &'static CStr {
     type Err = std::convert::Infallible;
     unsafe fn from_cpnt(cptr: Cpnt) -> Result<Self, Self::Err> {
         Ok(CStr::from_ptr(cptr.as_ptr() as *const c_char))
+    }
+}
+
+impl FromCpnt for &'static [u8] {
+    type Err = std::convert::Infallible;
+    unsafe fn from_cpnt(cptr: Cpnt) -> Result<Self, Self::Err> {
+        Ok(CStr::from_ptr(cptr.as_ptr() as *const c_char).to_bytes() as &'static [u8])
     }
 }
 
@@ -111,7 +129,7 @@ impl BashVar {
     }
     pub fn set(&self, value: *const c_char) -> Result<(), c_int> {
         if unsafe { crate::bash_api::bind_variable(self.name, value, 0) }.is_null() {
-            crate::l_builtin_error!(b"cannot bind variable");
+            crate::l_builtin_error!(b"cannot bind variable: ", self.name);
             return Err(crate::bash_api::EXECUTION_FAILURE);
         }
         Ok(())
@@ -214,8 +232,7 @@ pub trait CmdArgs {
         Self::fill_positionals(&mut this, &mut iter)?;
 
         if !Self::HAS_REST && iter.next().is_some() {
-            crate::l_builtin_usage_error!(b"too many arguments");
-            return Result::Err(EX_USAGE);
+            return Result::Err(crate::l_builtin_usage_error!(b"too many arguments"));
         }
 
         this.post()?;

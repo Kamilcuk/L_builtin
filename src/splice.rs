@@ -7,10 +7,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::bprintln;
+use crate::intstr::ToIntStr;
 use crate::l_builtin_error;
-use crate::subcmd::CmdDesc;
+use crate::shared::bind_variable_check;
+use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
@@ -91,14 +93,10 @@ struct SpliceArgs {
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn splice_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn splice_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
 
-    let args = match SpliceArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = SpliceArgs::parse(list)?;
 
     let var = args.var.map_or(std::ptr::null_mut(), |p| p as *mut c_char);
     let fd_in = args.fd_in;
@@ -111,12 +109,12 @@ pub unsafe extern "C" fn splice_subcommand(list: *mut WORD_LIST) -> c_int {
                 Some(f) => f,
                 None => {
                     l_builtin_error!(b"invalid FLAGS");
-                    return EX_USAGE;
+                    return Err(EX_USAGE);
                 }
             },
             Err(_) => {
                 l_builtin_error!(b"invalid FLAGS encoding");
-                return EX_USAGE;
+                return Err(EX_USAGE);
             }
         },
         None => 0,
@@ -134,16 +132,16 @@ pub unsafe extern "C" fn splice_subcommand(list: *mut WORD_LIST) -> c_int {
     };
     if moved < 0 {
         l_builtin_error!(b"splice: ", std::io::Error::last_os_error());
-        return EXECUTION_FAILURE;
+        return Err(EXECUTION_FAILURE);
     }
 
     if var.is_null() {
         bprintln!(moved as i64);
     } else {
-        let s = crate::shared::SizeTStr::from_usize(moved as usize);
-        if crate::shared::bind_variable_check(var, s.as_ptr(), 0) != EXECUTION_SUCCESS {
-            return EXECUTION_FAILURE;
+        let moved_int: i64 = moved as i64;
+        if bind_variable_check(var, moved_int.to_intstr().as_ptr(), 0) != 0 {
+            return Err(EXECUTION_FAILURE);
         }
     }
-    EXECUTION_SUCCESS
+    Ok(())
 }

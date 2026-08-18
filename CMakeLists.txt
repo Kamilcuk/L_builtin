@@ -139,6 +139,14 @@ function(generate_bash_bindings gen_file bash_source)
             --allowlist-var GETOPT_HELP
             --allowlist-var interactive_shell
             --allowlist-var ARRAY
+            --allowlist-var ARRAY
+            --allowlist-var EX_USAGE
+            --allowlist-var EX_RETRYFAIL
+            --allowlist-var EX_NOTFOUND
+            --allowlist-var EXECUTION_SUCCESS
+            --allowlist-var EXECUTION_FAILURE
+            # --fit-macro-constant-types
+            --default-macro-constant-type signed
             --allowlist-type builtin
             --opaque-type SHELL_VAR
             --opaque-type ARRAY

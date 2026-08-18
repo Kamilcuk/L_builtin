@@ -20,10 +20,9 @@ use std::os::raw::c_int;
 
 use cmdargs_derive::CmdArgs;
 
-use crate::bash_api::{
-    Cpnt, WordListIterCpnt, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
-};
+use crate::bash_api::{Cpnt, WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
+use crate::handles::HandleEntry;
 use crate::subcmd::{CmdDesc, CmdResult, SubcommandFn};
 use crate::{
     handles::{map_anonymous, map_named, unmap, HandleRegistry},
@@ -203,7 +202,7 @@ struct MutexLockArgs {
     mutex: u64,
 }
 
-pub unsafe extern "C" fn mutex_lock_subcommand(list: *mut WORD_LIST) -> CmdResult {
+pub unsafe fn mutex_lock_subcommand(list: *mut WORD_LIST) -> CmdResult {
     MUTEX_LOCK_CMD.enter();
     let args = MutexLockArgs::parse(list)?;
     let ptr = match lookup_mutex(args.mutex) {
@@ -236,23 +235,34 @@ pub unsafe fn mutex_unlock_subcommand(list: *mut WORD_LIST) -> CmdResult {
                 let _ = mutex_unlock(ptr as *mut Mutex);
             });
         });
-        return Err(EXECUTION_SUCCESS);
+        Ok(())
+    } else {
+        let id = match args.mutex {
+            Some(v) => v,
+            None => {
+                l_builtin_error!(b"missing MUTEX (or use -a to unlock all held mutexes)");
+                return Err(EX_USAGE);
+            }
+        };
+        let ptr = match lookup_mutex(id) {
+            Some(p) => p,
+            None => {
+                l_builtin_error!(b"unknown mutex handle");
+                return Err(EXECUTION_FAILURE);
+            }
+        };
+        mutex_unlock(ptr)
     }
-    let id = match args.mutex {
-        Some(v) => v,
-        None => {
-            l_builtin_error!(b"missing MUTEX (or use -a to unlock all held mutexes)");
-            return Err(EX_USAGE);
-        }
-    };
-    let ptr = match lookup_mutex(id) {
-        Some(p) => p,
+}
+
+fn get_mutex_handle(mutex: u64) -> Result<HandleEntry, c_int> {
+    match MUTEX_REGISTRY.with(|m| m.take(mutex)) {
+        Some(e) => Ok(e),
         None => {
             l_builtin_error!(b"unknown mutex handle");
-            return Err(EXECUTION_FAILURE);
+            Err(EXECUTION_FAILURE)
         }
-    };
-    mutex_unlock(ptr)
+    }
 }
 
 /// `L_builtin mutex close MUTEX`
@@ -266,13 +276,7 @@ struct MutexCloseArgs {
 pub unsafe fn mutex_close_subcommand(list: *mut WORD_LIST) -> CmdResult {
     MUTEX_CLOSE_CMD.enter();
     let args = MutexCloseArgs::parse(list)?;
-    let entry = match MUTEX_REGISTRY.with(|m| m.take(args.mutex)) {
-        Some(e) => e,
-        None => {
-            l_builtin_error!(b"unknown mutex handle");
-            return Err(EXECUTION_FAILURE);
-        }
-    };
+    let entry = get_mutex_handle(args.mutex)?;
     unmap(entry.ptr, mutex_bytes());
     Ok(())
 }
@@ -285,24 +289,15 @@ struct MutexDestroyArgs {
     mutex: u64,
 }
 
-pub unsafe extern "C" fn mutex_destroy_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn mutex_destroy_subcommand(list: *mut WORD_LIST) -> CmdResult {
     MUTEX_DESTROY_CMD.enter();
-    let args = match MutexDestroyArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
-    let entry = match MUTEX_REGISTRY.with(|m| m.take(args.mutex)) {
-        Some(e) => e,
-        None => {
-            l_builtin_error!(b"unknown mutex handle");
-            return EXECUTION_FAILURE;
-        }
-    };
+    let args = MutexDestroyArgs::parse(list)?;
+    let entry = get_mutex_handle(args.mutex)?;
     unmap(entry.ptr, mutex_bytes());
     if let Some(n) = entry.name {
         unsafe { libc::shm_unlink(n.as_ptr()) };
     }
-    EXECUTION_SUCCESS
+    Ok(())
 }
 
 fn lookup_mutex(id: u64) -> Option<*mut Mutex> {
@@ -475,19 +470,15 @@ struct MutexDispatchArgs {
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn mutex_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn mutex_subcommand(list: *mut WORD_LIST) -> CmdResult {
     MUTEX_CMD.enter();
-    let args = match MutexDispatchArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = MutexDispatchArgs::parse(list)?;
     let action_bytes = unsafe { CStr::from_ptr(args.action) }.to_bytes();
     let handler = match MUTEX_TABLE.lookup(action_bytes) {
         Some(h) => h,
         None => {
             l_builtin_error!(b"unknown mutex subcommand: ", action_bytes);
-            return EX_USAGE;
+            return Err(EX_USAGE);
         }
     };
     handler(args.rest.as_ptr())

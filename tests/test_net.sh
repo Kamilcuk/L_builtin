@@ -200,18 +200,21 @@ _L_test_net_recv_poll_timeout() {
 
 # Test server that handles multiple connections sequentially
 _L_net_server_multiple() {
-    local port="$1"
+    local count=0
     local sfd=""
-    local port_val=""
-    L_builtin listen -p port_val sfd 127.0.0.1 "$port"
-    for _ in 0 1 2; do
+    L_logrun L_builtin listen -p net_port sfd 127.0.0.1
+    L_logrun L_is_integer "$net_port"
+    echo "NET PORT IS $net_port"
+    L_logrun L_builtin barrier wait "$net_barrier"
+    while (( count < 3 )); do
         local cfd="" addr=""
-        L_builtin accept cfd addr "$sfd"
+        L_logrun L_builtin accept cfd addr "$sfd"
         local data=""
-        L_builtin recv -v data "$cfd" 32
-        L_builtin send "$cfd" "echo:$data"
-        L_builtin shutdown "$cfd" RDWR
-        eval "exec $cfd<&-"
+        L_logrun L_builtin recv -v data "$cfd" 32
+        L_logrun L_builtin send "$cfd" "echo:$data"
+        L_logrun L_builtin shutdown "$cfd"
+        L_logrun L_builtin close "$cfd"
+        (( ++count ))
     done
     eval "exec $sfd<&-"
 }
@@ -219,23 +222,26 @@ _L_net_server_multiple() {
 _L_test_net_multiple_connections() {
     # Server function will create its own listener on the given port
     # We pass a fixed port to avoid conflict
-    local port=18999
+    # local net_port net_barrier
+    L_logrun L_builtin shm add net_port
+    L_logrun L_builtin barrier create net_barrier 2
 
     local server_pid=""
-    L_with_process_into server_pid _L_net_server_multiple "$port"
+    L_logrun L_with_process_into server_pid _L_net_server_multiple
 
     # Give server time to start listening
-    L_builtin sleep 0.1
+    L_logrun L_builtin barrier wait -t 2 "$net_barrier"
+    L_logrun L_is_integer "$net_port"
 
     # Connect 3 clients sequentially
     for i in 1 2 3; do
         local cfd=""
-        L_builtin connect cfd 127.0.0.1 "$port"
-        L_builtin send "$cfd" "msg$i"
+        L_logrun L_builtin connect cfd 127.0.0.1 "$net_port"
+        L_logrun L_builtin send "$cfd" "msg$i"
         local resp=""
-        L_builtin recv -v resp "$cfd" 32
-        L_unittest_eq "$resp" "echo:msg$i"
-        L_builtin shutdown "$cfd" RDWR
-        eval "exec $cfd<&-"
+        L_logrun L_builtin recv -v resp "$cfd" 32
+        L_logrun L_unittest_eq "$resp" "echo:msg$i"
+        L_logrun L_builtin shutdown "$cfd"
+        L_logrun L_builtin close "$cfd"
     done
 }

@@ -7,12 +7,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::io;
-use std::os::raw::{c_char, c_int};
 
 use libc;
-
-use crate::bash_api::{bind_variable, EXECUTION_FAILURE, EXECUTION_SUCCESS};
-use crate::l_builtin_error;
 
 /// One registry entry: the mapped base pointer and, for a named object, the
 /// name to unlink on `destroy`.

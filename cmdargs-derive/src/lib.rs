@@ -25,7 +25,9 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Expr, Fields, LitChar, LitStr};
+use syn::{
+    parse::ParseStream, parse_macro_input, Data, DeriveInput, Expr, Fields, LitChar, LitStr,
+};
 
 #[proc_macro_derive(
     CmdArgs,
@@ -75,15 +77,29 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
             } else if attr.path().is_ident("rest") {
                 kind = FieldKind::Rest;
             } else if attr.path().is_ident("opt") {
-                let ch = attr.parse_args::<LitChar>().unwrap().value();
-                let mut def_expr = None;
-                let _ = attr.parse_nested_meta(|meta| {
-                    if meta.path.is_ident("default") {
-                        def_expr = Some(meta.value()?.parse::<Expr>()?);
+                struct OptArgs {
+                    ch: LitChar,
+                    default: Option<Expr>,
+                }
+                impl syn::parse::Parse for OptArgs {
+                    fn parse(input: ParseStream) -> syn::Result<Self> {
+                        let ch: LitChar = input.parse()?;
+                        let default = if input.is_empty() {
+                            None
+                        } else {
+                            let _: syn::Token![,] = input.parse()?;
+                            let meta: syn::Meta = input.parse()?;
+                            if let syn::Meta::NameValue(nv) = meta {
+                                Some(nv.value)
+                            } else {
+                                return Err(syn::Error::new_spanned(meta, "expected default=Expr"));
+                            }
+                        };
+                        Ok(OptArgs { ch, default })
                     }
-                    Ok(())
-                });
-                kind = FieldKind::Opt(ch, def_expr);
+                }
+                let parsed = attr.parse_args::<OptArgs>().unwrap();
+                kind = FieldKind::Opt(parsed.ch.value(), parsed.default);
             } else if attr.path().is_ident("flag") {
                 let ch = attr.parse_args::<LitChar>().unwrap().value();
                 kind = FieldKind::Flag(ch);
@@ -158,7 +174,7 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
                             }
                         });
                         default_inits.push(quote!(#ident: #d));
-                    },
+                    }
                     None => {
                         let assign = quote! {
                             self.#ident = ::core::option::Option::Some(match #opt_conv {
@@ -172,7 +188,7 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
                             }
                         });
                         default_inits.push(quote!(#ident: ::core::option::Option::None));
-                    },
+                    }
                 }
             }
             FieldKind::Flag(ch) => {

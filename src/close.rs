@@ -6,9 +6,9 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::l_builtin_error;
-use crate::subcmd::CmdDesc;
+use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
 
@@ -42,14 +42,10 @@ struct CloseArgs {
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn close_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn close_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
 
-    let args = match CloseArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
+    let args = CloseArgs::parse(list)?;
 
     let fd_c = crate::bash_api::Cpnt::new(args.fd as *mut c_char);
 
@@ -57,14 +53,14 @@ pub unsafe extern "C" fn close_subcommand(list: *mut WORD_LIST) -> c_int {
         Some(v) if v >= 0 => v,
         _ => {
             l_builtin_error!(b"invalid fd");
-            return EX_USAGE;
+            return Err(EX_USAGE);
         }
     };
 
     let r = unsafe { libc::close(fd) };
     if r < 0 {
         l_builtin_error!(b"close: ", std::io::Error::last_os_error());
-        return EXECUTION_FAILURE;
+        return Err(EXECUTION_FAILURE);
     }
-    EXECUTION_SUCCESS
+    Ok(())
 }
