@@ -16,8 +16,8 @@ pub use crate::bash_api::{
     builtin_usage, internal_getopt, l_builtin_usage_long, list_optarg, loptend,
     reset_internal_getopt, Cpnt, WordListIterCpnt, WordListView, EX_USAGE, GETOPT_HELP, WORD_LIST,
 };
+pub use crate::shared::{I64Str, SizeTStr, U64Str};
 pub use std::ffi::{c_char, c_int, CStr};
-pub use crate::shared::U64Str;
 
 /// Convert a single bash word ([`Cpnt`]) into a typed Rust value.
 ///
@@ -99,12 +99,6 @@ impl Default for BashVar {
 }
 
 impl BashVar {
-    /// Validate `name` (a NUL-terminated C string) as a legal bash variable
-    /// name, returning `Ok(BashVar)` or `Err(String)` with a human-readable
-    /// reason.
-    ///
-    /// # Safety
-    /// `name` must be a valid pointer to a NUL-terminated C string.
     unsafe fn validate(name: *const c_char) -> Result<Self, String> {
         if name.is_null() {
             return Err("empty variable name".to_string());
@@ -115,13 +109,6 @@ impl BashVar {
         }
         Ok(BashVar { name })
     }
-
-    /// Bind `value` (a NUL-terminated C string) to this variable via
-    /// `bind_variable`. On failure, prints an `l_builtin_error!` message and
-    /// returns `Err(EXECUTION_FAILURE)`.
-    ///
-    /// # Safety
-    /// `value` must be a valid pointer to a NUL-terminated C string.
     pub fn set(&self, value: *const c_char) -> Result<(), c_int> {
         if unsafe { crate::bash_api::bind_variable(self.name, value, 0) }.is_null() {
             crate::l_builtin_error!(b"cannot bind variable");
@@ -129,13 +116,9 @@ impl BashVar {
         }
         Ok(())
     }
-
-    /// Bind a u64 value to this variable.
-    pub fn set_u64(&self, value: u64) -> Result<(), c_int> {
-        let u64_str = U64Str::new(value);
-        self.set(u64_str.as_ptr())
+    pub fn set_int<T: ToIntStr>(&self, value: T) -> Result<(), c_int> {
+        self.set(value.to_intstr().as_ptr())
     }
-
     pub fn as_ptr(&self) -> *const c_char {
         self.name
     }

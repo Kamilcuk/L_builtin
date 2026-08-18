@@ -11,6 +11,7 @@ use crate::cmdargs::{BashVar, CStr};
 use crate::l_builtin_error;
 use crate::subcmd::CmdDesc;
 use cmdargs_derive::CmdArgs;
+use std::ffi::c_int;
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -49,17 +50,27 @@ fn hex_encode(data: &[u8]) -> Vec<u8> {
     out
 }
 
-/// # Safety
-///
-/// Safe when called from bash with valid WORD_LIST pointer.
+// Get format (optional, defaults to "raw")
+#[derive(Copy, Clone)]
+enum Format {
+    Raw,
+    Hex,
+}
+
 #[derive(CmdArgs)]
 struct RecvArgs {
     #[flag('n')]
     non_blocking: bool,
     #[flag('i')]
     interruptible: bool,
-    #[opt('f')]
-    f_var: Option<&'static CStr>,
+    #[opt('f', default=Format::Raw)]
+    #[parse(|cptr| match unsafe { cptr.as_str() } {
+            Some("hex") => Some(Format::Hex),
+            Some("raw") => Some(Format::Raw),
+            _ => Err(format!(b"invalid format, must be 'raw' or 'hex'", cptr.as_str())),
+        }
+    )]
+    format: Format,
     #[opt('v')]
     var: Option<BashVar>,
     #[positional]
@@ -68,80 +79,29 @@ struct RecvArgs {
     size: usize,
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
+/// # Safety
+///
+/// Safe when called from bash with valid WORD_LIST pointer.
+pub unsafe fn recv_subcommand(list: *mut WORD_LIST) -> Result<(), c_int> {
     CMD.enter();
-
-    let args = match RecvArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
-
-    let f_var = args
-        .f_var
-        .map_or(std::ptr::null_mut(), |c| c.as_ptr() as *mut c_char);
-    let var = args
-        .var
-        .map_or(std::ptr::null_mut(), |c| c.as_ptr() as *mut c_char);
-    let fd_c = crate::bash_api::Cpnt::new(args.fd as *mut c_char);
-
-    // Get format (optional, defaults to "raw")
-    #[derive(Copy, Clone)]
-    enum Format {
-        Raw,
-        Hex,
-    }
-
-    let format = if !f_var.is_null() {
-        match crate::shared::cstr_to_str(f_var) {
-            Some("hex") => Format::Hex,
-            Some("raw") | None => Format::Raw,
-            Some(_) => {
-                l_builtin_error!(b"invalid format (must be raw or hex)");
-                return EX_USAGE;
-            }
-        }
-    } else {
-        Format::Raw
-    };
-
-    // Get fd
-    let fd = {
-        let fd_bytes = unsafe { fd_c.as_bytes() };
-        match std::str::from_utf8(fd_bytes) {
-            Ok(s) => match s.parse::<c_int>() {
-                Ok(fd) => fd,
-                Err(_) => {
-                    l_builtin_error!(b"invalid fd: ", fd_bytes);
-                    return EX_USAGE;
-                }
-            },
-            Err(_) => {
-                l_builtin_error!(b"invalid fd encoding");
-                return EX_USAGE;
-            }
-        }
-    };
-
+    let args = RecvArgs::parse(list)?;
     // Allocate buffer
     let mut buf = vec![0u8; args.size + 1];
-
     // Receive data
     let mut flags = 0;
     if args.non_blocking {
         flags |= libc::MSG_DONTWAIT;
     }
-
     let received;
     loop {
         let result =
-            unsafe { libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, args.size, flags) };
+            unsafe { libc::recv(args.fd, buf.as_mut_ptr() as *mut libc::c_void, args.size, flags) };
         if result < 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EINTR) {
                 if args.interruptible {
                     l_builtin_error!(b"recv failed: Interrupted system call");
-                    return EXECUTION_FAILURE;
+                    return Err(EXECUTION_FAILURE);
                 }
                 // Interrupted by signal, retry
                 continue;
@@ -154,38 +114,25 @@ pub unsafe extern "C" fn recv_subcommand(list: *mut WORD_LIST) -> c_int {
                 break;
             }
             l_builtin_error!(b"recv failed: ", err);
-            return EXECUTION_FAILURE;
+            return Err(EXECUTION_FAILURE);
         }
         received = result as usize;
         break;
     }
-
     buf[received] = 0; // null terminate
-
     // If -v RECV_VAR is provided, store the result
-    if !var.is_null() {
-        let var_ptr = var;
+    if let Some(var) = args.var {
         match format {
             Format::Hex => {
                 // hex format - NUL-terminated byte vector, no C-string type
                 let out = hex_encode(&buf[..received]);
-                if unsafe { crate::bash_api::bind_variable(var_ptr, out.as_ptr().cast(), 0) }
-                    .is_null()
-                {
-                    l_builtin_error!(b"cannot bind variable");
-                    return EXECUTION_FAILURE;
-                }
+                var.set(out)?;
             }
             Format::Raw => {
                 // raw format - buffer is already null-terminated, use directly
-                let out_ptr = buf.as_ptr() as *const c_char;
-                if unsafe { crate::bash_api::bind_variable(var_ptr, out_ptr, 0) }.is_null() {
-                    l_builtin_error!(b"cannot bind variable");
-                    return EXECUTION_FAILURE;
-                }
+                var.set(buf.as_ptr().cast())?;
             }
         }
     }
-
-    EXECUTION_SUCCESS
+    Ok(())
 }

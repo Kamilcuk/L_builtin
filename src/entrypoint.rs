@@ -34,14 +34,27 @@ extern "C" {
     static L_BUILTIN_DOC: [*const c_char; 0];
 }
 
+macro_rules! c_wrap {
+    ($f:expr) => {
+        |list| {
+            let ret = unsafe { $f(list) };
+            if ret == 0 {
+                ::core::result::Result::Ok(())
+            } else {
+                ::core::result::Result::Err(ret)
+            }
+        }
+    };
+}
+
 // Dispatch table: a plain map of subcommand name -> extern "C" handler.
 const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("lseek", crate::lseek::lseek_subcommand),
-    ("poll", poll_subcommand),
+    ("poll", c_wrap!(poll_subcommand)),
     #[cfg(feature = "ppoll")]
-    ("ppoll", ppoll_subcommand),
-    ("sigmask", sigmask_subcommand),
-    ("sigunmask", sigunmask_subcommand),
+    ("ppoll", c_wrap!(ppoll_subcommand)),
+    ("sigmask", c_wrap!(sigmask_subcommand)),
+    ("sigunmask", c_wrap!(sigunmask_subcommand)),
     ("pipe", crate::pipe::pipe_subcommand),
     ("listen", crate::listen::listen_subcommand),
     ("accept", crate::accept::accept_subcommand),

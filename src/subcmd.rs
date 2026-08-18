@@ -104,5 +104,5 @@ impl Drop for SubcommandGuard {
     }
 }
 
-/// Function implementing a subcommand.
-pub type SubcommandFn = unsafe extern "C" fn(*mut WORD_LIST) -> c_int;
+pub type CmdResult = Result<(), c_int>;
+pub type SubcommandFn = unsafe fn(*mut WORD_LIST) -> Result<(), c_int>;

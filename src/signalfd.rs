@@ -165,7 +165,7 @@ pub unsafe extern "C" fn signalfd_subcommand(list: *mut WORD_LIST) -> c_int {
     }
     match args.fd_var {
         Some(v) => {
-            if let Err(e) = v.set(crate::shared::I64Str::new(fd as i64).as_ptr()) {
+            if let Err(e) = v.set_i64(fd as i64) {
                 unsafe { libc::close(fd) };
                 return e;
             }

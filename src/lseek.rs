@@ -10,6 +10,7 @@ use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
 use crate::l_builtin_error;
 use crate::subcmd::CmdDesc;
 use cmdargs_derive::CmdArgs;
+use crate::cmdargs::BashVar;
 use std::ffi::c_char;
 use std::os::raw::c_int;
 
@@ -37,7 +38,7 @@ Returns success unless an error occurs during lseek or variable binding.
 struct LseekArgs {
     /// Store the resulting offset into shell variable VAR.
     #[opt('v')]
-    var: Option<*const c_char>,
+    var: Option<BashVar>,
 
     /// File descriptor to seek on.
     #[positional]
@@ -62,28 +63,16 @@ struct LseekArgs {
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-#[no_mangle]
-pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
+pub unsafe fn lseek_subcommand(list: *mut WORD_LIST) -> Result<(), c_int> {
     CMD.enter();
-
-    let args = match LseekArgs::parse(list) {
-        Ok(a) => a,
-        Err(c) => return c,
-    };
-
+    let args = LseekArgs::parse(list)?;
     let result = libc::lseek(args.fd, args.offset, args.whence);
     if result == -1 {
         l_builtin_error!(b"lseek error: ", std::io::Error::last_os_error());
-        return EXECUTION_FAILURE;
+        return Err(EXECUTION_FAILURE);
     }
-
     if let Some(var) = args.var {
-        let result_str = crate::shared::I64Str::new(result);
-        if crate::bash_api::bind_variable(var, result_str.as_ptr(), 0).is_null() {
-            l_builtin_error!(b"cannot bind variable");
-            return EXECUTION_FAILURE;
-        }
+        var.set_i64(result)?;
     }
-
-    EXECUTION_SUCCESS
+    Ok(())
 }

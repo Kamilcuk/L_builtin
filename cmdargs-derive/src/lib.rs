@@ -45,7 +45,7 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
 
     #[allow(dead_code)]
     enum FieldKind {
-        Opt(char),
+        Opt(char, Option<Expr>),
         Flag(char),
         Positional,
         Optional(Option<Expr>),
@@ -76,7 +76,14 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
                 kind = FieldKind::Rest;
             } else if attr.path().is_ident("opt") {
                 let ch = attr.parse_args::<LitChar>().unwrap().value();
-                kind = FieldKind::Opt(ch);
+                let mut def_expr = None;
+                let _ = attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("default") {
+                        def_expr = Some(meta.value()?.parse::<Expr>()?);
+                    }
+                    Ok(())
+                });
+                kind = FieldKind::Opt(ch, def_expr);
             } else if attr.path().is_ident("flag") {
                 let ch = attr.parse_args::<LitChar>().unwrap().value();
                 kind = FieldKind::Flag(ch);
@@ -94,7 +101,12 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
             }
         }
 
-        infos.push(FieldInfo { ident, ty, kind, parser });
+        infos.push(FieldInfo {
+            ident,
+            ty,
+            kind,
+            parser,
+        });
     }
 
     let mut optstring_pieces: Vec<LitStr> = Vec::new();
@@ -126,21 +138,42 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
         };
 
         match &info.kind {
-            FieldKind::Opt(ch) => {
+            FieldKind::Opt(ch, def) => {
                 let ch_lit = *ch;
-                optstring_pieces.push(LitStr::new(&format!("{ch}:").to_string(), Span::call_site()));
-                let assign = quote! {
-                    self.#ident = ::core::option::Option::Some(match #opt_conv {
-                        ::core::result::Result::Ok(v) => v,
-                        #err_arm
-                    });
-                };
-                apply_opt_own.push(quote! {
-                    if c == (#ch_lit as c_int) {
-                        #assign
-                    }
-                });
-                default_inits.push(quote!(#ident: ::core::option::Option::None));
+                optstring_pieces.push(LitStr::new(
+                    &format!("{ch}:").to_string(),
+                    Span::call_site(),
+                ));
+                match def {
+                    Some(d) => {
+                        let assign = quote! {
+                            self.#ident = match #opt_conv {
+                                ::core::result::Result::Ok(v) => v,
+                                #err_arm
+                            };
+                        };
+                        apply_opt_own.push(quote! {
+                            if c == (#ch_lit as c_int) {
+                                #assign
+                            }
+                        });
+                        default_inits.push(quote!(#ident: #d));
+                    },
+                    None => {
+                        let assign = quote! {
+                            self.#ident = ::core::option::Option::Some(match #opt_conv {
+                                ::core::result::Result::Ok(v) => v,
+                                #err_arm
+                            });
+                        };
+                        apply_opt_own.push(quote! {
+                            if c == (#ch_lit as c_int) {
+                                #assign
+                            }
+                        });
+                        default_inits.push(quote!(#ident: ::core::option::Option::None));
+                    },
+                }
             }
             FieldKind::Flag(ch) => {
                 let ch_lit = *ch;
@@ -172,34 +205,32 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
                 });
                 default_inits.push(quote!(#ident: ::core::default::Default::default()));
             }
-            FieldKind::Optional(def) => {
-                match def {
-                    Some(d) => {
-                        fill_stmts.push(quote! {
-                            if let ::core::option::Option::Some(cptr) = iter.next() {
-                                self.#ident = match #pos_conv {
-                                    ::core::result::Result::Ok(v) => v,
-                                    #err_arm
-                                };
-                            } else {
-                                self.#ident = #d;
-                            }
-                        });
-                        default_inits.push(quote!(#ident: #d));
-                    }
-                    None => {
-                        fill_stmts.push(quote! {
-                            if let ::core::option::Option::Some(cptr) = iter.next() {
-                                self.#ident = ::core::option::Option::Some(match #pos_conv {
-                                    ::core::result::Result::Ok(v) => v,
-                                    #err_arm
-                                });
-                            }
-                        });
-                        default_inits.push(quote!(#ident: ::core::option::Option::None));
-                    }
+            FieldKind::Optional(def) => match def {
+                Some(d) => {
+                    fill_stmts.push(quote! {
+                        if let ::core::option::Option::Some(cptr) = iter.next() {
+                            self.#ident = match #pos_conv {
+                                ::core::result::Result::Ok(v) => v,
+                                #err_arm
+                            };
+                        } else {
+                            self.#ident = #d;
+                        }
+                    });
+                    default_inits.push(quote!(#ident: #d));
                 }
-            }
+                None => {
+                    fill_stmts.push(quote! {
+                        if let ::core::option::Option::Some(cptr) = iter.next() {
+                            self.#ident = ::core::option::Option::Some(match #pos_conv {
+                                ::core::result::Result::Ok(v) => v,
+                                #err_arm
+                            });
+                        }
+                    });
+                    default_inits.push(quote!(#ident: ::core::option::Option::None));
+                }
+            },
             FieldKind::Rest => {
                 has_rest = true;
                 // Captured after every other positional so the view spans the
@@ -227,8 +258,10 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
                     syn::Type::Path(p) => p.path.segments.last().unwrap().ident.clone(),
                     _ => panic!("flatten field type must be a path to a CmdArgs struct"),
                 };
-                let child_mac =
-                    syn::Ident::new(&format!("__cmdargs_inherit_{child_ident}"), Span::call_site());
+                let child_mac = syn::Ident::new(
+                    &format!("__cmdargs_inherit_{child_ident}"),
+                    Span::call_site(),
+                );
                 flatten_inherit_macro_calls.push(quote!(#child_mac!()));
                 apply_opt_flatten.push(quote! {
                     CmdArgs::apply_opt(&mut self.#ident, c, p)?;
@@ -256,8 +289,10 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
         concat_args.push(quote!(#cm));
     }
 
-    let inherit_macro_name =
-        syn::Ident::new(&format!("__cmdargs_inherit_{struct_name}"), Span::call_site());
+    let inherit_macro_name = syn::Ident::new(
+        &format!("__cmdargs_inherit_{struct_name}"),
+        Span::call_site(),
+    );
     let inherit_macro = if concat_args.is_empty() {
         quote! {
             #[macro_export]

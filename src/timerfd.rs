@@ -11,6 +11,7 @@ use crate::bprintln;
 use crate::l_builtin_error;
 use crate::subcmd::CmdDesc;
 use cmdargs_derive::CmdArgs;
+use crate::cmdargs::BashVar;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
@@ -34,18 +35,7 @@ Returns success unless timerfd_create fails or the variable cannot be bound.
 ",
 );
 
-unsafe fn store_fd(var: *mut c_char, fd: c_int) -> bool {
-    if var.is_null() {
-        bprintln!(fd as i64);
-        return true;
-    }
-    let s = crate::shared::I64Str::new(fd as i64);
-    if unsafe { crate::bash_api::bind_variable(var, s.as_ptr(), 0) }.is_null() {
-        l_builtin_error!(b"cannot bind variable");
-        return false;
-    }
-    true
-}
+);
 
 fn parse_clock(s: Option<&str>) -> Option<libc::clockid_t> {
     let c = match s.map(str::to_ascii_uppercase).as_deref() {
@@ -58,7 +48,7 @@ fn parse_clock(s: Option<&str>) -> Option<libc::clockid_t> {
 
 /// # Safety
 ///
-/// Safe when called from bash with a valid WORD_LIST pointer.
+Safe when called from bash with a valid WORD_LIST pointer.
 #[derive(CmdArgs)]
 struct TimerfdArgs {
     #[flag('n')]
@@ -66,11 +56,12 @@ struct TimerfdArgs {
     #[opt('c')]
     clock: Option<*const c_char>,
     #[opt('s')]
+    s')]
     initial: Option<f64>,
     #[opt('i')]
     interval: Option<f64>,
     #[opt('v')]
-    fd_var: Option<*const c_char>,
+    fd_var: Option<BashVar>,
 }
 
 /// # Safety
@@ -97,10 +88,7 @@ pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
     }
     let initial: f64 = args.initial.unwrap_or(0.0);
     let interval: f64 = args.interval.unwrap_or(0.0);
-    let fd_var = match args.fd_var {
-        Some(p) => p as *mut c_char,
-        None => std::ptr::null_mut(),
-    };
+    let fd_var = args.fd_var;
 
     let mut flags = libc::TFD_CLOEXEC;
     if nonblock {
@@ -140,9 +128,13 @@ pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
         }
     }
 
-    if !unsafe { store_fd(fd_var, fd) } {
-        unsafe { libc::close(fd) };
-        return EXECUTION_FAILURE;
+    if let Some(var) = &fd_var {
+        if let Err(e) = var.set_i64(fd as i64) {
+            unsafe { libc::close(fd) };
+            return e;
+        }
+    } else {
+        bprintln!(fd as i64);
     }
     EXECUTION_SUCCESS
 }

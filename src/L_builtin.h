@@ -6,7 +6,6 @@ struct word_list;
 /* Top-level entry point, implemented in Rust (src/entrypoint.rs). */
 int l_entrypoint(struct word_list *list);
 
-int lseek_subcommand(struct word_list *list);
 int poll_subcommand(struct word_list *list);
 #if HAVE_PPOLL
 int ppoll_subcommand(struct word_list *list);
