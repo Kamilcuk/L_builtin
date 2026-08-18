@@ -52,10 +52,15 @@ dispatched as `L_builtin <subcommand> ...` and loaded via `enable -f`.
   `X_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, N>` built by
   `crate::intlookup!(&X_SUBCOMMANDS)`. **`N` must equal the entry count** — use
   the `U64` module for ≥5 entries; a mismatch is a compile error.
-- Option parsing uses the `subcmd_getopts!` macro (getopts.rs). Notes:
-  - option with a value: `options: NAME => ...`
-  - one-or-more values: `some: NAME => ...` (yields `(Vec<_>,)`)
-  - a single positional needs `let (x,) =` — the trailing comma is required.
+- Option parsing uses the `#[derive(CmdArgs)]` system (cmdargs.rs /
+  cmdargs-derive). Notes:
+  - option with a value: `#[opt('c')] name: Option<T>`
+  - boolean flag: `#[flag('c')] name: bool`
+  - required positional: `#[positional] name: T`
+  - optional positional: `#[optional] name: Option<T>`
+  - remaining words as a view: `#[rest] name: WordListView<'static>`
+  - every subcommand must call `CMD.enter()` then `XxxArgs::parse(list)`;
+    `parse` does NOT call `enter()` itself.
 
 ## The `shm` subcommand (non-obvious semantics)
 

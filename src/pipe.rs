@@ -7,9 +7,10 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
-use crate::subcmd::CmdDesc;
 use crate::l_builtin_error;
-use crate::{subcmd_getopts};
+use crate::subcmd::CmdDesc;
+use cmdargs_derive::CmdArgs;
+use std::ffi::c_char;
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -24,19 +25,24 @@ Returns success unless the pipe cannot be created or ARRAY is invalid.
 ",
 );
 
+/// L_builtin `pipe ARRAY`
+#[derive(CmdArgs)]
+struct PipeArgs {
+    #[positional]
+    array_name: *const c_char,
+}
+
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn pipe_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (array_name_cptr,) = subcmd_getopts!(
-        CMD,
-        list,
-        required: [ARRAY],
-    );
+    CMD.enter();
 
-    // Get array name - use the C string pointer directly
-    let array_name_ptr = array_name_cptr.as_ptr();
+    let args = match PipeArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
+    };
 
     // Create pipe
     let mut fds: [c_int; 2] = [0, 0];
@@ -46,7 +52,7 @@ pub unsafe extern "C" fn pipe_subcommand(list: *mut WORD_LIST) -> c_int {
     }
 
     // Check if variable exists and is an array
-    let mut var = unsafe { crate::bash_api::find_variable(array_name_ptr) };
+    let mut var = unsafe { crate::bash_api::find_variable(args.array_name) };
     if !var.is_null() {
         let is_array = unsafe { crate::bash_api::l_array_p(var) };
         if is_array == 0 {
@@ -61,7 +67,7 @@ pub unsafe extern "C" fn pipe_subcommand(list: *mut WORD_LIST) -> c_int {
 
     // Create array variable if it doesn't exist
     if var.is_null() {
-        var = unsafe { crate::bash_api::make_new_array_variable(array_name_ptr) };
+        var = unsafe { crate::bash_api::make_new_array_variable(args.array_name) };
         if var.is_null() {
             unsafe {
                 libc::close(fds[0]);

@@ -7,9 +7,13 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::bash_api::{
+    this_cmd_name, WordListIterCpnt, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
+};
+use crate::cmdargs::BashVar;
+use crate::{beprintln, bprintln};
+use cmdargs_derive::CmdArgs;
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, bprintln, subcmd_getopts};
 use std::os::raw::{c_char, c_int};
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -84,32 +88,36 @@ unsafe fn store_fd(var: *mut c_char, fd: c_int) -> bool {
     true
 }
 
+#[derive(CmdArgs)]
+struct SignalfdArgs {
+    #[flag('n')]
+    nonblock: bool,
+    #[flag('b')]
+    block: bool,
+    #[opt('v')]
+    fd_var: Option<BashVar>,
+    #[rest]
+    signals: WordListIterCpnt<'static>,
+}
+
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn signalfd_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut nonblock = false;
-    let mut block = false;
-    let mut fd_var: *mut c_char = std::ptr::null_mut();
-    let (signals,) = subcmd_getopts!(
-        CMD,
-        list,
-        flags: [
-            n => || nonblock = true,
-            b => || block = true,
-        ],
-        options: [ v => |v| fd_var = v.as_ptr().cast() ],
-        rest: SIGNALS,
-    );
+    CMD.enter();
+    let args = match SignalfdArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
+    };
 
     // Build the signal set (all signals if none listed).
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe { libc::sigemptyset(&mut set) };
-    if signals.as_ptr().is_null() {
+    if args.signals.as_ptr().is_null() {
         unsafe { libc::sigfillset(&mut set) };
     } else {
-        for sig in signals {
+        for sig in args.signals {
             let name = match unsafe { sig.as_str() } {
                 Ok(s) => s,
                 Err(_) => {
@@ -130,7 +138,7 @@ pub unsafe extern "C" fn signalfd_subcommand(list: *mut WORD_LIST) -> c_int {
     }
 
     // Optionally block the signals so reads from the fd consume them.
-    if block {
+    if args.block {
         if unsafe { libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) } < 0 {
             beprintln!(
                 this_cmd_name(),
@@ -142,7 +150,7 @@ pub unsafe extern "C" fn signalfd_subcommand(list: *mut WORD_LIST) -> c_int {
     }
 
     let mut flags = libc::SFD_CLOEXEC;
-    if nonblock {
+    if args.nonblock {
         flags |= libc::SFD_NONBLOCK;
     }
 
@@ -155,9 +163,14 @@ pub unsafe extern "C" fn signalfd_subcommand(list: *mut WORD_LIST) -> c_int {
         );
         return EXECUTION_FAILURE;
     }
-    if !unsafe { store_fd(fd_var, fd) } {
-        unsafe { libc::close(fd) };
-        return EXECUTION_FAILURE;
+    match args.fd_var {
+        Some(v) => {
+            if let Err(e) = v.set(crate::shared::I64Str::new(fd as i64).as_ptr()) {
+                unsafe { libc::close(fd) };
+                return e;
+            }
+        }
+        None => bprintln!(fd as i64),
     }
     EXECUTION_SUCCESS
 }

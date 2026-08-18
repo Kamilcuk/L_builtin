@@ -302,7 +302,7 @@ macro_rules! beprint {
 #[macro_export]
 macro_rules! bprintln {
     ($($tt:expr),* $(,)?) => {
-        $crate::bprint_impl!(::std::io::stdout(), $($tt),*, b"\n");
+        $crate::bprint_impl!(::std::io::stdout(), $($tt),*, b"\n")
     };
 }
 
@@ -310,7 +310,7 @@ macro_rules! bprintln {
 #[macro_export]
 macro_rules! beprintln {
     ($($tt:expr),* $(,)?) => {
-        $crate::bprint_impl!(::std::io::stderr(), $($tt),*, b"\n");
+        $crate::bprint_impl!(::std::io::stderr(), $($tt),*, b"\n")
     };
 }
 

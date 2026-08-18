@@ -59,11 +59,11 @@ use crate::bash_api::{
     array_insert, array_remove, arrayind_t, assoc_remove, is_valid_var_name, l_array_cell,
     l_array_max_index, l_assoc_cell, l_assoc_insert, l_init_dynamic_array_var,
     l_init_dynamic_assoc_var, l_unbind_variable, variable, ArrayIterator, AssocIterator,
-    EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, SHELL_VAR, WORD_LIST,
+    WordListIterCpnt, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, SHELL_VAR, WORD_LIST,
 };
 use crate::subcmd::{CmdDesc, SubcommandFn};
 use crate::vardb::{open_db_loc, DbLoc, DbPath, LockedDatabase, VarData};
-use crate::{beprintln, bprintln, l_builtin_error, subcmd_getopts};
+use crate::{beprintln, bprintln, l_builtin_error};
 
 /// Bash variable attribute for associative arrays (att). From bash's
 /// variables.h: #define att_assoc 0x0000040
@@ -373,7 +373,7 @@ struct ShmUnbindArgs {
     loc: ShmLocArgs,
     /// Bash variable names to unbind (one or more).
     #[rest]
-    vars: Vec<*const c_char>,
+    vars: WordListIterCpnt<'static>,
 }
 
 /// Validate that at most one of `-s`, `-n`, `-f` was supplied. Shared by every
@@ -530,17 +530,18 @@ unsafe extern "C" fn shm_unbind_subcommand(list: *mut WORD_LIST) -> c_int {
         Ok(a) => a,
         Err(c) => return c,
     };
-    if args.vars.is_empty() {
+    if args.vars.as_ptr().is_null() {
         l_builtin_error!(b"shm: missing required argument: VARS");
         return EX_USAGE;
     }
-    for &v in &args.vars {
+    for c in args.vars {
+        let v = c.as_ptr() as *const c_char;
         let ckey = match CString::new(unsafe { CStr::from_ptr(v).to_bytes() }) {
             Ok(c) => c,
             Err(_) => continue,
         };
         REGISTRY.with(|r| r.borrow_mut().remove(&ckey));
-        l_unbind_variable(v as *const c_char);
+        l_unbind_variable(v);
     }
     EXECUTION_SUCCESS
 }
@@ -833,18 +834,25 @@ memory, 'memfd:NAME' for in-memory, and the file path for -f databases.
 const SHM_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 5> =
     crate::intlookup!(&SHM_SUBCOMMANDS);
 
+#[derive(CmdArgs)]
+struct ShmDispatchArgs {
+    #[positional]
+    action: *const c_char,
+    #[rest]
+    rest: WordListIterCpnt<'static>,
+}
+
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn shm_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (action, rest) = subcmd_getopts!(
-        SHM_CMD,
-        list,
-        required: [ACTION],
-        rest: REST,
-    );
-    let action_bytes = action.as_bytes();
+    SHM_CMD.enter();
+    let args = match ShmDispatchArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
+    };
+    let action_bytes = unsafe { CStr::from_ptr(args.action) }.to_bytes();
     let handler = match SHM_TABLE.lookup(action_bytes) {
         Some(h) => h,
         None => {
@@ -852,5 +860,5 @@ pub unsafe extern "C" fn shm_subcommand(list: *mut WORD_LIST) -> c_int {
             return EXECUTION_FAILURE;
         }
     };
-    handler(rest.as_ptr())
+    handler(args.rest.as_ptr())
 }

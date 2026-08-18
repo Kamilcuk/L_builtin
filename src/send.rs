@@ -7,9 +7,9 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
-use crate::subcmd::CmdDesc;
 use crate::l_builtin_error;
-use crate::{subcmd_getopts};
+use crate::subcmd::CmdDesc;
+use cmdargs_derive::CmdArgs;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
@@ -55,19 +55,34 @@ fn cptr_to_str(ptr: *mut std::os::raw::c_char) -> Result<&'static str, ()> {
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
+#[derive(CmdArgs)]
+struct SendArgs {
+    #[opt('f')]
+    f_var: Option<&'static CStr>,
+    #[opt('v')]
+    var: Option<&'static CStr>,
+    #[positional]
+    fd: *const c_char,
+    #[positional]
+    data: *const c_char,
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn send_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut f_var: *mut c_char = std::ptr::null_mut();
-    let mut var: *mut c_char = std::ptr::null_mut();
-    let (fd_cptr, data_cptr) = subcmd_getopts!(
-        CMD,
-        list,
-        options: [
-            f => |f| f_var = f.as_ptr().cast(),
-            v => |v| var = v.as_ptr().cast(),
-        ],
-        required: [FD, DATA],
-    );
+    CMD.enter();
+    let args = match SendArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
+    };
+
+    let f_var = args
+        .f_var
+        .map_or(std::ptr::null_mut(), |c| c.as_ptr() as *mut c_char);
+    let var = args
+        .var
+        .map_or(std::ptr::null_mut(), |c| c.as_ptr() as *mut c_char);
+    let fd_c = crate::bash_api::Cpnt::new(args.fd as *mut c_char);
+    let data_c = crate::bash_api::Cpnt::new(args.data as *mut c_char);
 
     // Get format (optional, defaults to "raw")
     let format = if !f_var.is_null() {
@@ -84,7 +99,7 @@ pub unsafe extern "C" fn send_subcommand(list: *mut WORD_LIST) -> c_int {
 
     // Get fd
     let fd = {
-        let fd_bytes = unsafe { fd_cptr.as_bytes() };
+        let fd_bytes = unsafe { fd_c.as_bytes() };
         match std::str::from_utf8(fd_bytes) {
             Ok(s) => match s.parse::<c_int>() {
                 Ok(fd) => fd,
@@ -101,7 +116,7 @@ pub unsafe extern "C" fn send_subcommand(list: *mut WORD_LIST) -> c_int {
     };
 
     // Get data
-    let data = unsafe { data_cptr.as_bytes() };
+    let data = unsafe { data_c.as_bytes() };
 
     // Prepare data to send
     let send_data: Vec<u8> = if format == "hex" {

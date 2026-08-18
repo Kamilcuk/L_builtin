@@ -7,11 +7,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{bind_variable, EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
+use crate::cmdargs::BashVar;
 use crate::l_builtin_error;
 use crate::subcmd::CmdDesc;
-use crate::subcmd_getopts;
-use std::ffi::c_char;
+use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -44,34 +44,36 @@ Examples:
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
+#[derive(CmdArgs)]
+struct MemfdArgs {
+    /// Shell variable to bind the memfd fd to.
+    #[positional]
+    var: BashVar,
+
+/// Name for the memfd (default: L_builtin_memfd).
+    #[optional(default = c"L_builtin_memfd".as_ptr())]
+    name: *const c_char,
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn memfd_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (var, name) = subcmd_getopts!(
-        CMD,
-        list,
-        required: [VAR],
-        optional: [NAME],
-    );
+    CMD.enter();
 
-    let name_ptr: *const c_char = match name {
-        // The WORD_LIST word is already a NUL-terminated C string.
-        Some(c) => c.as_ptr() as *const c_char,
-        None => c"L_builtin_memfd".as_ptr(),
+    let args = match MemfdArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
     };
 
     let flags: libc::c_uint = libc::MFD_CLOEXEC | libc::MFD_NOEXEC_SEAL;
 
-    let fd = unsafe { libc::memfd_create(name_ptr, flags) };
+    let fd = unsafe { libc::memfd_create(args.name, flags) };
     if fd < 0 {
         l_builtin_error!(b"memfd_create: ", std::io::Error::last_os_error());
         return EXECUTION_FAILURE;
     }
-    let var_ptr = var.as_ptr().cast::<c_char>();
-    let s = crate::shared::I64Str::new(fd as i64);
-    if unsafe { bind_variable(var_ptr, s.as_ptr(), 0) }.is_null() {
-        l_builtin_error!(b"cannot bind variable '", unsafe { var.as_bytes() }, b"'");
+    if let Err(e) = args.var.set(crate::shared::I64Str::new(fd as i64).as_ptr()) {
         unsafe { libc::close(fd) };
-        return EXECUTION_FAILURE;
+        return e;
     }
     EXECUTION_SUCCESS
 }

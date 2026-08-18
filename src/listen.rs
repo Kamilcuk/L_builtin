@@ -7,9 +7,10 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
-use crate::subcmd::CmdDesc;
 use crate::l_builtin_error;
-use crate::{subcmd_getopts};
+use crate::subcmd::CmdDesc;
+use cmdargs_derive::CmdArgs;
+use std::ffi::CStr;
 use std::os::fd::IntoRawFd;
 use std::os::raw::{c_char, c_int};
 
@@ -32,36 +33,54 @@ Returns success unless socket/bind/listen fails or variable binding fails.
 ",
 );
 
+#[derive(CmdArgs)]
+struct ListenArgs {
+    /// Store the actual bound port into shell variable PORT_VAR.
+    #[opt('p')]
+    port_var: Option<*const c_char>,
+
+    /// Variable to store the resulting listening socket fd in.
+    #[positional]
+    listenfd_var: *const c_char,
+
+    /// IP to bind to (defaults to 127.0.0.1).
+    #[optional(default = c"127.0.0.1")]
+    ip: &'static CStr,
+
+    /// Port to bind to (defaults to 0).
+    #[optional(default = 0)]
+    port: u32,
+}
+
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn listen_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut port_var: Option<*mut c_char> = None;
-    let (listenfd_var, ip_cptr, port_cptr) = subcmd_getopts!(
-        CMD,
-        list,
-        options: [ p => |p| port_var = Some(p.as_ptr().cast()) ],
-        required: [LISTENFD_VAR],
-        optional: [IP, PORT],
-    );
+    CMD.enter();
 
-    // Get IP (optional, defaults to 127.0.0.1) and PORT (optional, defaults to 0)
-    let ip_str = ip_cptr
-        .and_then(|p| unsafe { p.as_str().ok() })
-        .unwrap_or("127.0.0.1");
-    let port_str = port_cptr
-        .and_then(|p| unsafe { p.as_str().ok() })
-        .unwrap_or("0");
+    let args = match ListenArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
+    };
 
-    if port_str == "0" && port_var.is_none() {
+    let port_var = args.port_var.map(|p| p as *mut c_char);
+
+    let ip_str = match args.ip.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            l_builtin_error!(b"invalid IP");
+            return EX_USAGE;
+        }
+    };
+    let port: u16 = args.port as u16;
+
+    if port == 0 && port_var.is_none() {
         l_builtin_error!(b"-p PORT_VAR option is required when port is 0");
         return EX_USAGE;
     }
 
-    let port_num: u16 = port_str.parse().unwrap_or(0);
-
-    let listener = match std::net::TcpListener::bind((ip_str, port_num)) {
+    let listener = match std::net::TcpListener::bind((ip_str, port)) {
         Ok(l) => l,
         Err(e) => {
             l_builtin_error!(b"bind failed: ", e);
@@ -85,9 +104,7 @@ pub unsafe extern "C" fn listen_subcommand(list: *mut WORD_LIST) -> c_int {
     // Bind the listenfd variable - use the raw C string pointer
     let sfd_str = crate::shared::I64Str::new(sfd as i64);
 
-    if unsafe { crate::bash_api::bind_variable(listenfd_var.as_ptr(), sfd_str.as_ptr(), 0) }
-        .is_null()
-    {
+    if unsafe { crate::bash_api::bind_variable(args.listenfd_var, sfd_str.as_ptr(), 0) }.is_null() {
         unsafe {
             libc::close(sfd);
         }

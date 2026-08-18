@@ -6,9 +6,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
+use crate::cmdargs::BashVar;
 use crate::l_builtin_error;
-use crate::{subcmd_getopts};
+use cmdargs_derive::CmdArgs;
+use std::ffi::{c_char, CStr};
 use std::os::fd::{AsRawFd, IntoRawFd};
 use std::os::raw::c_int;
 
@@ -29,23 +31,33 @@ Returns success unless connection fails or variable binding fails.
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
+#[derive(CmdArgs)]
+struct ConnectArgs {
+    #[positional]
+    clientfd_var: BashVar,
+    #[positional]
+    ip: &'static CStr,
+    #[positional]
+    port: u32,
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn connect_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (clientfd_var, ip, port) = subcmd_getopts!(
-        CMD,
-        list,
-        required: [CLIENTFD_VAR, IP, PORT],
-    );
+    CMD.enter();
 
-    let ip_str = unsafe { ip.as_str().unwrap_or("0.0.0.0") };
-    let port_str = unsafe { port.as_str().unwrap_or("0") };
-    let port_num: u16 = match port_str.parse() {
-        Ok(p) => p,
+    let args = match ConnectArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
+    };
+
+    let ip_str = match args.ip.to_str() {
+        Ok(s) => s,
         Err(_) => {
-            l_builtin_error!(b"invalid port: ", port_str.as_bytes());
+            l_builtin_error!(b"invalid IP");
             return EX_USAGE;
         }
     };
+    let port_num: u16 = args.port as u16;
 
     let stream = match std::net::TcpStream::connect((ip_str, port_num)) {
         Ok(s) => s,
@@ -56,11 +68,9 @@ pub unsafe extern "C" fn connect_subcommand(list: *mut WORD_LIST) -> c_int {
     };
 
     let sfd_str = crate::shared::SizeTStr::from_usize(stream.as_raw_fd() as usize);
-    if unsafe { crate::bash_api::bind_variable(clientfd_var.as_ptr(), sfd_str.as_ptr(), 0) }
-        .is_null()
-    {
-        l_builtin_error!(b"cannot bind variable");
-        return EXECUTION_FAILURE;
+
+    if let Err(e) = args.clientfd_var.set(sfd_str.as_ptr()) {
+        return e;
     }
 
     let _ = stream.into_raw_fd();

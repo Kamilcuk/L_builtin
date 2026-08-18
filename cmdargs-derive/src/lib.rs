@@ -6,7 +6,12 @@
 //! - `#[flag('c')]`     boolean flag `-c` (no argument).
 //! - `#[positional]`    required positional argument.
 //! - `#[optional]`      optional positional argument (`Option<T>`).
-//! - `#[rest]`          variadic positional (`Vec<T>`).
+//! - `#[rest]`          variadic positional handed back as the raw remaining
+//!                      `*mut WORD_LIST` (no `FromCpnt` conversion). Used by
+//!                      dispatch subcommands that forward the leftover words to
+//!                      a child handler with the C ABI `(*mut WORD_LIST)` shape,
+//!                      and by any subcommand that needs to iterate the
+//!                      remaining words directly.
 //! - `#[flatten]`       embed another `CmdArgs` struct (its options/positionals
 //!                      are merged into the parent).
 //! - `#[parse(expr)]`   custom converter `Fn(Cpnt) -> Result<T, E>` (E: Display),
@@ -98,6 +103,7 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
     let mut apply_opt_own = Vec::new();
     let mut apply_opt_flatten = Vec::new();
     let mut fill_stmts = Vec::new();
+    let mut rest_ptr_stmts = Vec::new();
     let mut flatten_inherit_macro_calls: Vec<proc_macro2::TokenStream> = Vec::new();
 
     for info in &infos {
@@ -196,15 +202,25 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
             }
             FieldKind::Rest => {
                 has_rest = true;
-                fill_stmts.push(quote! {
-                    while let ::core::option::Option::Some(cptr) = iter.next() {
-                        self.#ident.push(match #pos_conv {
-                            ::core::result::Result::Ok(v) => v,
-                            #err_arm
-                        });
+                // Captured after every other positional so the view spans the
+                // words remaining once positionals are consumed. The lifetime is
+                // erased to 'static: cmdargs is only ever driven by bash for the
+                // duration of a single builtin invocation, and the WORD_LIST is
+                // owned by bash for at least that long.
+                rest_ptr_stmts.push(quote! {
+                    self.#ident = unsafe {
+                        ::core::mem::transmute::<WordListIterCpnt<'_>, WordListIterCpnt<'static>>(
+                            WordListView::from_raw(iter.as_ptr()).iter(),
+                        )
+                    };
+                });
+                default_inits.push(quote! {
+                    #ident: unsafe {
+                        ::core::mem::transmute::<WordListIterCpnt<'_>, WordListIterCpnt<'static>>(
+                            WordListView::from_raw(::std::ptr::null_mut()).iter(),
+                        )
                     }
                 });
-                default_inits.push(quote!(#ident: ::core::default::Default::default()));
             }
             FieldKind::Flatten => {
                 let child_ident = match ty {
@@ -295,6 +311,7 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
                 iter: &mut WordListIterCpnt,
             ) -> ::core::result::Result<(), c_int> {
                 #(#fill_stmts)*
+                #(#rest_ptr_stmts)*
                 ::core::result::Result::Ok(())
             }
         }

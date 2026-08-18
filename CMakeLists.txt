@@ -108,6 +108,7 @@ function(generate_bash_bindings gen_file bash_source)
             # former build.rs), not covered by the l_.* prefix.
             --allowlist-function find_variable
             --allowlist-function bind_variable
+            --allowlist-function legal_identifier
             --allowlist-function find_function
             --allowlist-function make_new_array_variable
             --allowlist-function convert_var_to_array

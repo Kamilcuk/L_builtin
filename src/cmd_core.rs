@@ -10,10 +10,13 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{WordListIterOsString, EX_NOTFOUND, WORD_LIST};
-use crate::subcmd::CmdDesc;
+use crate::bash_api::{
+    WordListIterCpnt, WordListIterOsString, WordListView, EX_NOTFOUND, WORD_LIST,
+};
 use crate::l_builtin_error;
-use crate::{beprintln, subcmd_getopts, intlookup};
+use crate::subcmd::CmdDesc;
+use crate::{beprintln, intlookup};
+use cmdargs_derive::CmdArgs;
 
 use std::os::raw::c_int;
 
@@ -64,14 +67,24 @@ const UU_DISPATCH_TABLE: crate::intlookup::U64::IntLookup<UuMain, { UU_DISPATCH_
 /// # Safety
 ///
 /// is safe
+#[derive(CmdArgs)]
+struct CoreDispatchArgs {
+    #[rest]
+    rest: WordListIterCpnt<'static>,
+}
+
+/// # Safety
+///
+/// is safe
 #[no_mangle]
 pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (rest,) = subcmd_getopts!(
-        CMD,
-        list,
-        rest: REST,
-    );
-    let val = match unsafe { rest.current() } {
+    CMD.enter();
+    let args = match CoreDispatchArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
+    };
+    let rest_view = args.rest;
+    let val = match rest_view.current() {
         Some(val) => val.as_bytes(),
         None => {
             // No subcommand was given - only options (or nothing).
@@ -88,7 +101,7 @@ pub unsafe extern "C" fn l_core_subcommand(list: *mut WORD_LIST) -> c_int {
             return EX_NOTFOUND;
         }
     };
-    let rest_view = unsafe { crate::bash_api::WordListView::from_raw(rest.as_ptr()) };
-    let uuargs: UuArgs = rest_view.iter_osstring();
+    let rest_view_lv = WordListView::from_raw(rest_view.as_ptr());
+    let uuargs: UuArgs = rest_view_lv.iter_osstring();
     uumain(uuargs)
 }

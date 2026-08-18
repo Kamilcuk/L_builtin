@@ -133,13 +133,3 @@ pub(crate) fn map_named(name: &CStr, size: usize, create: bool) -> Result<*mut u
 pub(crate) fn unmap(ptr: *mut u8, size: usize) {
     unsafe { libc::munmap(ptr as *mut libc::c_void, size) };
 }
-
-/// Bind opaque integer handle `id` into the shell variable named by `var`.
-pub(crate) fn bind_handle(var: *const c_char, id: u64) -> c_int {
-    let val = CString::new(id.to_string()).unwrap_or_default();
-    if unsafe { bind_variable(var.cast(), val.as_ptr(), 0) }.is_null() {
-        l_builtin_error!(b"failed to bind variable");
-        return EXECUTION_FAILURE;
-    }
-    EXECUTION_SUCCESS
-}

@@ -3,9 +3,10 @@ use crate::bash_api::{
     expand_string, l_check_unbind_variable, l_expand_string_to_string_in_quotes, CStringOwned,
     WordListOwned,
 };
+use crate::beprintln;
 use crate::bprint_bytes::BDisplay;
 use crate::l_builtin_error;
-use crate::{beprintln, subcmd_getopts};
+use cmdargs_derive::CmdArgs;
 
 use std::ffi::{c_char, CStr};
 use std::io::Write;
@@ -18,7 +19,7 @@ use crate::bash_api::{
     bind_variable, convert_var_to_array, find_variable, l_array_cell, l_array_head, l_array_p,
     l_assoc_cell, l_assoc_insert, l_assoc_p, l_element_forw, l_element_index, l_element_value,
     l_invisible_p, l_readonly_p, l_value_cell, make_new_array_variable, make_new_assoc_variable,
-    EX_USAGE, SHELL_VAR, WORD_LIST,
+    WordListIterCpnt, EX_USAGE, SHELL_VAR, WORD_LIST,
 };
 use crate::subcmd::CmdDesc;
 
@@ -147,16 +148,23 @@ Examples:
 ",
 );
 
+#[derive(CmdArgs)]
+struct LuaDispatchArgs {
+    #[rest]
+    rest: WordListIterCpnt<'static>,
+}
+
 /// # Safety
 #[no_mangle]
 pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (rest,) = subcmd_getopts!(
-        CMD,
-        list,
-        rest: REST,
-    );
-    let mut args = rest.map(|c| unsafe { c.as_bytes() });
-    let script = match args.next() {
+    CMD.enter();
+    let args = match LuaDispatchArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
+    };
+    let view = args.rest;
+    let mut script_and_args = view.map(|c| unsafe { c.as_bytes() });
+    let script = match script_and_args.next() {
         Some(script) => script,
         None => {
             // No script was given - only options (or nothing).
@@ -166,7 +174,7 @@ pub unsafe extern "C" fn l_lua_subcommand(list: *mut WORD_LIST) -> c_int {
         }
     };
     let lua = Lua::new();
-    let _return_value = match run_lua_script(&lua, script, args) {
+    let _return_value = match run_lua_script(&lua, script, script_and_args) {
         Ok(val) => val,
         Err(e) => {
             l_builtin_error!(e);

@@ -6,10 +6,11 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{bind_variable, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::l_builtin_error;
 use crate::subcmd::CmdDesc;
-use crate::subcmd_getopts;
+use cmdargs_derive::CmdArgs;
+use crate::cmdargs::BashVar;
 use std::os::raw::{c_char, c_int};
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -45,13 +46,18 @@ Examples:
 ",
 );
 
-unsafe fn store_fd(var: *mut c_char, fd: c_int) -> bool {
-    let s = crate::shared::I64Str::new(fd as i64);
-    if unsafe { bind_variable(var, s.as_ptr(), 0) }.is_null() {
-        l_builtin_error!(b"cannot bind variable");
-        return false;
-    }
-    true
+#[derive(CmdArgs)]
+struct EventfdArgs {
+    #[flag('n')]
+    nonblock: bool,
+    #[flag('s')]
+    semaphore: bool,
+    #[flag('c')]
+    cloexec: bool,
+    #[positional]
+    var: BashVar,
+    #[optional]
+    initval: Option<u32>,
 }
 
 /// # Safety
@@ -59,31 +65,18 @@ unsafe fn store_fd(var: *mut c_char, fd: c_int) -> bool {
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn eventfd_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut nonblock = false;
-    let mut semaphore = false;
-    let mut cloexec = true;
-    let (var, initval) = subcmd_getopts!(
-        CMD,
-        list,
-        flags: [
-            n => || nonblock = true,
-            s => || semaphore = true,
-            c => || cloexec = !cloexec,
-        ],
-        required: [VAR],
-        optional: [INITVAL],
-    );
+    CMD.enter();
 
-    let initval: u32 = match initval {
-        Some(c) => match unsafe { c.as_str() }.ok().and_then(|s| s.parse().ok()) {
-            Some(v) => v,
-            None => {
-        l_builtin_error!(b"invalid INITVAL");
-                return EX_USAGE;
-            }
-        },
-        None => 0,
+    let args = match EventfdArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
     };
+
+    let nonblock = args.nonblock;
+    let semaphore = args.semaphore;
+    let cloexec = !args.cloexec;
+
+    let initval: u32 = args.initval.unwrap_or(0);
 
     let mut flags = 0;
     if nonblock {
@@ -101,10 +94,9 @@ pub unsafe extern "C" fn eventfd_subcommand(list: *mut WORD_LIST) -> c_int {
         l_builtin_error!(b"eventfd: ", std::io::Error::last_os_error());
         return EXECUTION_FAILURE;
     }
-    let var_ptr = var.as_ptr().cast::<c_char>();
-    if !unsafe { store_fd(var_ptr, fd) } {
+    if let Err(e) = args.var.set(crate::shared::I64Str::new(fd as i64).as_ptr()) {
         unsafe { libc::close(fd) };
-        return EXECUTION_FAILURE;
+        return e;
     }
     EXECUTION_SUCCESS
 }

@@ -6,10 +6,14 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, bufwrite, shared, subcmd_getopts};
-use std::os::raw::c_int;
+use crate::cmdargs::BashVar;
+use crate::bash_api::{
+    this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST,
+};
+use crate::{beprintln, bufwrite};
+use cmdargs_derive::CmdArgs;
+use std::os::raw::{c_char, c_int};
 
 const CMD: CmdDesc = CmdDesc::new(
     c"accept",
@@ -24,22 +28,28 @@ Returns success unless accept fails or variable binding fails.
 ",
 );
 
+#[derive(CmdArgs)]
+struct AcceptArgs {
+    #[positional]
+    clientfd_var: BashVar,
+    #[positional]
+    addr_var: BashVar,
+    #[positional]
+    listenfd: c_int,
+}
+
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (clientfd_var, addr_var, fd_cptr) = subcmd_getopts!(
-        CMD,
-        list,
-        required: [CLIENTFD_VAR, ADDR_VAR, LISTENFD],
-    );
-
-    let fd_bytes = unsafe { fd_cptr.as_bytes() };
-    let Some(listenfd) = shared::parse_bytes::<c_int>(fd_bytes) else {
-        beprintln!(this_cmd_name(), b": invalid listenfd: ", fd_bytes);
-        return EX_USAGE;
+    CMD.enter();
+    let args = match AcceptArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
     };
+
+    let listenfd = args.listenfd;
 
     // Call accept
     let mut addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
@@ -78,22 +88,13 @@ pub unsafe extern "C" fn accept_subcommand(list: *mut WORD_LIST) -> c_int {
     // Bind clientfd variable - use the raw C string pointer
     let clientfd_str = crate::shared::SizeTStr::from_usize(clientfd as usize);
 
-    if unsafe { crate::bash_api::bind_variable(clientfd_var.as_ptr(), clientfd_str.as_ptr(), 0) }
-        .is_null()
-    {
-        unsafe {
-            libc::close(clientfd);
-        }
-        beprintln!(this_cmd_name(), b": cannot bind variable");
-        return EXECUTION_FAILURE;
+    if let Err(e) = args.clientfd_var.set(clientfd_str.as_ptr()) {
+        return e;
     }
 
     // Bind addr variable - use stack buffer
-    if unsafe { crate::bash_api::bind_variable(addr_var.as_ptr(), addr_buf.as_ptr().cast(), 0) }
-        .is_null()
-    {
-        beprintln!(this_cmd_name(), b": cannot bind variable");
-        return EXECUTION_FAILURE;
+    if let Err(e) = args.addr_var.set(addr_buf.as_ptr().cast()) {
+        return e;
     }
 
     EXECUTION_SUCCESS

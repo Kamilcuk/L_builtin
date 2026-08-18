@@ -9,7 +9,7 @@
 use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::l_builtin_error;
 use crate::subcmd::CmdDesc;
-use crate::subcmd_getopts;
+use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -44,35 +44,43 @@ Examples:
 ",
 );
 
+#[derive(CmdArgs)]
+struct FlockArgs {
+    #[flag('x')]
+    exclusive_x: bool,
+    #[flag('e')]
+    exclusive_e: bool,
+    #[flag('s')]
+    shared: bool,
+    #[flag('u')]
+    unlock: bool,
+    #[flag('n')]
+    nonblock: bool,
+    #[positional]
+    fd: c_int,
+}
+
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn flock_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut exclusive = false;
-    let mut shared = false;
-    let mut unlock = false;
-    let mut nonblock = false;
-    let (fd_c,) = subcmd_getopts!(
-        CMD,
-        list,
-        flags: [
-            x => || exclusive = true,
-            e => || exclusive = true,
-            s => || shared = true,
-            u => || unlock = true,
-            n => || nonblock = true,
-        ],
-        required: [FD],
-    );
+    CMD.enter();
 
-    let fd: c_int = match unsafe { fd_c.as_str() }.ok().and_then(|s| s.parse().ok()) {
-        Some(v) if v >= 0 => v,
-        _ => {
-        l_builtin_error!(b"invalid fd");
-            return EX_USAGE;
-        }
+    let args = match FlockArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
     };
+
+    let exclusive = args.exclusive_x || args.exclusive_e;
+    let shared = args.shared;
+    let unlock = args.unlock;
+    let nonblock = args.nonblock;
+    let fd = args.fd;
+    if fd < 0 {
+        l_builtin_error!(b"invalid fd");
+        return EX_USAGE;
+    }
 
     let mut op: c_int = 0;
     let mut chosen = 0;

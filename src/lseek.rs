@@ -6,10 +6,10 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use cmdargs_derive::CmdArgs;
 use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
 use crate::l_builtin_error;
 use crate::subcmd::CmdDesc;
+use cmdargs_derive::CmdArgs;
 use std::ffi::c_char;
 use std::os::raw::c_int;
 

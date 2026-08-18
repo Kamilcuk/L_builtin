@@ -8,9 +8,11 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
-use crate::subcmd::CmdDesc;
+use crate::bprintln;
 use crate::l_builtin_error;
-use crate::{bprintln, subcmd_getopts};
+use crate::subcmd::CmdDesc;
+use cmdargs_derive::CmdArgs;
+use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -63,47 +65,48 @@ fn parse_flags(s: &str) -> Option<libc::c_uint> {
     Some(flags)
 }
 
+#[derive(CmdArgs)]
+struct SpliceArgs {
+    /// Store the number of bytes moved into shell variable BYTES_VAR.
+    #[opt('v')]
+    var: Option<*const c_char>,
+
+    /// Source file descriptor.
+    #[positional]
+    fd_in: c_int,
+
+    /// Destination file descriptor.
+    #[positional]
+    fd_out: c_int,
+
+    /// Maximum number of bytes to move.
+    #[positional]
+    len: usize,
+
+    /// Optional splice flags (comma-separated).
+    #[optional]
+    flags: Option<&'static CStr>,
+}
+
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn splice_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut var: *mut c_char = std::ptr::null_mut();
-    let (fd_in, fd_out, len, flags) = subcmd_getopts!(
-        CMD,
-        list,
-        options: [ v => |v| var = v.as_ptr().cast() ],
-        required: [fd_in, fd_out, len],
-        optional: [flags],
-    );
+    CMD.enter();
 
-    let (fd_in, fd_out, len) = {
-        let a = match unsafe { fd_in.as_str() }.ok().and_then(|s| s.parse().ok()) {
-            Some(v) => v,
-            None => {
-                l_builtin_error!(b"invalid FD_IN");
-                return EX_USAGE;
-            }
-        };
-        let b = match unsafe { fd_out.as_str() }.ok().and_then(|s| s.parse().ok()) {
-            Some(v) => v,
-            None => {
-                l_builtin_error!(b"invalid FD_OUT");
-                return EX_USAGE;
-            }
-        };
-        let c = match unsafe { len.as_str() }.ok().and_then(|s| s.parse().ok()) {
-            Some(v) => v,
-            None => {
-                l_builtin_error!(b"invalid LEN");
-                return EX_USAGE;
-            }
-        };
-        (a, b, c)
+    let args = match SpliceArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
     };
 
-    let flags = match flags {
-        Some(c) => match unsafe { c.as_str() } {
+    let var = args.var.map_or(std::ptr::null_mut(), |p| p as *mut c_char);
+    let fd_in = args.fd_in;
+    let fd_out = args.fd_out;
+    let len = args.len;
+
+    let flags = match args.flags {
+        Some(c) => match c.to_str() {
             Ok(s) => match parse_flags(s) {
                 Some(f) => f,
                 None => {
@@ -138,8 +141,7 @@ pub unsafe extern "C" fn splice_subcommand(list: *mut WORD_LIST) -> c_int {
         bprintln!(moved as i64);
     } else {
         let s = crate::shared::SizeTStr::from_usize(moved as usize);
-        if unsafe { crate::bash_api::bind_variable(var, s.as_ptr(), 0) }.is_null() {
-            l_builtin_error!(b"cannot bind variable");
+        if crate::shared::bind_variable_check(var, s.as_ptr(), 0) != EXECUTION_SUCCESS {
             return EXECUTION_FAILURE;
         }
     }

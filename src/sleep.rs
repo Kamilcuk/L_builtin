@@ -7,8 +7,9 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{this_cmd_name, EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
+use crate::beprintln;
 use crate::subcmd::CmdDesc;
-use crate::{beprintln, subcmd_getopts};
+use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -29,29 +30,22 @@ Returns success unless sleep fails.
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
+#[derive(CmdArgs)]
+struct SleepArgs {
+    #[flag('i')]
+    interruptible: bool,
+    #[positional]
+    seconds: f64,
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut interruptible = false;
-    let (seconds_cstr,) = subcmd_getopts!(
-        CMD,
-        list,
-        flags: [ i => || interruptible = true ],
-        required: [SECONDS],
-    );
-    let seconds_str = match seconds_cstr.as_str() {
-        Ok(s) => s,
-        Err(_) => {
-            beprintln!("L_builtin: invalid UTF-8 argument");
-            return EX_USAGE;
-        }
+    CMD.enter();
+    let args = match SleepArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
     };
-    let seconds: f64 = match seconds_str.parse() {
-        Ok(f) => f,
-        Err(_) => {
-            beprintln!("L_builtin: invalid number: {}", seconds_str);
-            return EX_USAGE;
-        }
-    };
+    let seconds = args.seconds;
 
     if seconds < 0.0 {
         beprintln!(this_cmd_name(), b": invalid sleep duration");
@@ -74,7 +68,7 @@ pub unsafe extern "C" fn sleep_subcommand(list: *mut WORD_LIST) -> c_int {
         }
         let err = std::io::Error::last_os_error();
         if err.raw_os_error() == Some(libc::EINTR) {
-            if interruptible {
+            if args.interruptible {
                 beprintln!(this_cmd_name(), b": sleep failed: Interrupted system call");
                 return EXECUTION_FAILURE;
             }

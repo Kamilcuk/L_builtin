@@ -9,7 +9,7 @@
 use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
 use crate::l_builtin_error;
 use crate::subcmd::CmdDesc;
-use crate::subcmd_getopts;
+use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -33,18 +33,30 @@ Examples:
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
+#[derive(CmdArgs)]
+struct CloseArgs {
+    #[positional]
+    fd: c_int,
+}
+
+/// # Safety
+///
+/// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn close_subcommand(list: *mut WORD_LIST) -> c_int {
-    let (fd_c,) = subcmd_getopts!(
-        CMD,
-        list,
-        required: [FD],
-    );
+    CMD.enter();
+
+    let args = match CloseArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
+    };
+
+    let fd_c = crate::bash_api::Cpnt::new(args.fd as *mut c_char);
 
     let fd: c_int = match unsafe { fd_c.as_str() }.ok().and_then(|s| s.parse().ok()) {
         Some(v) if v >= 0 => v,
         _ => {
-        l_builtin_error!(b"invalid fd");
+            l_builtin_error!(b"invalid fd");
             return EX_USAGE;
         }
     };

@@ -30,9 +30,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use rkyv::{
-    util::AlignedVec, Archive, Deserialize, Serialize,
-};
+use rkyv::{util::AlignedVec, Archive, Deserialize, Serialize};
 
 /// Map any rkyv/rancor error into an `io::Error` so the rest of the crate can
 /// use a single error type.
@@ -212,11 +210,15 @@ pub fn open_db_loc(loc: &DbLoc) -> Result<LockedDatabase, String> {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("shm: cannot create {}: {}", parent.display(), e))?;
             }
-            LockedDatabase::open(p)
-                .map_err(|e| format!("shm: cannot open {}: {}", p.display(), e))
+            LockedDatabase::open(p).map_err(|e| format!("shm: cannot open {}: {}", p.display(), e))
         }
-        DbLoc::Shm(name) => LockedDatabase::open_shm(name)
-            .map_err(|e| format!("shm: cannot open shared memory {}: {}", name.to_str().unwrap_or(""), e)),
+        DbLoc::Shm(name) => LockedDatabase::open_shm(name).map_err(|e| {
+            format!(
+                "shm: cannot open shared memory {}: {}",
+                name.to_str().unwrap_or(""),
+                e
+            )
+        }),
         DbLoc::Mem(name) => LockedDatabase::open_mem(name)
             .map_err(|e| format!("shm: cannot create anonymous database: {}", e)),
     }

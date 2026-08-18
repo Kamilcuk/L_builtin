@@ -8,8 +8,28 @@ use std::os::raw::{c_char, c_int};
 
 use memmap2::MmapMut;
 
-use crate::bash_api::{bind_variable, find_variable, l_readonly_p};
+use crate::bash_api::{
+    bind_variable, find_variable, l_readonly_p, EXECUTION_FAILURE, EXECUTION_SUCCESS,
+};
 use crate::beprintln;
+
+/// Bind `value` to the shell variable `var`, returning `EXECUTION_SUCCESS` on
+/// success or `EXECUTION_FAILURE` if the bind failed (e.g. a readonly variable).
+///
+/// # Safety
+/// `var` and `value` must be valid pointers to NUL-terminated C strings.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub(crate) unsafe fn bind_variable_check(
+    var: *const c_char,
+    value: *const c_char,
+    flags: c_int,
+) -> c_int {
+    if bind_variable(var, value, flags).is_null() {
+        EXECUTION_FAILURE
+    } else {
+        EXECUTION_SUCCESS
+    }
+}
 
 /// Bind `value` to the shell variable `name`.
 ///

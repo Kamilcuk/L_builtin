@@ -7,9 +7,11 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
-use crate::subcmd::CmdDesc;
+use crate::bprintln;
 use crate::l_builtin_error;
-use crate::{bprintln, subcmd_getopts};
+use crate::subcmd::CmdDesc;
+use cmdargs_derive::CmdArgs;
+use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -57,34 +59,48 @@ fn parse_clock(s: Option<&str>) -> Option<libc::clockid_t> {
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
+#[derive(CmdArgs)]
+struct TimerfdArgs {
+    #[flag('n')]
+    nonblock: bool,
+    #[opt('c')]
+    clock: Option<*const c_char>,
+    #[opt('s')]
+    initial: Option<f64>,
+    #[opt('i')]
+    interval: Option<f64>,
+    #[opt('v')]
+    fd_var: Option<*const c_char>,
+}
+
+/// # Safety
+///
+/// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut nonblock = false;
+    CMD.enter();
+
+    let args = match TimerfdArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
+    };
+
+    let nonblock = args.nonblock;
     let mut clock: libc::clockid_t = libc::CLOCK_MONOTONIC;
-    let mut initial: f64 = 0.0;
-    let mut interval: f64 = 0.0;
-    let mut fd_var: *mut c_char = std::ptr::null_mut();
-    subcmd_getopts!(
-        CMD,
-        list,
-        flags: [ n => || nonblock = true ],
-        options: [
-            c => |v| {
-                if let Some(c) = parse_clock(unsafe { v.as_str() }.ok()) {
-                    clock = c;
-                } else {
-                    l_builtin_error!(b"invalid clock");
-                }
-            },
-            s => |v| initial = unsafe {
-                v.as_str().ok().and_then(|s| s.parse().ok()).unwrap_or(0.0)
-            },
-            i => |v| interval = unsafe {
-                v.as_str().ok().and_then(|s| s.parse().ok()).unwrap_or(0.0)
-            },
-            v => |v| fd_var = v.as_ptr().cast(),
-        ],
-    );
+    if let Some(p) = args.clock {
+        match parse_clock(unsafe { CStr::from_ptr(p).to_str().ok() }) {
+            Some(c) => clock = c,
+            None => {
+                l_builtin_error!(b"invalid clock");
+            }
+        }
+    }
+    let initial: f64 = args.initial.unwrap_or(0.0);
+    let interval: f64 = args.interval.unwrap_or(0.0);
+    let fd_var = match args.fd_var {
+        Some(p) => p as *mut c_char,
+        None => std::ptr::null_mut(),
+    };
 
     let mut flags = libc::TFD_CLOEXEC;
     if nonblock {
@@ -93,10 +109,7 @@ pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
 
     let fd = unsafe { libc::timerfd_create(clock, flags) };
     if fd < 0 {
-        l_builtin_error!(
-            b"timerfd_create: ",
-            std::io::Error::last_os_error()
-        );
+        l_builtin_error!(b"timerfd_create: ", std::io::Error::last_os_error());
         return EXECUTION_FAILURE;
     }
 
@@ -121,10 +134,7 @@ pub unsafe extern "C" fn timerfd_subcommand(list: *mut WORD_LIST) -> c_int {
             it_value: to_timespec(initial),
         };
         if unsafe { libc::timerfd_settime(fd, 0, &spec, std::ptr::null_mut()) } < 0 {
-            l_builtin_error!(
-                b"timerfd_settime: ",
-                std::io::Error::last_os_error()
-            );
+            l_builtin_error!(b"timerfd_settime: ", std::io::Error::last_os_error());
             unsafe { libc::close(fd) };
             return EXECUTION_FAILURE;
         }
