@@ -9,17 +9,15 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-
 use cmdargs_derive::CmdArgs;
 
-use crate::bash_api::{
-    c_char, c_int, this_cmd_name, WordListView,
-    EX_USAGE, WORD_LIST,
-};
+use crate::bash_api::{c_char, c_int, this_cmd_name, WordListView, EX_USAGE, WORD_LIST};
 use crate::cmdargs::WordListIterCpnt;
 use crate::shared::{capture_into_variable, flush_stdout_buffers};
+#[cfg(not(feature = "bash_lt_4_3"))]
+use crate::subcmd::cint_to_cmd_result;
 use crate::subcmd::{cmd_result_to_cint, CmdResult, SubcommandFn, SubcommandGuard};
-use crate::{beprintln, bprintln, intlookup, l_builtin_usage_error};
+use crate::{bprintln, intlookup, l_builtin_usage_error};
 
 #[cfg(not(feature = "bash_lt_4_3"))]
 use crate::bash_api::l_execute_command_string;
@@ -125,6 +123,7 @@ fn l_builtin_print_usage() {
 fn build_eval_command<'a>(args: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
     let mut buf = Vec::new();
     for (i, word) in args.enumerate() {
+        buf.reserve(word.len() + 2);
         if i > 0 {
             buf.push(b' ');
         }
@@ -165,40 +164,27 @@ all work uniformly.
 ",
 );
 
+#[derive(CmdArgs)]
+struct CaptureArgs {
+    #[positional]
+    var: BashVar,
+    #[positional]
+    command: &'static [u8],
+    #[rest]
+    args: WordListIterCpnt<'static>,
+}
+
 /// # Safety
 #[cfg(not(feature = "bash_lt_4_3"))]
 pub unsafe fn l_capture_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CAPTURE_CMD.enter();
-    let mut args = WordListView::from_raw(list).into_iter();
-    // var is a slice from bash WORD_LIST; use the original C string pointer.
-    // The WORD_DESC.word field (direct field access on the generated layout)
-    // is a NUL-terminated C string.
-    let var_ptr = match args.next() {
-        None => {
-            beprintln!(b"L_builtin capture: usage: L_builtin capture VAR <command> [args...]");
-            return Err(EX_USAGE);
-        }
-        Some(v) => v,
-    };
-    if args.current().is_none() {
-        beprintln!(b"L_builtin capture: missing command");
-        return Err(EX_USAGE);
-    }
-    l_capture_output(var_ptr.as_ptr().cast(), args.as_ptr())
-}
-
-#[cfg(not(feature = "bash_lt_4_3"))]
-pub unsafe fn l_capture_output(var: *const c_char, list: *mut WORD_LIST) -> CmdResult {
-    let args = WordListView::from_raw(list).into_iter();
-    let cmd = build_eval_command(args.map(|c| unsafe { c.as_bytes() }));
+    let args = CaptureArgs::parse(list)?;
+    let cmd = build_eval_command(
+        std::iter::once(args.command).chain(args.args.map(|c| unsafe { c.as_bytes() })),
+    );
     assert!(!cmd.is_empty());
-    capture_into_variable("L_builtin capture", var, false, || {
-        let rc = unsafe { l_execute_command_string(cmd.as_ptr().cast()) };
-        if rc == 0 {
-            Ok(())
-        } else {
-            Err(rc)
-        }
+    capture_into_variable("L_builtin capture", args.var, false, || {
+        cint_to_cmd_result(l_execute_command_string(cmd.as_ptr().cast()))
     })
 }
 
@@ -240,7 +226,7 @@ pub unsafe fn entrypoint(list: *mut WORD_LIST) -> CmdResult {
     // against direct fd writes from Rust.
     if let Some(ret) = args.var {
         // -v VAR was provided: capture subcommand stdout into VAR
-        capture_into_variable("L_builtin", ret.as_ptr(), true, || unsafe {
+        capture_into_variable("L_builtin", ret, true, || unsafe {
             subcommand(list.as_ptr())
         })
     } else {

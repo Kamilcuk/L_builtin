@@ -202,9 +202,8 @@ _L_test_net_recv_poll_timeout() {
 _L_net_server_multiple() {
     local count=0
     local sfd=""
-    L_logrun L_builtin listen -p net_port sfd 127.0.0.1
+    L_builtin listen -p net_port sfd 127.0.0.1
     L_logrun L_is_integer "$net_port"
-    echo "NET PORT IS $net_port"
     L_logrun L_builtin barrier wait "$net_barrier"
     while (( count < 3 )); do
         local cfd="" addr=""
@@ -225,12 +224,13 @@ _L_test_net_multiple_connections() {
     # local net_port net_barrier
     L_logrun L_builtin shm add net_port
     L_logrun L_builtin barrier create net_barrier 2
+    net_port=""
 
     local server_pid=""
-    L_logrun L_with_process_into server_pid _L_net_server_multiple
+    L_with_process_into server_pid _L_net_server_multiple
 
     # Give server time to start listening
-    L_logrun L_builtin barrier wait -t 2 "$net_barrier"
+    L_builtin barrier wait -t 2 "$net_barrier"
     L_logrun L_is_integer "$net_port"
 
     # Connect 3 clients sequentially

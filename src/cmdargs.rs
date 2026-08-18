@@ -117,7 +117,7 @@ impl Default for BashVar {
 }
 
 impl BashVar {
-    unsafe fn validate(name: *const c_char) -> Result<Self, String> {
+    pub unsafe fn validate(name: *const c_char) -> Result<Self, String> {
         if name.is_null() {
             return Err("empty variable name".to_string());
         }

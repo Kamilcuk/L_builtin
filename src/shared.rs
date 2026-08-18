@@ -11,8 +11,9 @@ use memmap2::MmapMut;
 use crate::bash_api::{
     bind_variable, find_variable, l_readonly_p, EXECUTION_FAILURE, EXECUTION_SUCCESS,
 };
-use crate::beprintln;
+use crate::cmdargs::BashVar;
 use crate::subcmd::CmdResult;
+use crate::l_builtin_error;
 
 /// Bind `value` to the shell variable `var`, returning `EXECUTION_SUCCESS` on
 /// success or `EXECUTION_FAILURE` if the bind failed (e.g. a readonly variable).
@@ -173,73 +174,30 @@ pub(crate) fn trim_trailing_newlines_in_zero_terminated_array_place(bytes: &mut 
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn capture_into_variable(
-    ename: &str,
-    var: *const c_char,
+    _ename: &str,
+    var: BashVar,
     trimnewlines: bool,
     f: impl FnOnce() -> CmdResult,
 ) -> CmdResult {
-    let mut memfd = return_on_err2!(ename, "cannot capture stdout", Memfd::new(), Err(1));
-    let result = {
-        let _guard = return_on_err2!(
-            ename,
-            "cannot redirect stdout",
-            RedirectStdout::new(&memfd.file),
-            Err(1)
-        );
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
-    };
-    let ret = return_on_err2!(ename, "captured command panicked", result, Err(1));
-    return_on_err2!(
-        ename,
-        "couldn't write to memfd",
-        memfd.file.write(b"\0"),
-        Err(1)
-    );
-    let mut mmap = return_on_err2!(
-        ename,
-        "couldn't mmap",
-        unsafe { MmapMut::map_mut(&memfd.file) },
-        Err(1)
-    );
+    let mut memfd = Memfd::new().map_err(|_e| l_builtin_error!("cannot capture stdout"))?;
+    let result;
+    {
+        let _guard = RedirectStdout::new(&memfd.file)
+            .map_err(|e| l_builtin_error!("cannot redirect stdout: ", e))?;
+        result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+            .map_err(|e| l_builtin_error!("captured command panicked: ", e))?;
+    }
+    memfd
+        .file
+        .write(b"\0")
+        .map_err(|e| l_builtin_error!("couldn't write to memfd: ", e))?;
+    let mut mmap = unsafe { MmapMut::map_mut(&memfd.file) }
+        .map_err(|e| l_builtin_error!("could not mmap:", e))?;
     if trimnewlines {
         trim_trailing_newlines_in_zero_terminated_array_place(&mut mmap)
     }
-    let res = unsafe { bind_shell_variable(var, mmap.as_ptr().cast()) };
-    return_on_err!(ename, res, Err(1));
-    ret
-}
-
-////////////////////////////////////
-// C string helpers - no allocations, work with raw pointers from bash
-////////////////////////////////////
-
-/// Convert a raw C string pointer to &str (borrowing, no allocation)
-pub fn cstr_to_str(ptr: *const c_char) -> Option<&'static str> {
-    if ptr.is_null() {
-        return None;
-    }
-    unsafe { CStr::from_ptr(ptr).to_str().ok() }
-}
-
-/// Convert a raw C string pointer to &[u8] (borrowing, no allocation)
-pub fn cstr_to_bytes(ptr: *const c_char) -> Option<&'static [u8]> {
-    if ptr.is_null() {
-        return None;
-    }
-    Some(unsafe { CStr::from_ptr(ptr).to_bytes() })
-}
-
-/// Parse an integer from a raw C string pointer
-pub fn parse_int<T: std::str::FromStr>(ptr: *const c_char) -> Option<T> {
-    cstr_to_str(ptr)?.parse().ok()
-}
-
-/// Create a null-terminated C string from a raw buffer using a stack buffer
-pub fn bytes_to_cstr<'a, const N: usize>(bytes: &[u8], buf: &'a mut [u8; N]) -> *const c_char {
-    let len = bytes.len().min(N - 1);
-    buf[..len].copy_from_slice(&bytes[..len]);
-    buf[len] = 0;
-    buf.as_ptr() as *const c_char
+    var.set(mmap.as_ptr().cast())?;
+    result
 }
 
 /// Format a string into a stack buffer and return the buffer.
@@ -262,85 +220,6 @@ macro_rules! bufwrite {
         buf[pos] = 0;
         buf
     }};
-}
-
-////////////////////////////////////
-// Zero-allocation integer parsing from ASCII bytes
-
-/// Trait for primitive integers that can be parsed from raw ASCII bytes.
-pub trait FromAsciiBytes: Sized {
-    fn parse_ascii(bytes: &[u8]) -> Option<Self>;
-}
-
-macro_rules! impl_from_ascii_signed {
-    ($($t:ty),*) => {
-        $(
-            impl FromAsciiBytes for $t {
-                fn parse_ascii(bytes: &[u8]) -> Option<Self> {
-                    if bytes.is_empty() {
-                        return None;
-                    }
-                    let (is_neg, digits) = match bytes {
-                        [b'-', rest @ ..] if !rest.is_empty() => (true, rest),
-                        [b'+', rest @ ..] if !rest.is_empty() => (false, rest),
-                        _ => (false, bytes),
-                    };
-
-                    let mut acc: $t = 0;
-                    for &b in digits {
-                        if !b.is_ascii_digit() {
-                            return None;
-                        }
-                        let digit = (b - b'0') as $t;
-                        acc = acc.checked_mul(10)?.checked_add(digit)?;
-                    }
-
-                    if is_neg {
-                        acc.checked_neg()
-                    } else {
-                        Some(acc)
-                    }
-                }
-            }
-        )*
-    };
-}
-
-macro_rules! impl_from_ascii_unsigned {
-    ($($t:ty),*) => {
-        $(
-            impl FromAsciiBytes for $t {
-                fn parse_ascii(bytes: &[u8]) -> Option<Self> {
-                    if bytes.is_empty() {
-                        return None;
-                    }
-                    let digits = match bytes {
-                        [b'+', rest @ ..] if !rest.is_empty() => rest,
-                        _ => bytes,
-                    };
-
-                    let mut acc: $t = 0;
-                    for &b in digits {
-                        if !b.is_ascii_digit() {
-                            return None;
-                        }
-                        let digit = (b - b'0') as $t;
-                        acc = acc.checked_mul(10)?.checked_add(digit)?;
-                    }
-                    Some(acc)
-                }
-            }
-        )*
-    };
-}
-
-impl_from_ascii_signed!(i8, i16, i32, i64, isize);
-impl_from_ascii_unsigned!(u8, u16, u32, u64, usize);
-
-/// Parse `&[u8]` into any type implementing `FromAsciiBytes`.
-#[inline]
-pub fn parse_bytes<T: FromAsciiBytes>(bytes: &[u8]) -> Option<T> {
-    T::parse_ascii(bytes)
 }
 
 /// Absolute `CLOCK_REALTIME` timespec `secs` seconds from now, for

@@ -48,6 +48,18 @@ struct ListenArgs {
     port: u16,
 }
 
+macro_rules! retry_eintr {
+    ($expr:expr) => {{
+        loop {
+            match $expr {
+                Ok(val) => break Ok(val),
+                Err(e) if e.raw_os_error() == Some(libc::EINTR) => continue,
+                Err(e) => break Err(e),
+            }
+        }
+    }};
+}
+
 /// # Safety
 ///
 /// Safe when called from bash with valid WORD_LIST pointer.
@@ -59,14 +71,15 @@ pub unsafe fn listen_subcommand(list: *mut WORD_LIST) -> CmdResult {
             b"-p PORT_VAR option is required when port is 0"
         ));
     }
-    let listener = std::net::TcpListener::bind((args.ip, args.port))
+    let listener = retry_eintr!(std::net::TcpListener::bind((args.ip, args.port)))
         .map_err(|e| l_builtin_error!(b"bind failed: ", e))?;
     // If -p PORT_VAR is provided, get the actual bound port
     if let Some(ref port_var) = args.port_var {
         let port_num = listener.local_addr().map(|a| a.port()).unwrap_or(0);
         port_var.set_int(port_num)?;
     }
-    args.listenfd_var.set_int(listener.as_raw_fd())?;
+    let fd = listener.as_raw_fd();
+    args.listenfd_var.set_int(fd)?;
     // Convert to raw fd (don't close the socket)
     let _ = listener.into_raw_fd();
     Ok(())
