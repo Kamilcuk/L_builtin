@@ -226,7 +226,7 @@ impl_bdisplay_sint!(i8, i16, i32, i64, i128, isize);
 #[macro_export]
 macro_rules! bwrite {
     ($w:expr) => {};
-    ($w:expr, $first:expr $(, $rest:expr)*) => {{
+    ($w:expr, $first:expr $(, $rest:expr)* $(,)?) => {{
         let first = &$first;
         $crate::bprint_bytes::BDisplay::bwrite(first, &mut $w);
         $crate::bwrite!($w $(, $rest)*);
@@ -301,16 +301,16 @@ macro_rules! beprint {
 /// Print to stdout with a trailing newline.
 #[macro_export]
 macro_rules! bprintln {
-    ($($tt:tt)*) => {
-        $crate::bprint_impl!(::std::io::stdout(), $($tt)*, b"\n");
+    ($($tt:expr),* $(,)?) => {
+        $crate::bprint_impl!(::std::io::stdout(), $($tt),*, b"\n");
     };
 }
 
 /// Print to stderr with a trailing newline.
 #[macro_export]
 macro_rules! beprintln {
-    ($($tt:tt)*) => {
-        $crate::bprint_impl!(::std::io::stderr(), $($tt)*, b"\n");
+    ($($tt:expr),* $(,)?) => {
+        $crate::bprint_impl!(::std::io::stderr(), $($tt),*, b"\n");
     };
 }
 

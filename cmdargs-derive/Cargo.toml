@@ -1,0 +1,14 @@
+[package]
+name = "cmdargs-derive"
+version = "0.1.0"
+edition = "2021"
+description = "Derive macro for L_builtin command argument parsing"
+license = "MIT"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"

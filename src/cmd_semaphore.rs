@@ -21,13 +21,16 @@ use crate::bash_api::{
 };
 use crate::subcmd::{CmdDesc, SubcommandFn};
 use crate::{
+    handles::{bind_handle, map_anonymous, unmap, HandleRegistry},
     l_builtin_error,
-    shared::{
-        bind_handle, lookup_handle, map_anonymous, parse_int, store_handle, take_handle,
-        timespec_from_now, unmap, HANDLE_KIND_SEMAPHORE,
-    },
+    shared::{parse_int, timespec_from_now},
     subcmd_getopts,
 };
+
+thread_local! {
+    /// Handle registry for semaphores.
+    pub(crate) static SEMAPHORE_REGISTRY: HandleRegistry = HandleRegistry::new();
+}
 
 /// Anonymous semaphore laid out in shared memory. For a named semaphore the
 /// registry stores the opaque `sem_t*` returned by `sem_open` instead.
@@ -128,8 +131,8 @@ pub unsafe extern "C" fn semaphore_create_subcommand(list: *mut WORD_LIST) -> c_
         }
         p
     };
-    let id = store_handle(HANDLE_KIND_SEMAPHORE, ptr, name);
-    bind_handle(&var, id)
+    let id = SEMAPHORE_REGISTRY.with(|s| s.store(ptr, name));
+    bind_handle(var.as_ptr(), id)
 }
 
 pub unsafe extern "C" fn semaphore_open_subcommand(list: *mut WORD_LIST) -> c_int {
@@ -144,8 +147,8 @@ pub unsafe extern "C" fn semaphore_open_subcommand(list: *mut WORD_LIST) -> c_in
         l_builtin_error!(b"sem_open failed: ", std::io::Error::last_os_error());
         return EXECUTION_FAILURE;
     }
-    let id = store_handle(HANDLE_KIND_SEMAPHORE, sem as *mut u8, Some(name_c));
-    bind_handle(&var, id)
+    let id = SEMAPHORE_REGISTRY.with(|s| s.store(sem as *mut u8, Some(name_c)));
+    bind_handle(var.as_ptr(), id)
 }
 
 pub unsafe extern "C" fn semaphore_wait_subcommand(list: *mut WORD_LIST) -> c_int {
@@ -220,7 +223,7 @@ pub unsafe extern "C" fn semaphore_close_subcommand(list: *mut WORD_LIST) -> c_i
             return EXECUTION_FAILURE;
         }
     };
-    let entry = match take_handle(HANDLE_KIND_SEMAPHORE, id) {
+    let entry = match SEMAPHORE_REGISTRY.with(|s| s.take(id)) {
         Some(e) => e,
         None => {
             l_builtin_error!(b"unknown semaphore handle");
@@ -244,7 +247,7 @@ pub unsafe extern "C" fn semaphore_destroy_subcommand(list: *mut WORD_LIST) -> c
             return EXECUTION_FAILURE;
         }
     };
-    let entry = match take_handle(HANDLE_KIND_SEMAPHORE, id) {
+    let entry = match SEMAPHORE_REGISTRY.with(|s| s.take(id)) {
         Some(e) => e,
         None => {
             l_builtin_error!(b"unknown semaphore handle");
@@ -256,7 +259,7 @@ pub unsafe extern "C" fn semaphore_destroy_subcommand(list: *mut WORD_LIST) -> c
 }
 
 fn lookup_semaphore(id: u64) -> Option<*mut libc::sem_t> {
-    lookup_handle(HANDLE_KIND_SEMAPHORE, id).map(|p| p as *mut libc::sem_t)
+    SEMAPHORE_REGISTRY.with(|s| s.lookup(id)).map(|p| p as *mut libc::sem_t)
 }
 
 const SEMAPHORE_CMD: CmdDesc = CmdDesc::new(

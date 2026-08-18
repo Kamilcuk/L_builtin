@@ -94,7 +94,7 @@ void l_builtin_usage_long(void)
 }
 
 /// Static buffer for the memory, because I do not want to reuse this_command_name.
-static char *this_command_name_buffer = 0;
+static char *l_this_command_name_buffer = 0;
 
 /* Enter a subcommand context: append `" prefix"` to `this_command_name` and,
  * when `short_doc` is non-NULL, replace `current_builtin`'s doc pointers so
@@ -110,32 +110,19 @@ void l_enter_subcommand(const char *prefix, const char *short_doc, const char *c
 {
   {
     assert(prefix && prefix[0]);
-    // Snapshot the current name BEFORE reallocating: this_command_name may
-    // alias the buffer we are about to grow, so reading it after l_xrealloc
-    // would be a use-after-free (corrupting the prefix in `usage:` output).
-    const size_t old_len = this_command_name ? strlen(this_command_name) : 0;
-    char *old_name = NULL;
-    if (old_len) {
-      old_name = l_xmalloc(old_len + 1);
-      memcpy(old_name, this_command_name, old_len + 1);
-    }
     const size_t prefix_len = strlen(prefix);
+    const size_t old_len = this_command_name ? strlen(this_command_name) : 0;
     const size_t space_len = old_len > 0 ? 1 : 0;
-    char *const buf = this_command_name_buffer =
-      l_xrealloc(this_command_name_buffer, old_len + space_len + prefix_len + 1);
+    char *const buf = l_xrealloc(l_this_command_name_buffer, old_len + space_len + prefix_len + 1);
     assert(buf);
-    if (old_name) {
-      memcpy(buf, old_name, old_len + 1); // includes the NUL terminator
-      l_xfree(old_name);
-    } else {
-      buf[0] = '\0';
+    if (this_command_name != l_this_command_name_buffer) {
+      memcpy(buf, this_command_name, old_len);
     }
     if (space_len) {
       buf[old_len] = ' ';
     }
-    memcpy(buf + old_len + space_len, prefix, prefix_len);
-    buf[old_len + space_len + prefix_len] = '\0';
-    this_command_name = buf;
+    memcpy(buf + old_len + space_len, prefix, prefix_len + 1);
+    this_command_name = l_this_command_name_buffer = buf;
   }
   // Replace current_builtin's doc pointers (only when docs are supplied).
   assert(short_doc);

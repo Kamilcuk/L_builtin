@@ -6,11 +6,12 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, WORD_LIST};
-use crate::subcmd::CmdDesc;
+use cmdargs_derive::CmdArgs;
+use crate::bash_api::{EXECUTION_FAILURE, EXECUTION_SUCCESS, WORD_LIST};
 use crate::l_builtin_error;
-use crate::{subcmd_getopts};
-use std::os::raw::{c_char, c_int};
+use crate::subcmd::CmdDesc;
+use std::ffi::c_char;
+use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
     c"lseek",
@@ -31,89 +32,56 @@ Returns success unless an error occurs during lseek or variable binding.
 ",
 );
 
+/// `L_builtin lseek [-v VAR] fd offset [whence]`
+#[derive(CmdArgs)]
+struct LseekArgs {
+    /// Store the resulting offset into shell variable VAR.
+    #[opt('v')]
+    var: Option<*const c_char>,
+
+    /// File descriptor to seek on.
+    #[positional]
+    fd: c_int,
+
+    /// Offset in bytes.
+    #[positional]
+    offset: i64,
+
+    /// Seek whence: SET/CUR/END or 0/1/2 (default SET).
+    #[optional(default = libc::SEEK_SET)]
+    #[parse(|cptr| match unsafe { cptr.as_str() } {
+        Ok("SET") | Ok("0") => Ok(libc::SEEK_SET),
+        Ok("CUR") | Ok("1") => Ok(libc::SEEK_CUR),
+        Ok("END") | Ok("2") => Ok(libc::SEEK_END),
+        Ok(s) => Err(format!("invalid whence: {s}")),
+        Err(e) => Err(e.to_string()),
+    })]
+    whence: c_int,
+}
+
 /// # Safety
 ///
-/// Safe when called from bash with valid WORD_LIST pointer.
+/// Safe when called from bash with a valid WORD_LIST pointer.
 #[no_mangle]
 pub unsafe extern "C" fn lseek_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut var: *mut c_char = std::ptr::null_mut();
-    let (fd_cptr, offset_cptr, whence_cptr) = subcmd_getopts!(
-        CMD,
-        list,
-        options: [ v => |v| var = v.as_ptr().cast() ],
-        required: [FD, OFFSET],
-        optional: [WHENCE],
-    );
+    CMD.enter();
 
-    // Get fd
-    let fd = match unsafe { fd_cptr.as_str() } {
-        Ok(s) => match s.parse::<c_int>() {
-            Ok(fd) => fd,
-            Err(_) => {
-                l_builtin_error!(b"invalid fd: ", unsafe { fd_cptr.as_bytes() });
-                return EX_USAGE;
-            }
-        },
-        Err(_) => {
-            l_builtin_error!(b"invalid fd encoding");
-            return EX_USAGE;
-        }
+    let args = match LseekArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
     };
 
-    // Get offset
-    let offset = match unsafe { offset_cptr.as_str() } {
-        Ok(s) => match s.parse::<i64>() {
-            Ok(offset) => offset,
-            Err(_) => {
-                l_builtin_error!(b"invalid offset: ", unsafe { offset_cptr.as_bytes() });
-                return EX_USAGE;
-            }
-        },
-        Err(_) => {
-            l_builtin_error!(b"invalid offset encoding");
-            return EX_USAGE;
-        }
-    };
-
-    // Get whence (optional, defaults to SEEK_SET)
-    let mut whence: c_int = libc::SEEK_SET;
-    if let Some(whence_cptr) = whence_cptr {
-        let whence_str = match unsafe { whence_cptr.as_str() } {
-            Ok(s) => s,
-            Err(_) => {
-                l_builtin_error!(b"invalid whence encoding");
-                return EX_USAGE;
-            }
-        };
-
-        whence = match whence_str {
-            "SET" | "0" => libc::SEEK_SET,
-            "CUR" | "1" => libc::SEEK_CUR,
-            "END" | "2" => libc::SEEK_END,
-            _ => {
-                l_builtin_error!(b"invalid whence: ", unsafe { whence_cptr.as_bytes() });
-                return EX_USAGE;
-            }
-        };
-    }
-
-    // Call lseek
-    let result = unsafe { libc::lseek(fd, offset, whence) };
+    let result = libc::lseek(args.fd, args.offset, args.whence);
     if result == -1 {
         l_builtin_error!(b"lseek error: ", std::io::Error::last_os_error());
         return EXECUTION_FAILURE;
     }
 
-    // If -v VAR was provided, store the result
-    if !var.is_null() {
-        let var_ptr = var;
+    if let Some(var) = args.var {
         let result_str = crate::shared::I64Str::new(result);
-
-        unsafe {
-            if crate::bash_api::bind_variable(var_ptr, result_str.as_ptr(), 0).is_null() {
-                l_builtin_error!(b"cannot bind variable");
-                return EXECUTION_FAILURE;
-            }
+        if crate::bash_api::bind_variable(var, result_str.as_ptr(), 0).is_null() {
+            l_builtin_error!(b"cannot bind variable");
+            return EXECUTION_FAILURE;
         }
     }
 

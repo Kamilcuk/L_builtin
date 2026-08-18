@@ -23,13 +23,16 @@ use crate::bash_api::{
 };
 use crate::subcmd::{CmdDesc, SubcommandFn};
 use crate::{
+    handles::{bind_handle, map_anonymous, map_named, unmap, HandleRegistry},
     l_builtin_error,
-    shared::{
-        bind_handle, for_each_handle, map_anonymous, map_named, parse_int, store_handle,
-        take_handle, timespec_from_now, unmap, HANDLE_KIND_MUTEX,
-    },
+    shared::{parse_int, timespec_from_now},
     subcmd_getopts,
 };
+
+thread_local! {
+    /// Handle registry for mutexes.
+    pub(crate) static MUTEX_REGISTRY: HandleRegistry = HandleRegistry::new();
+}
 
 /// Cross-process mutex laid out in shared memory.
 ///
@@ -144,8 +147,8 @@ pub unsafe extern "C" fn mutex_create_subcommand(list: *mut WORD_LIST) -> c_int 
         unmap(ptr, size);
         return EXECUTION_FAILURE;
     }
-    let id = store_handle(HANDLE_KIND_MUTEX, ptr, name);
-    bind_handle(&var, id)
+    let id = MUTEX_REGISTRY.with(|m| m.store(ptr, name));
+    bind_handle(var.as_ptr(), id)
 }
 
 pub unsafe extern "C" fn mutex_open_subcommand(list: *mut WORD_LIST) -> c_int {
@@ -163,8 +166,8 @@ pub unsafe extern "C" fn mutex_open_subcommand(list: *mut WORD_LIST) -> c_int {
             return EXECUTION_FAILURE;
         }
     };
-    let id = store_handle(HANDLE_KIND_MUTEX, ptr, Some(name_c));
-    bind_handle(&var, id)
+    let id = MUTEX_REGISTRY.with(|m| m.store(ptr, Some(name_c)));
+    bind_handle(var.as_ptr(), id)
 }
 
 pub unsafe extern "C" fn mutex_lock_subcommand(list: *mut WORD_LIST) -> c_int {
@@ -211,8 +214,10 @@ pub unsafe extern "C" fn mutex_unlock_subcommand(list: *mut WORD_LIST) -> c_int 
         optional: [ MUTEX ],
     );
     if all {
-        for_each_handle(HANDLE_KIND_MUTEX, |_id, ptr| {
-            let _ = mutex_unlock(ptr as *mut Mutex);
+        MUTEX_REGISTRY.with(|m| {
+            m.for_each(|_id, ptr| {
+                let _ = mutex_unlock(ptr as *mut Mutex);
+            });
         });
         return EXECUTION_SUCCESS;
     }
@@ -253,7 +258,7 @@ pub unsafe extern "C" fn mutex_close_subcommand(list: *mut WORD_LIST) -> c_int {
             return EXECUTION_FAILURE;
         }
     };
-    let entry = match take_handle(HANDLE_KIND_MUTEX, id) {
+    let entry = match MUTEX_REGISTRY.with(|m| m.take(id)) {
         Some(e) => e,
         None => {
             l_builtin_error!(b"unknown mutex handle");
@@ -277,7 +282,7 @@ pub unsafe extern "C" fn mutex_destroy_subcommand(list: *mut WORD_LIST) -> c_int
             return EXECUTION_FAILURE;
         }
     };
-    let entry = match take_handle(HANDLE_KIND_MUTEX, id) {
+    let entry = match MUTEX_REGISTRY.with(|m| m.take(id)) {
         Some(e) => e,
         None => {
             l_builtin_error!(b"unknown mutex handle");
@@ -292,7 +297,7 @@ pub unsafe extern "C" fn mutex_destroy_subcommand(list: *mut WORD_LIST) -> c_int
 }
 
 fn lookup_mutex(id: u64) -> Option<*mut Mutex> {
-    crate::shared::lookup_handle(HANDLE_KIND_MUTEX, id).map(|p| p as *mut Mutex)
+    MUTEX_REGISTRY.with(|m| m.lookup(id)).map(|p| p as *mut Mutex)
 }
 
 const MUTEX_CMD: CmdDesc = CmdDesc::new(

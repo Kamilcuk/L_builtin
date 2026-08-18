@@ -1,21 +1,15 @@
 //! Shared utilities for L_builtin Rust implementation
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::fs::File;
 use std::io::{self, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::raw::{c_char, c_int};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use memmap2::MmapMut;
 
-use crate::bash_api::{
-    bind_variable, find_variable, l_readonly_p, Cpnt, EXECUTION_FAILURE, EXECUTION_SUCCESS,
-};
+use crate::bash_api::{bind_variable, find_variable, l_readonly_p};
 use crate::beprintln;
-use crate::l_builtin_error;
 
 /// Bind `value` to the shell variable `name`.
 ///
@@ -451,134 +445,6 @@ pub fn parse_bytes<T: FromAsciiBytes>(bytes: &[u8]) -> Option<T> {
     T::parse_ascii(bytes)
 }
 
-////////////////////////////////////
-// Shared-memory mapping + opaque handle registry
-//
-// Used by the `barrier`, `mutex` and `semaphore` subcommands. Each primitive
-// lives in shared memory (anonymous, shared across forked processes, or a named
-// shared-memory object via `shm_open`) and is referenced from bash by an opaque
-// integer handle. The handle maps to `(mmap pointer, optional shm name)` in a
-// per-kind registry; only `create`/`open` assign a handle into a shell variable,
-// every other subcommand resolves the integer value directly.
-////////////////////////////////////
-
-/// Handle kind tags so the three registries never collide.
-#[allow(dead_code)]
-pub(crate) const HANDLE_KIND_BARRIER: u8 = 1;
-#[allow(dead_code)]
-pub(crate) const HANDLE_KIND_MUTEX: u8 = 2;
-#[allow(dead_code)]
-pub(crate) const HANDLE_KIND_SEMAPHORE: u8 = 3;
-
-/// One registry entry: the mapped base pointer and, for a named object, the
-/// name to unlink on `destroy`.
-pub(crate) struct HandleEntry {
-    pub ptr: *mut u8,
-    pub name: Option<CString>,
-}
-
-thread_local! {
-    static HANDLES: RefCell<HashMap<(u8, u64), HandleEntry>> = RefCell::new(HashMap::new());
-}
-
-/// Monotonic, process-global generator for opaque integer handles.
-static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
-
-/// Store a mapping under a fresh handle id and return that id.
-pub(crate) fn store_handle(kind: u8, ptr: *mut u8, name: Option<CString>) -> u64 {
-    let id = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
-    HANDLES.with(|m| m.borrow_mut().insert((kind, id), HandleEntry { ptr, name }));
-    id
-}
-
-/// Resolve a handle id to its base pointer (or `None` if unknown).
-pub(crate) fn lookup_handle(kind: u8, id: u64) -> Option<*mut u8> {
-    HANDLES.with(|m| m.borrow().get(&(kind, id)).map(|e| e.ptr))
-}
-
-/// Remove a registry entry, returning its pointer + optional name.
-pub(crate) fn take_handle(kind: u8, id: u64) -> Option<HandleEntry> {
-    HANDLES.with(|m| m.borrow_mut().remove(&(kind, id)))
-}
-
-/// Invoke `f` once per registered handle of `kind`, passing `(id, ptr)`.
-pub(crate) fn for_each_handle(kind: u8, mut f: impl FnMut(u64, *mut u8)) {
-    HANDLES.with(|m| {
-        for (&k, entry) in m.borrow().iter() {
-            if k.0 == kind {
-                f(k.1, entry.ptr);
-            }
-        }
-    });
-}
-
-/// Map `size` bytes of anonymous shared memory (shared across forked processes).
-pub(crate) fn map_anonymous(size: usize) -> Result<*mut u8, String> {
-    let ptr = unsafe {
-        libc::mmap(
-            std::ptr::null_mut(),
-            size,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_ANONYMOUS | libc::MAP_SHARED,
-            -1,
-            0,
-        )
-    };
-    if ptr == libc::MAP_FAILED {
-        return Err("mmap failed".into());
-    }
-    Ok(ptr as *mut u8)
-}
-
-/// Map `size` bytes backed by a named shared-memory object.
-///
-/// `create` chooses `O_CREAT` (and `ftruncate`s to `size`); otherwise the object
-/// must already exist.
-pub(crate) fn map_named(name: &CStr, size: usize, create: bool) -> Result<*mut u8, String> {
-    let flags = if create {
-        libc::O_CREAT | libc::O_RDWR
-    } else {
-        libc::O_RDWR
-    };
-    let fd = unsafe { libc::shm_open(name.as_ptr(), flags, 0o600) };
-    if fd < 0 {
-        return Err(format!(
-            "shm_open {} failed: {}",
-            name.to_str().unwrap_or("?"),
-            std::io::Error::last_os_error()
-        ));
-    }
-    if create {
-        if unsafe { libc::ftruncate(fd, size as libc::off_t) } != 0 {
-            unsafe { libc::close(fd) };
-            return Err(format!(
-                "ftruncate failed: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-    }
-    let ptr = unsafe {
-        libc::mmap(
-            std::ptr::null_mut(),
-            size,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_SHARED,
-            fd,
-            0,
-        )
-    };
-    unsafe { libc::close(fd) };
-    if ptr == libc::MAP_FAILED {
-        return Err("mmap failed".into());
-    }
-    Ok(ptr as *mut u8)
-}
-
-/// Unmap a previously mapped region.
-pub(crate) fn unmap(ptr: *mut u8, size: usize) {
-    unsafe { libc::munmap(ptr as *mut libc::c_void, size) };
-}
-
 /// Absolute `CLOCK_REALTIME` timespec `secs` seconds from now, for
 /// `pthread_mutex_timedlock` / `sem_timedwait`.
 pub(crate) fn timespec_from_now(secs: f64) -> libc::timespec {
@@ -591,14 +457,4 @@ pub(crate) fn timespec_from_now(secs: f64) -> libc::timespec {
     ts.tv_sec = abs.floor() as libc::time_t;
     ts.tv_nsec = ((abs - ts.tv_sec as f64) * 1e9).round() as libc::c_long;
     ts
-}
-
-/// Bind opaque integer handle `id` into the shell variable named by `var`.
-pub(crate) fn bind_handle(var: &Cpnt, id: u64) -> c_int {
-    let val = CString::new(id.to_string()).unwrap_or_default();
-    if unsafe { bind_variable(var.as_ptr() as *const c_char, val.as_ptr(), 0) }.is_null() {
-        l_builtin_error!(b"failed to bind variable");
-        return EXECUTION_FAILURE;
-    }
-    EXECUTION_SUCCESS
 }

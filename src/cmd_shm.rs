@@ -47,20 +47,23 @@
 #![allow(non_snake_case)]
 
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, OsStr};
 use std::os::raw::{c_char, c_int};
+use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use cmdargs_derive::CmdArgs;
+
 use crate::bash_api::{
-    array_insert, array_remove, arrayind_t, assoc_remove, l_array_cell, l_array_max_index,
-    l_assoc_cell, l_assoc_insert, l_init_dynamic_array_var, l_init_dynamic_assoc_var,
-    ArrayIterator, AssocIterator, l_unbind_variable, this_cmd_name, variable,
-    is_valid_var_name, SHELL_VAR, WORD_LIST,
-    EXECUTION_FAILURE, EXECUTION_SUCCESS,
+    array_insert, array_remove, arrayind_t, assoc_remove, is_valid_var_name, l_array_cell,
+    l_array_max_index, l_assoc_cell, l_assoc_insert, l_init_dynamic_array_var,
+    l_init_dynamic_assoc_var, l_unbind_variable, variable, ArrayIterator, AssocIterator,
+    EXECUTION_FAILURE, EXECUTION_SUCCESS, EX_USAGE, SHELL_VAR, WORD_LIST,
 };
 use crate::subcmd::{CmdDesc, SubcommandFn};
+use crate::vardb::{open_db_loc, DbLoc, DbPath, LockedDatabase, VarData};
 use crate::{beprintln, bprintln, l_builtin_error, subcmd_getopts};
-use crate::vardb::{DbLoc, DbPath, LockedDatabase, VarData, open_db_loc, resolve_loc};
 
 /// Bash variable attribute for associative arrays (att). From bash's
 /// variables.h: #define att_assoc 0x0000040
@@ -84,7 +87,10 @@ fn get_db_loc(loc: &DbLoc) -> Result<Arc<LockedDatabase>, String> {
                 .find(|db| matches!(&db.path, DbPath::Mem(n) if n.as_bytes() == name.to_bytes()))
                 .cloned()
                 .ok_or_else(|| {
-                    format!("shm: no anonymous database named {}", name.to_str().unwrap_or(""))
+                    format!(
+                        "shm: no anonymous database named {}",
+                        name.to_str().unwrap_or("")
+                    )
                 })
         }),
         DbLoc::Shm(_) | DbLoc::File(_) => open_db_loc(loc).map(Arc::new),
@@ -138,13 +144,21 @@ fn unbind_registry_vars(key: &str) {
 
 /// Fetch the database registered for `var`. The handle always reloads the blob
 /// from disk, so no fork/pid handling is needed.
-fn get_shm(var: &CStr) -> Result<Arc<LockedDatabase>, String> {
-    REGISTRY.with(|r| r.borrow().get(var).cloned()).ok_or_else(|| {
-        format!(
-            "shm: variable {} is not bound to a shared database",
-            var.to_str().unwrap_or("")
-        )
-    })
+///
+/// This is called from the dynamic variable getter/setter callbacks, which run
+/// outside any builtin command context (so `this_cmd_name()` is meaningless); on
+/// failure it prints a hard-coded, builtin-scoped message and returns `None`.
+fn get_shm(var: &CStr) -> Option<Arc<LockedDatabase>> {
+    let db = REGISTRY.with(|r| r.borrow().get(var).cloned());
+    if db.is_none() {
+        beprintln!(
+            b"L_builtin: shm: variable ",
+            var.to_bytes(),
+            b" is not bound to a shared database; bind it with `L_builtin shm add \
+<NAME>`, or it was unbound/removed (shm unbind / shm rm) while the shell variable still exists",
+        );
+    }
+    db
 }
 
 /// Return `p` unchanged, or a pointer to an empty NUL string when `p` is null.
@@ -179,11 +193,8 @@ fn escape_quoted(out: &mut Vec<u8>, bytes: &[u8]) {
 unsafe extern "C" fn shm_array_getter(var: *mut variable) -> *mut variable {
     let var_name = CStr::from_ptr((*var).name);
     let db = match get_shm(var_name) {
-        Ok(x) => x,
-        Err(e) => {
-            l_builtin_error!(e);
-            return var;
-        }
+        Some(x) => x,
+        None => return var,
     };
     if let Ok(repr) = db.read() {
         let arr = l_array_cell(var as *mut SHELL_VAR);
@@ -227,11 +238,8 @@ unsafe extern "C" fn shm_array_setter(
 ) -> *mut variable {
     let var_name = CStr::from_ptr((*var).name);
     let db = match get_shm(var_name) {
-        Ok(x) => x,
-        Err(e) => {
-            l_builtin_error!(e);
-            return var;
-        }
+        Some(x) => x,
+        None => return var,
     };
     let name = CString::new(var_name.to_bytes()).unwrap_or_default();
     let arr = l_array_cell(var as *mut SHELL_VAR);
@@ -256,11 +264,8 @@ unsafe extern "C" fn shm_array_setter(
 unsafe extern "C" fn shm_assoc_getter(var: *mut variable) -> *mut variable {
     let var_name = CStr::from_ptr((*var).name);
     let db = match get_shm(var_name) {
-        Ok(x) => x,
-        Err(e) => {
-            l_builtin_error!(e);
-            return var;
-        }
+        Some(x) => x,
+        None => return var,
     };
     if let Ok(repr) = db.read() {
         let hash = l_assoc_cell(var as *mut SHELL_VAR);
@@ -311,11 +316,8 @@ unsafe extern "C" fn shm_assoc_setter(
 ) -> *mut variable {
     let var_name = CStr::from_ptr((*var).name);
     let db = match get_shm(var_name) {
-        Ok(x) => x,
-        Err(e) => {
-            l_builtin_error!(e);
-            return var;
-        }
+        Some(x) => x,
+        None => return var,
     };
     let name = CString::new(var_name.to_bytes()).unwrap_or_default();
     let hash = l_assoc_cell(var as *mut SHELL_VAR);
@@ -333,6 +335,111 @@ unsafe extern "C" fn shm_assoc_setter(
     var
 }
 
+/// Shared backing flags (`-s`/`-n`/`-f`) for the `shm` subcommands that only
+/// select a database. `post()` enforces that at most one of them is given.
+#[derive(CmdArgs)]
+struct ShmLocArgs {
+    /// POSIX shared memory object name (`-s NAME`).
+    #[opt('s')]
+    s: Option<&'static CStr>,
+    /// Anonymous in-memory mapping name (`-n NAME`).
+    #[opt('n')]
+    n: Option<&'static CStr>,
+    /// Regular file path (`-f PATH`).
+    #[opt('f')]
+    f: Option<&'static CStr>,
+}
+
+/// `shm add` arguments: the shared backing flags plus `-A` (associative) and the
+/// required `VAR_NAME` positional.
+#[derive(CmdArgs)]
+struct ShmAddArgs {
+    /// Backing selection flags, shared with the other `shm` subcommands.
+    #[flatten]
+    loc: ShmLocArgs,
+    /// Create an associative array instead of an indexed array.
+    #[flag('A')]
+    assoc: bool,
+    /// Bash variable name to bind.
+    #[positional]
+    var: *const c_char,
+}
+
+/// `shm unbind` arguments: the shared backing flags plus one or more `VAR_NAME`s.
+#[derive(CmdArgs)]
+struct ShmUnbindArgs {
+    /// Backing selection flags, shared with the other `shm` subcommands.
+    #[flatten]
+    loc: ShmLocArgs,
+    /// Bash variable names to unbind (one or more).
+    #[rest]
+    vars: Vec<*const c_char>,
+}
+
+/// Validate that at most one of `-s`, `-n`, `-f` was supplied. Shared by every
+/// `shm` args struct via its inherent `post` implementation.
+impl ShmLocArgs {
+    fn post(&self) -> Result<(), c_int> {
+        let n = [self.s, self.n, self.f]
+            .iter()
+            .filter(|o| o.is_some())
+            .count();
+        if n > 1 {
+            l_builtin_error!(b"shm: -s, -n and -f are mutually exclusive");
+            return Result::Err(EX_USAGE);
+        }
+        Result::Ok(())
+    }
+
+    /// Resolve the backing database location for this parsed set of flags, after
+    /// `post()` has confirmed they are mutually exclusive. Also rejects an invalid
+    /// `NAME` for the `-s`/`-n` backings.
+    fn resolve_dbloc(&self) -> Result<DbLoc, c_int> {
+        let loc = if let Some(p) = self.f {
+            DbLoc::File(PathBuf::from(OsStr::from_bytes(p.to_bytes())))
+        } else if let Some(s) = self.s {
+            DbLoc::Shm(s.to_owned())
+        } else if let Some(a) = self.n {
+            DbLoc::Mem(a.to_owned())
+        } else {
+            DbLoc::Mem(CString::new("DEFAULT").unwrap())
+        };
+        if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
+            if !is_valid_var_name(n.to_bytes()) {
+                l_builtin_error!(b"shm: NAME must be a valid shell variable name");
+                return Result::Err(EXECUTION_FAILURE);
+            }
+        }
+        Result::Ok(loc)
+    }
+}
+
+impl ShmAddArgs {
+    fn post(&self) -> Result<(), c_int> {
+        self.loc.post()
+    }
+}
+
+impl ShmUnbindArgs {
+    fn post(&self) -> Result<(), c_int> {
+        self.loc.post()
+    }
+}
+
+/// Resolve the database location from the three optional backing identifiers.
+/// Mutual exclusivity of `-s`/`-n`/`-f` is enforced earlier by [`ShmLocArgs::post`].
+fn resolve_loc(shared: Option<&CStr>, full: Option<&CStr>, anon: Option<&CStr>) -> DbLoc {
+    if let Some(p) = full {
+        DbLoc::File(PathBuf::from(OsStr::from_bytes(p.to_bytes())))
+    } else if let Some(s) = shared {
+        DbLoc::Shm(s.to_owned())
+    } else if let Some(a) = anon {
+        DbLoc::Mem(a.to_owned())
+    } else {
+        DbLoc::Mem(CString::new("DEFAULT").unwrap())
+    }
+}
+
 /// `L_builtin shm add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME`
 ///
 /// Bind bash variable VAR_NAME (indexed, or associative with `-A`) to a shared
@@ -340,34 +447,15 @@ unsafe extern "C" fn shm_assoc_setter(
 /// (anonymous in-memory mapping) or `-f` (a regular file); with none of them the
 /// default `DEFAULT` in-memory database is used.
 unsafe extern "C" fn shm_add_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut is_assoc = false;
-    let mut shared: Option<CString> = None;
-    let mut anon: Option<CString> = None;
-    let mut full: Option<CString> = None;
-    let (var,) = subcmd_getopts!(
-        SHM_ADD_CMD,
-        list,
-        flags: [ A => || is_assoc = true ],
-        options: [
-            s => |v| shared = Some(v.as_cstr().to_owned()),
-            n => |v| anon = Some(v.as_cstr().to_owned()),
-            f => |v| full = Some(v.as_cstr().to_owned()),
-        ],
-        required: [VAR_NAME],
-    );
-    let loc = match resolve_loc(shared.as_deref(), full.as_deref(), anon.as_deref()) {
-        Ok(l) => l,
-        Err(e) => {
-            l_builtin_error!(e);
-            return EXECUTION_FAILURE;
-        }
+    SHM_ADD_CMD.enter();
+    let args = match ShmAddArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
     };
-    if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
-        if !is_valid_var_name(n.to_bytes()) {
-            l_builtin_error!(b"shm: NAME must be a valid shell variable name");
-            return EXECUTION_FAILURE;
-        }
-    }
+    let loc = match args.loc.resolve_dbloc() {
+        Ok(l) => l,
+        Err(c) => return c,
+    };
     let db = match get_db_loc(&loc) {
         Ok(d) => d,
         // A memfd database not yet created in this process: create it. POSIX
@@ -380,32 +468,30 @@ unsafe extern "C" fn shm_add_subcommand(list: *mut WORD_LIST) -> c_int {
             }
         },
     };
-    let cname = var.as_cstr();
+    let cname = CStr::from_ptr(args.var);
     // Start the variable fresh: drop any previous binding of the same name in
     // the shared database (which may have had the opposite type).
     let _ = db.with_write(|repr| {
         repr.vars.remove(cname);
     });
-    REGISTRY.with(|r| {
-        r.borrow_mut().insert(cname.to_owned(), db)
-    });
-    let result = if is_assoc {
+    REGISTRY.with(|r| r.borrow_mut().insert(cname.to_owned(), db));
+    let result = if args.assoc {
         l_init_dynamic_assoc_var(
-            var.as_ptr(),
+            args.var as *mut c_char,
             Some(shm_assoc_getter),
             Some(shm_assoc_setter),
             ATT_ASSOC,
         )
     } else {
         l_init_dynamic_array_var(
-            var.as_ptr(),
+            args.var as *mut c_char,
             Some(shm_array_getter),
             Some(shm_array_setter),
             0,
         )
     };
     if result.is_null() {
-        beprintln!(this_cmd_name(), b": failed to bind variable");
+        l_builtin_error!(b": failed to bind variable ", args.var);
         return EXECUTION_FAILURE;
     }
     EXECUTION_SUCCESS
@@ -418,31 +504,15 @@ unsafe extern "C" fn shm_add_subcommand(list: *mut WORD_LIST) -> c_int {
 /// Takes no positional arguments; the database is selected by the flags, or the
 /// default `DEFAULT` database when none are given.
 unsafe extern "C" fn shm_rm_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut shared: Option<CString> = None;
-    let mut anon: Option<CString> = None;
-    let mut full: Option<CString> = None;
-    subcmd_getopts!(
-        SHM_REMOVE_CMD,
-        list,
-        options: [
-            s => |v| shared = Some(v.as_cstr().to_owned()),
-            n => |v| anon = Some(v.as_cstr().to_owned()),
-            f => |v| full = Some(v.as_cstr().to_owned()),
-        ],
-    );
-    let loc = match resolve_loc(shared.as_deref(), full.as_deref(), anon.as_deref()) {
-        Ok(l) => l,
-        Err(e) => {
-            l_builtin_error!(e);
-            return EXECUTION_FAILURE;
-        }
+    SHM_REMOVE_CMD.enter();
+    let args = match ShmLocArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
     };
-    if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
-        if !is_valid_var_name(n.to_bytes()) {
-            l_builtin_error!(b"shm: NAME must be a valid shell variable name");
-            return EXECUTION_FAILURE;
-        }
-    }
+    let loc = match args.resolve_dbloc() {
+        Ok(l) => l,
+        Err(c) => return c,
+    };
     let key = loc_key(&loc);
     unbind_registry_vars(&key);
     unlink_db_backing(&loc);
@@ -455,39 +525,22 @@ unsafe extern "C" fn shm_rm_subcommand(list: *mut WORD_LIST) -> c_int {
 /// unbind the bash variable. This does NOT remove the variable's data from the
 /// shared database; another process may still read it.
 unsafe extern "C" fn shm_unbind_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut shared: Option<CString> = None;
-    let mut anon: Option<CString> = None;
-    let mut full: Option<CString> = None;
-    let (vars,) = subcmd_getopts!(
-        SHM_UNBIND_CMD,
-        list,
-        options: [
-            s => |v| shared = Some(v.as_cstr().to_owned()),
-            n => |v| anon = Some(v.as_cstr().to_owned()),
-            f => |v| full = Some(v.as_cstr().to_owned()),
-        ],
-        some: VARS,
-    );
-    let loc = match resolve_loc(shared.as_deref(), full.as_deref(), anon.as_deref()) {
-        Ok(l) => l,
-        Err(e) => {
-            l_builtin_error!(e);
-            return EXECUTION_FAILURE;
-        }
+    SHM_UNBIND_CMD.enter();
+    let args = match ShmUnbindArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
     };
-    if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
-        if !is_valid_var_name(n.to_bytes()) {
-            l_builtin_error!(b"shm: NAME must be a valid shell variable name");
-            return EXECUTION_FAILURE;
-        }
+    if args.vars.is_empty() {
+        l_builtin_error!(b"shm: missing required argument: VARS");
+        return EX_USAGE;
     }
-    for v in vars {
-        let ckey = match CString::new(v.as_bytes()) {
+    for &v in &args.vars {
+        let ckey = match CString::new(unsafe { CStr::from_ptr(v).to_bytes() }) {
             Ok(c) => c,
             Err(_) => continue,
         };
         REGISTRY.with(|r| r.borrow_mut().remove(&ckey));
-        l_unbind_variable(ckey.as_ptr() as *const c_char);
+        l_unbind_variable(v as *const c_char);
     }
     EXECUTION_SUCCESS
 }
@@ -544,31 +597,15 @@ unsafe fn print_var_assignment(name: &CString, vd: &VarData) {
 /// database is selected by the flags, or the default `DEFAULT` database when
 /// none are given.
 unsafe extern "C" fn shm_info_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut shared: Option<CString> = None;
-    let mut anon: Option<CString> = None;
-    let mut full: Option<CString> = None;
-    subcmd_getopts!(
-        SHM_INFO_CMD,
-        list,
-        options: [
-            s => |v| shared = Some(v.as_cstr().to_owned()),
-            n => |v| anon = Some(v.as_cstr().to_owned()),
-            f => |v| full = Some(v.as_cstr().to_owned()),
-        ],
-    );
-    let loc = match resolve_loc(shared.as_deref(), full.as_deref(), anon.as_deref()) {
-        Ok(l) => l,
-        Err(e) => {
-            l_builtin_error!(e);
-            return EXECUTION_FAILURE;
-        }
+    SHM_INFO_CMD.enter();
+    let args = match ShmLocArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
     };
-    if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
-        if !is_valid_var_name(n.to_bytes()) {
-            l_builtin_error!(b"shm: NAME must be a valid shell variable name");
-            return EXECUTION_FAILURE;
-        }
-    }
+    let loc = match args.resolve_dbloc() {
+        Ok(l) => l,
+        Err(c) => return c,
+    };
     let db = match get_db_loc(&loc) {
         Ok(x) => x,
         Err(e) => {
@@ -596,32 +633,16 @@ unsafe extern "C" fn shm_info_subcommand(list: *mut WORD_LIST) -> c_int {
 /// the variables bound to each. With a backing flag, list only the variables
 /// bound to that database in this session's REGISTRY.
 unsafe extern "C" fn shm_ls_subcommand(list: *mut WORD_LIST) -> c_int {
-    let mut shared: Option<CString> = None;
-    let mut anon: Option<CString> = None;
-    let mut full: Option<CString> = None;
-    subcmd_getopts!(
-        SHM_LIST_CMD,
-        list,
-        options: [
-            s => |v| shared = Some(v.as_cstr().to_owned()),
-            n => |v| anon = Some(v.as_cstr().to_owned()),
-            f => |v| full = Some(v.as_cstr().to_owned()),
-        ],
-    );
-    if shared.is_some() || anon.is_some() || full.is_some() {
-        let loc = match resolve_loc(shared.as_deref(), full.as_deref(), anon.as_deref()) {
+    SHM_LIST_CMD.enter();
+    let args = match ShmLocArgs::parse(list) {
+        Ok(a) => a,
+        Err(c) => return c,
+    };
+    if args.s.is_some() || args.n.is_some() || args.f.is_some() {
+        let loc = match args.resolve_dbloc() {
             Ok(l) => l,
-            Err(e) => {
-                l_builtin_error!(e);
-                return EXECUTION_FAILURE;
-            }
+            Err(c) => return c,
         };
-        if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
-            if !is_valid_var_name(n.to_bytes()) {
-                l_builtin_error!(b"shm: NAME must be a valid shell variable name");
-                return EXECUTION_FAILURE;
-            }
-        }
         // List only the variables bound to the database in this session's
         // REGISTRY (not every entry another process may have written to it).
         let key = loc_key(&loc);
@@ -642,7 +663,10 @@ unsafe extern "C" fn shm_ls_subcommand(list: *mut WORD_LIST) -> c_int {
         let reg = r.borrow();
         let mut groups: HashMap<String, Vec<CString>> = HashMap::new();
         for (var, db) in reg.iter() {
-            groups.entry(db_key(&db.path)).or_default().push(var.clone());
+            groups
+                .entry(db_key(&db.path))
+                .or_default()
+                .push(var.clone());
         }
         let mut keys: Vec<&String> = groups.keys().collect();
         keys.sort();
@@ -824,7 +848,7 @@ pub unsafe extern "C" fn shm_subcommand(list: *mut WORD_LIST) -> c_int {
     let handler = match SHM_TABLE.lookup(action_bytes) {
         Some(h) => h,
         None => {
-            beprintln!(this_cmd_name(), b": unknown shm subcommand: ", action_bytes);
+            l_builtin_error!(b": unknown shm subcommand: ", action_bytes);
             return EXECUTION_FAILURE;
         }
     };

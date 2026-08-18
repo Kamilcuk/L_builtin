@@ -204,30 +204,6 @@ pub enum DbLoc {
     Mem(CString),
 }
 
-/// Resolve the database location from the three optional, mutually-exclusive
-/// backing flags. `-f PATH` selects a regular file; `-s NAME` a POSIX shared
-/// memory object; `-n NAME` an anonymous in-memory mapping (memfd). With none of
-/// them, use an anonymous in-memory mapping named `DEFAULT`.
-pub fn resolve_loc(
-    shared: Option<&CStr>,
-    full: Option<&CStr>,
-    anon: Option<&CStr>,
-) -> Result<DbLoc, String> {
-    let n = [shared, full, anon].iter().filter(|o| o.is_some()).count();
-    if n > 1 {
-        return Err("shm: -s, -n and -f are mutually exclusive".to_string());
-    }
-    if let Some(p) = full {
-        Ok(DbLoc::File(PathBuf::from(OsStr::from_bytes(p.to_bytes()))))
-    } else if let Some(s) = shared {
-        Ok(DbLoc::Shm(s.to_owned()))
-    } else if let Some(a) = anon {
-        Ok(DbLoc::Mem(a.to_owned()))
-    } else {
-        Ok(DbLoc::Mem(CString::new("DEFAULT").unwrap()))
-    }
-}
-
 /// Open a fresh [`LockedDatabase`] for the given location.
 pub fn open_db_loc(loc: &DbLoc) -> Result<LockedDatabase, String> {
     match loc {
