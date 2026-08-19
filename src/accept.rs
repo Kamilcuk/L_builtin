@@ -6,8 +6,9 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EX_RETRYFAIL, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EX_RETRYFAIL, EX_USAGE, EXECUTION_FAILURE, WORD_LIST};
 use crate::cmdargs::BashVar;
+use crate::shared::ensure_high_fd;
 use crate::subcmd::{CmdDesc, CmdResult};
 use crate::{bufwrite, l_builtin_error};
 use cmdargs_derive::CmdArgs;
@@ -94,6 +95,10 @@ pub unsafe fn accept_subcommand(list: *mut WORD_LIST) -> CmdResult {
             std::io::Error::last_os_error()
         ));
     }
+    let clientfd = ensure_high_fd(clientfd).map_err(|e| {
+        l_builtin_error!(b": accept: fd dup failed: ", e);
+        EXECUTION_FAILURE
+    })?;
     // Format address
     let addr_buf = addr_to_ip_port(addr);
     // Bind clientfd variable - use the raw C string pointer

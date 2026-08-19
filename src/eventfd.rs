@@ -1,5 +1,5 @@
 //! L_builtin `eventfd` subcommand group: create an eventfd(2) counter fd and
-//! read/write data to it through `create`, `write`, and `read` subcommands.
+//! read/write data to it through `create`, `write`, `read`, and `apply` subcommands.
 //!
 //! An eventfd is an unsigned 64-bit counter accessed as a file descriptor:
 //! `write` adds a value to the counter (the value is carried as 8 bytes in
@@ -11,21 +11,22 @@
 //!   `L_builtin eventfd create [-n] [-s] [-C] VAR [INITVAL]`
 //!   `L_builtin eventfd write FD [VALUE]`
 //!   `L_builtin eventfd read FD [VAR]`
+//!   `L_builtin eventfd apply FD [VALUE]`
 
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::ffi::CStr;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::c_int;
 
 use cmdargs_derive::CmdArgs;
 
-use crate::bash_api::{WordListIterCpnt, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, WORD_LIST};
 use crate::bprintln;
 use crate::cmdargs::BashVar;
 use crate::l_builtin_error;
-use crate::subcmd::{CmdDesc, CmdResult, SubcommandFn};
+use crate::shared::ensure_high_fd;
+use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
 
 /// `L_builtin eventfd create [-n] [-s] [-C] VAR [INITVAL]`
 #[derive(CmdArgs)]
@@ -67,10 +68,11 @@ pub unsafe fn eventfd_create_subcommand(list: *mut WORD_LIST) -> CmdResult {
             std::io::Error::last_os_error()
         ));
     }
-    if let Err(e) = args.var.set_int(fd) {
-        unsafe { libc::close(fd) };
-        return Err(e);
-    }
+    let fd_int = ensure_high_fd(fd).map_err(|e| {
+        l_builtin_error!(b"eventfd: fd dup failed: ", e);
+        EXECUTION_FAILURE
+    })?;
+    args.var.set_int(fd_int as i64)?;
     Ok(())
 }
 
@@ -133,9 +135,48 @@ pub unsafe fn eventfd_read_subcommand(list: *mut WORD_LIST) -> CmdResult {
     Ok(())
 }
 
+/// `L_builtin eventfd apply FD [VALUE]`
+#[derive(CmdArgs)]
+struct EventfdApplyArgs {
+    /// File descriptor of the eventfd.
+    #[positional]
+    fd: c_int,
+    /// Counter value to set (default 0).
+    #[optional(default = 0u64)]
+    value: u64,
+}
+
+pub unsafe fn eventfd_apply_subcommand(list: *mut WORD_LIST) -> CmdResult {
+    EVENTFD_APPLY_CMD.enter();
+    let args = EventfdApplyArgs::parse(list)?;
+    // Consume any pending counter value so the fd is readable/reset, without
+    // blocking on a zero counter.
+    let mut pfd = libc::pollfd {
+        fd: args.fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let r = unsafe { libc::poll(&mut pfd, 1, 0) };
+    if r > 0 && (pfd.revents & libc::POLLIN) != 0 {
+        let mut buf = [0u8; 8];
+        unsafe { libc::read(args.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+    }
+    if args.value > 0 {
+        let val = args.value.to_ne_bytes();
+        let w = unsafe { libc::write(args.fd, val.as_ptr() as *const libc::c_void, val.len()) };
+        if w < 0 {
+            return Err(l_builtin_error!(
+                b"eventfd apply: ",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    Ok(())
+}
+
 const EVENTFD_CMD: CmdDesc = CmdDesc::new(
     c"eventfd",
-    c"create [-n] [-s] [-C] VAR [INITVAL] | write FD [VALUE] | read FD [VAR]",
+    c"create [-n] [-s] [-C] VAR [INITVAL] | write FD [VALUE] | read FD [VAR] | apply FD [VALUE]",
     c"\
 Create an eventfd(2) counting file descriptor and read/write its 64-bit counter.
 
@@ -148,12 +189,15 @@ Subcommands:
                         the eventfd FD, adding it to the counter. VALUE is carried
                         as 8 bytes in native byte order.
   read FD [VAR]         Read the eventfd FD counter (an 8-byte native-endian
-                        u64), resetting it to 0. If the counter was 0, a blocking
-                        fd blocks; create the fd with -n (EFD_NONBLOCK) for
-                        non-blocking operation (read then fails with EAGAIN).
-                        Without EFD_SEMAPHORE read returns the full counter; with
-                        it read returns 1 and decrements by 1. If VAR is given the
-                        counter value is stored there, otherwise it is printed.
+                         u64), resetting it to 0. If the counter was 0, a blocking
+                         fd blocks; create the fd with -n (EFD_NONBLOCK) for
+                         non-blocking operation (read then fails with EAGAIN).
+                         Without EFD_SEMAPHORE read returns the full counter; with
+                         it read returns 1 and decrements by 1. If VAR is given the
+                         counter value is stored there, otherwise it is printed.
+  apply FD [VALUE]      Set the counter to exactly VALUE (default 0). Consumes any
+                         pending counter (read-and-reset) first, then writes VALUE.
+                         Does not block even if the counter is 0.
 
 The file descriptor is a real OS descriptor (as with the `close`, `lseek`,
 `timerfd` and `signalfd` subcommands), so it can be polled through the `poll`/
@@ -232,39 +276,41 @@ Examples:
 ",
 );
 
+const EVENTFD_APPLY_CMD: CmdDesc = CmdDesc::new(
+    c"apply",
+    c"apply FD [VALUE]",
+    c"\
+Set the eventfd FD counter to exactly VALUE (default 0).
+
+Unlike 'write' (which adds VALUE to the counter), 'apply' first consumes any
+pending counter value (read-and-reset), then writes VALUE so the counter is set
+to a known state. For VALUE=0 this simply drains the counter.
+
+Non-blocking is not required: a zero timeout poll is used to check readability,
+so 'apply' never blocks even on a blocking fd with a zero counter.
+
+Examples:
+  L_builtin eventfd apply \"$ev\" 5           # counter = 5
+  L_builtin eventfd apply \"$ev\"             # counter = 0 (drain)
+",
+);
+
 const EVENTFD_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("create", eventfd_create_subcommand),
     ("write", eventfd_write_subcommand),
     ("read", eventfd_read_subcommand),
+    ("apply", eventfd_apply_subcommand),
 ];
 
-const EVENTFD_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 3> =
+const EVENTFD_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 4> =
     crate::intlookup!(&EVENTFD_SUBCOMMANDS);
-
-/// `L_builtin eventfd ACTION ...`
-#[derive(CmdArgs)]
-struct EventfdDispatchArgs {
-    /// Subcommand name: create | write | read.
-    #[positional]
-    action: *const c_char,
-    /// Remaining words forwarded to the subcommand handler.
-    #[rest]
-    rest: WordListIterCpnt<'static>,
-}
 
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
 pub unsafe fn eventfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
     EVENTFD_CMD.enter();
-    let args = EventfdDispatchArgs::parse(list)?;
-    let action_bytes = unsafe { CStr::from_ptr(args.action) }.to_bytes();
-    let handler = match EVENTFD_TABLE.lookup(action_bytes) {
-        Some(h) => h,
-        None => {
-            l_builtin_error!(b"unknown eventfd subcommand: ", action_bytes);
-            return Err(EX_USAGE);
-        }
-    };
-    handler(args.rest.as_ptr())
+    let args = SubCommandCallerArgs::parse(list)?;
+    let caller = args.handler(EVENTFD_TABLE)?;
+    caller.call()
 }

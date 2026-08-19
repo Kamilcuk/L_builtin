@@ -2,7 +2,7 @@
 
 use std::fs::File;
 use std::io::{self, Write};
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::raw::{c_char, c_int};
 
 use memmap2::MmapMut;
@@ -40,23 +40,21 @@ pub(crate) unsafe fn bind_variable_check(
 /// internal fd is >= this value keeps them out of the standard range.
 pub(crate) const L_FD_MIN: RawFd = 80;
 
-/// Ensure `file`'s underlying fd is >= [`L_FD_MIN`] by duplicating it with
-/// `F_DUPFD_CLOEXEC` when necessary. The original fd is closed; the returned
-/// `File` owns the new (high) fd. If the fd is already high enough it is
+/// Ensure `fd` is >= [`L_FD_MIN`] by duplicating it with `F_DUPFD_CLOEXEC`
+/// when necessary. Takes ownership of `fd`: on success the original fd is
+/// closed and the new high fd is returned; on error the original fd is also
+/// closed and the error is returned. If the fd is already high enough it is
 /// returned unchanged.
-pub(crate) fn ensure_high_fd(file: File) -> io::Result<File> {
-    let fd = file.as_raw_fd();
+pub(crate) fn ensure_high_fd(fd: RawFd) -> io::Result<RawFd> {
     if fd >= L_FD_MIN {
-        return Ok(file);
+        return Ok(fd);
     }
     let new_fd = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, L_FD_MIN) };
+    unsafe { libc::close(fd) };
     if new_fd < 0 {
         return Err(io::Error::last_os_error());
     }
-    // Close the original low fd; the new fd is a copy that shares the
-    // same open file description.
-    let _ = file.into_raw_fd();
-    Ok(unsafe { File::from_raw_fd(new_fd) })
+    Ok(new_fd)
 }
 
 struct RedirectStdout {
@@ -108,8 +106,8 @@ impl Memfd {
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
-        let memfd = ensure_high_fd(unsafe { File::from_raw_fd(fd) })?;
-        Ok(Self { file: memfd })
+        let new_fd = ensure_high_fd(fd)?;
+        Ok(Self { file: unsafe { File::from_raw_fd(new_fd) } })
     }
 }
 

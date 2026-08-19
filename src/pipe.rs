@@ -10,6 +10,7 @@ use crate::bash_api::{EXECUTION_FAILURE, WORD_LIST};
 use crate::cmdargs::BashVar;
 use crate::intstr::ToIntStr;
 use crate::l_builtin_error;
+use crate::shared::ensure_high_fd;
 use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
@@ -60,6 +61,19 @@ pub unsafe fn pipe_subcommand(list: *mut WORD_LIST) -> CmdResult {
         l_builtin_error!(b"pipe: ", std::io::Error::last_os_error());
         return Err(EXECUTION_FAILURE);
     }
+    // Ensure fds are >= L_FD_MIN to avoid clobbering fds 0/1/2 in forked children.
+    let read_fd = ensure_high_fd(fds.0[0]).map_err(|e| {
+        l_builtin_error!(b"pipe: fd dup failed: ", e);
+        EXECUTION_FAILURE
+    })?;
+    let write_fd = ensure_high_fd(fds.0[1]).map_err(|e| {
+        l_builtin_error!(b"pipe: fd dup failed: ", e);
+        EXECUTION_FAILURE
+    })?;
+    // Prevent guard from closing the file descriptors since ownership is handed
+    // off to bash array -- clear the guard's fds but keep the high dups alive.
+    fds.0[0] = -1;
+    fds.0[1] = -1;
     // Check if variable exists and is an array
     let mut var = unsafe { crate::bash_api::find_variable(args.array_name.as_ptr()) };
     if !var.is_null() {
@@ -83,15 +97,10 @@ pub unsafe fn pipe_subcommand(list: *mut WORD_LIST) -> CmdResult {
     unsafe { crate::bash_api::array_flush(array) };
 
     // Insert read fd (index 0)
-    let read_fd: i64 = fds.0[0] as i64;
     unsafe { crate::bash_api::array_insert(array, 0, read_fd.to_intstr().as_ptr().cast_mut()) };
 
     // Insert write fd (index 1)
-    let write_fd: i64 = fds.0[1] as i64;
     unsafe { crate::bash_api::array_insert(array, 1, write_fd.to_intstr().as_ptr().cast_mut()) };
-
-    // Prevent guard from closing the file descriptors since ownership is handed off to bash array
-    std::mem::forget(fds);
 
     Ok(())
 }

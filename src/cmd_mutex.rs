@@ -16,14 +16,14 @@
 //! integer *value*.
 
 use std::ffi::CStr;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 
 use cmdargs_derive::CmdArgs;
 
-use crate::bash_api::{Cpnt, WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
+use crate::bash_api::{Cpnt, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
 use crate::handles::HandleEntry;
-use crate::subcmd::{CmdDesc, CmdResult, SubcommandFn};
+use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
 use crate::{
     handles::{map_anonymous, map_named, unmap, HandleRegistry},
     l_builtin_error,
@@ -456,30 +456,12 @@ const MUTEX_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
 const MUTEX_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
     crate::intlookup!(&MUTEX_SUBCOMMANDS);
 
-/// `L_builtin mutex ACTION ...`
-#[derive(CmdArgs)]
-struct MutexDispatchArgs {
-    /// Subcommand name: create | open | lock | unlock | close | destroy.
-    #[positional]
-    action: *const c_char,
-    /// Remaining words forwarded to the subcommand handler.
-    #[rest]
-    rest: WordListIterCpnt<'static>,
-}
-
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
 pub unsafe fn mutex_subcommand(list: *mut WORD_LIST) -> CmdResult {
     MUTEX_CMD.enter();
-    let args = MutexDispatchArgs::parse(list)?;
-    let action_bytes = unsafe { CStr::from_ptr(args.action) }.to_bytes();
-    let handler = match MUTEX_TABLE.lookup(action_bytes) {
-        Some(h) => h,
-        None => {
-            l_builtin_error!(b"unknown mutex subcommand: ", action_bytes);
-            return Err(EX_USAGE);
-        }
-    };
-    handler(args.rest.as_ptr())
+    let args = SubCommandCallerArgs::parse(list)?;
+    let caller = args.handler(MUTEX_TABLE)?;
+    caller.call()
 }

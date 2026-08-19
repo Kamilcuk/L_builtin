@@ -29,6 +29,8 @@
 //!       Print every variable stored in the database.
 //!   L_builtin shm ls [-s NAME | -n NAME | -f PATH]
 //!       List databases and the variables bound to each.
+//!   L_builtin shm sync [-s NAME | -n NAME | -f PATH] VAR_NAME
+//!       Push the current bash variable values into the shared database.
 //!
 //! Example (indexed array, default database):
 //!   L_builtin shm add MYVAR
@@ -56,12 +58,13 @@ use std::sync::Arc;
 use cmdargs_derive::CmdArgs;
 
 use crate::bash_api::{
-    array_insert, array_remove, arrayind_t, assoc_remove, is_valid_var_name, l_array_cell,
-    l_array_max_index, l_assoc_cell, l_assoc_insert, l_init_dynamic_array_var,
-    l_init_dynamic_assoc_var, l_unbind_variable, variable, ArrayIterator, AssocIterator,
-    WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, SHELL_VAR, WORD_LIST,
+    array_insert, array_remove, arrayind_t, assoc_remove, find_variable, is_valid_var_name,
+    l_array_cell, l_array_max_index, l_assoc_cell, l_assoc_insert, l_assoc_p,
+    l_init_dynamic_array_var, l_init_dynamic_assoc_var, l_unbind_variable, variable,
+    ArrayIterator, AssocIterator, WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, SHELL_VAR,
+    WORD_LIST,
 };
-use crate::subcmd::{CmdDesc, CmdResult, SubcommandFn};
+use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
 use crate::vardb::{open_db_loc, DbLoc, DbPath, LockedDatabase, VarData};
 use crate::{beprintln, bprintln, l_builtin_error};
 
@@ -375,6 +378,17 @@ struct ShmAddArgs {
     var: *const c_char,
 }
 
+/// `shm sync` arguments: the shared backing flags plus a single `VAR_NAME` to push.
+#[derive(CmdArgs)]
+struct ShmSyncArgs {
+    /// Backing selection flags, shared with the other `shm` subcommands.
+    #[flatten]
+    loc: ShmLocArgs,
+    /// Bash variable to push into the shared database.
+    #[positional]
+    var: BashVar,
+}
+
 /// `shm unbind` arguments: the shared backing flags plus one or more `VAR_NAME`s.
 #[derive(CmdArgs)]
 struct ShmUnbindArgs {
@@ -401,10 +415,15 @@ impl ShmLocArgs {
         Ok(())
     }
 
-    /// Resolve the backing database location for this parsed set of flags, after
-    /// `post()` has confirmed they are mutually exclusive. Also rejects an invalid
-    /// `NAME` for the `-s`/`-n` backings.
     fn resolve_dbloc(&self) -> Result<DbLoc, c_int> {
+        let n = [self.s, self.n, self.f]
+            .iter()
+            .filter(|o| o.is_some())
+            .count();
+        if n > 1 {
+            l_builtin_error!(b"shm: -s, -n and -f are mutually exclusive");
+            return Result::Err(EX_USAGE);
+        }
         let loc = if let Some(p) = self.f {
             DbLoc::File(PathBuf::from(OsStr::from_bytes(p.to_bytes())))
         } else if let Some(s) = self.s {
@@ -498,6 +517,56 @@ unsafe fn shm_add_subcommand(list: *mut WORD_LIST) -> CmdResult {
         l_builtin_error!(b": failed to bind variable ", args.var);
         return Err(EXECUTION_FAILURE);
     }
+    Ok(())
+}
+
+/// `L_builtin shm sync [-s NAME | -n NAME | -f PATH] VAR_NAME`
+///
+/// Push the current bash variable values into the shared database, replacing the
+/// variable's existing entry. Unlike `add` (which binds a new dynamic variable),
+/// `sync` is for variables already bound via `add` -- it snapshots the current
+/// bash array/assoc contents into the shared blob.
+unsafe fn shm_sync_subcommand(list: *mut WORD_LIST) -> CmdResult {
+    SHM_SYNC_CMD.enter();
+    let args = ShmSyncArgs::parse(list)?;
+    let loc = args.loc.resolve_dbloc()?;
+    let db = get_db_loc(&loc).map_err(|e| l_builtin_error!(e))?;
+    let cname = CStr::from_ptr(args.var.as_ptr());
+    let name = CString::new(cname.to_bytes()).unwrap_or_default();
+
+    let shellvar = unsafe { find_variable(args.var.as_ptr()) };
+    if shellvar.is_null() {
+        l_builtin_error!(b"shm: variable not found: ", args.var.as_ptr());
+        return Err(EXECUTION_FAILURE);
+    }
+
+    let is_assoc = unsafe { l_assoc_p(shellvar) } != 0;
+
+    let mut new_data = if is_assoc {
+        VarData::Assoc(HashMap::new())
+    } else {
+        VarData::Array(HashMap::new())
+    };
+
+    if is_assoc {
+        let hash = unsafe { l_assoc_cell(shellvar as *mut SHELL_VAR) };
+        for (k, v) in AssocIterator::new(hash) {
+            if let VarData::Assoc(m) = &mut new_data {
+                m.insert(k.to_owned(), v.to_owned());
+            }
+        }
+    } else {
+        let arr = unsafe { l_array_cell(shellvar as *mut SHELL_VAR) };
+        for (idx, val) in ArrayIterator::new(arr) {
+            if let VarData::Array(m) = &mut new_data {
+                m.insert(idx, val.to_owned());
+            }
+        }
+    }
+
+    let _ = db.with_write(|repr| {
+        repr.vars.insert(name, new_data);
+    });
     Ok(())
 }
 
@@ -662,7 +731,7 @@ unsafe fn shm_ls_subcommand(list: *mut WORD_LIST) -> CmdResult {
 
 const SHM_CMD: CmdDesc = CmdDesc::new(
     c"shm",
-    c"add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME | rm [-s NAME | -n NAME | -f PATH] | unbind [-s NAME | -n NAME | -f PATH] VAR_NAME... | info [-s NAME | -n NAME | -f PATH] | ls [-s NAME | -n NAME | -f PATH]",
+    c"add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME | rm [-s NAME | -n NAME | -f PATH] | unbind [-s NAME | -n NAME | -f PATH] VAR_NAME... | info [-s NAME | -n NAME | -f PATH] | ls [-s NAME | -n NAME | -f PATH] | sync [-s NAME | -n NAME | -f PATH] VAR_NAME",
     c"\
 Shared-memory variables backed by a rkyv database.
 
@@ -685,10 +754,14 @@ Subcommands:
                            Print every variable stored in the database (default:
                            the DEFAULT database).
   ls  [-s NAME | -n NAME | -f PATH]
-                           List databases. With no flag, list every database this
-                           session knows about with the variables bound to each;
-                           with a backing flag, list only the variables bound to
-                           that database in this session's REGISTRY.
+                            List databases. With no flag, list every database this
+                            session knows about with the variables bound to each;
+                            with a backing flag, list only the variables bound to
+                            that database in this session's REGISTRY.
+  sync [-s NAME | -n NAME | -f PATH] VAR_NAME
+                            Push the current bash variable values into the shared
+                            database, replacing the variable's existing entry. The
+                            variable must already be bound via 'add'.
 
 The variable (indexed or associative array) is serialized into a rkyv blob on
 every assignment and is visible to every process that maps the same database
@@ -702,6 +775,7 @@ const SHM_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("unbind", shm_unbind_subcommand),
     ("info", shm_info_subcommand),
     ("ls", shm_ls_subcommand),
+    ("sync", shm_sync_subcommand),
 ];
 
 const SHM_ADD_CMD: CmdDesc = CmdDesc::new(
@@ -801,30 +875,39 @@ memory, 'memfd:NAME' for in-memory, and the file path for -f databases.
 ",
 );
 
-const SHM_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 5> =
-    crate::intlookup!(&SHM_SUBCOMMANDS);
+const SHM_SYNC_CMD: CmdDesc = CmdDesc::new(
+    c"sync",
+    c"sync [-s NAME | -n NAME | -f PATH] VAR_NAME",
+    c"\
+Push the current bash variable values into the shared database, replacing the
+variable's existing entry. The variable must already be bound to the database
+via 'add'. For each element in the bash array (indexed or associative), the
+current value is written to the database.
 
-#[derive(CmdArgs)]
-struct ShmDispatchArgs {
-    #[positional]
-    action: *const c_char,
-    #[rest]
-    rest: WordListIterCpnt<'static>,
-}
+Normally the dynamic setter (invoked on each element assignment) keeps the
+database in sync automatically. However, a bulk array reassignment such as
+v=( new1 new2 new3 ) only triggers the setter for the new elements -- stale
+elements from the previous array are not removed from the database. 'sync'
+is useful for propagating structural changes (element deletion, array
+shrinking) or for explicitly committing the current state after a batch of
+operations.
+
+Examples:
+   L_builtin shm add -s mydb v
+   v=( a b c )
+   L_builtin shm sync -s mydb v       # push v=(a b c) into shared mem 'mydb'
+",
+);
+
+const SHM_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
+    crate::intlookup!(&SHM_SUBCOMMANDS);
 
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
 pub unsafe fn shm_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SHM_CMD.enter();
-    let args = ShmDispatchArgs::parse(list)?;
-    let action_bytes = unsafe { CStr::from_ptr(args.action) }.to_bytes();
-    let handler = match SHM_TABLE.lookup(action_bytes) {
-        Some(h) => h,
-        None => {
-            l_builtin_error!(b": unknown shm subcommand: ", action_bytes);
-            return Err(EXECUTION_FAILURE);
-        }
-    };
-    handler(args.rest.as_ptr())
+    let args = SubCommandCallerArgs::parse(list)?;
+    let caller = args.handler(SHM_TABLE)?;
+    caller.call()
 }

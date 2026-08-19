@@ -7,13 +7,14 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{this_cmd_name, WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
+use crate::bash_api::{WordListIterCpnt, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
-use crate::intstr::ToIntStr;
+use crate::l_builtin_error;
+use crate::shared::ensure_high_fd;
 use crate::subcmd::{CmdDesc, CmdResult};
-use crate::{beprintln, bprintln};
+use crate::bprintln;
 use cmdargs_derive::CmdArgs;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
     c"signalfd",
@@ -74,19 +75,6 @@ fn parse_signal(s: &str) -> Option<c_int> {
     })
 }
 
-unsafe fn store_fd(var: *mut c_char, fd: c_int) -> bool {
-    if var.is_null() {
-        bprintln!(fd as i64);
-        return true;
-    }
-    let fd_int: i64 = fd as i64;
-    if unsafe { crate::bash_api::bind_variable(var, fd_int.to_intstr().as_ptr(), 0) }.is_null() {
-        beprintln!(this_cmd_name(), b": cannot bind variable");
-        return false;
-    }
-    true
-}
-
 #[derive(CmdArgs)]
 struct SignalfdArgs {
     #[flag('n')]
@@ -116,7 +104,7 @@ pub unsafe fn signalfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
             let name = match unsafe { sig.as_str() } {
                 Ok(s) => s,
                 Err(_) => {
-                    beprintln!(this_cmd_name(), b": invalid signal encoding");
+                    l_builtin_error!(b"invalid signal encoding");
                     return Err(EX_USAGE);
                 }
             };
@@ -125,7 +113,7 @@ pub unsafe fn signalfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
                     unsafe { libc::sigaddset(&mut set, n) };
                 }
                 None => {
-                    beprintln!(this_cmd_name(), b": unknown signal: ", name);
+                    l_builtin_error!(b"unknown signal: ", name);
                     return Err(EX_USAGE);
                 }
             }
@@ -135,12 +123,10 @@ pub unsafe fn signalfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
     // Optionally block the signals so reads from the fd consume them.
     if args.block {
         if unsafe { libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) } < 0 {
-            beprintln!(
-                this_cmd_name(),
-                b": sigprocmask: ",
+            return Err(l_builtin_error!(
+                b"sigprocmask: ",
                 std::io::Error::last_os_error()
-            );
-            return Err(EXECUTION_FAILURE);
+            ));
         }
     }
 
@@ -151,13 +137,14 @@ pub unsafe fn signalfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
 
     let fd = unsafe { libc::signalfd(-1, &set, flags) };
     if fd < 0 {
-        beprintln!(
-            this_cmd_name(),
-            b": signalfd: ",
+        return Err(l_builtin_error!(
+            b"signalfd: ",
             std::io::Error::last_os_error()
-        );
-        return Err(EXECUTION_FAILURE);
+        ));
     }
+    let fd = ensure_high_fd(fd).map_err(|e| {
+        l_builtin_error!(b"signalfd: fd dup failed: ", e)
+    })?;
     match args.fd_var {
         Some(v) => {
             if let Err(e) = v.set_int(fd as i64) {

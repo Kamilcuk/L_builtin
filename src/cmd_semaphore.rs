@@ -15,14 +15,15 @@
 
 use cmdargs_derive::CmdArgs;
 use std::ffi::CString;
+use std::os::raw::c_char;
 use std::os::raw::c_int;
 
-use crate::bash_api::{Cpnt, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
+use crate::bash_api::{Cpnt, EXECUTION_FAILURE, WORD_LIST};
 use crate::cmdargs::BashVar;
 use crate::handles::{map_anonymous, unmap, HandleRegistry};
 use crate::l_builtin_error;
 use crate::shared::timespec_from_now;
-use crate::subcmd::{CmdDesc, CmdResult, SubcommandFn};
+use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
 
 #[derive(CmdArgs)]
 struct SemaphoreCreateArgs {
@@ -68,14 +69,6 @@ struct SemaphoreCloseArgs {
 struct SemaphoreDestroyArgs {
     #[positional]
     var: u64,
-}
-
-#[derive(CmdArgs)]
-struct SemaphoreDispatchArgs {
-    #[positional]
-    action: *const c_char,
-    #[rest]
-    rest: WordListIterCpnt<'static>,
 }
 
 thread_local! {
@@ -402,14 +395,7 @@ const SEMAPHORE_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
 /// Safe when called from bash with a valid WORD_LIST pointer.
 pub unsafe fn semaphore_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SEMAPHORE_CMD.enter();
-    let args = SemaphoreDispatchArgs::parse(list)?;
-    let action_bytes = unsafe { std::ffi::CStr::from_ptr(args.action) }.to_bytes();
-    let handler = match SEMAPHORE_TABLE.lookup(action_bytes) {
-        Some(h) => h,
-        None => {
-            l_builtin_error!(b"unknown semaphore subcommand: ", action_bytes);
-            return Err(EX_USAGE);
-        }
-    };
-    handler(args.rest.as_ptr())
+    let args = SubCommandCallerArgs::parse(list)?;
+    let caller = args.handler(SEMAPHORE_TABLE)?;
+    caller.call()
 }

@@ -13,9 +13,9 @@ _L_test_fcntl_getfl_getfd() {
     L_builtin fcntl getfl -v fl_result "$fd"
     L_unittest_ne "$fl_result" ""
 
-    # Store getfd result in a variable (no fd flags set initially)
+    # Store getfd result in a variable (FD_CLOEXEC is set by ensure_high_fd)
     L_builtin fcntl getfd -v fd_result "$fd"
-    L_unittest_eq "$fd_result" "0"
+    L_unittest_eq "$fd_result" "1"
 
     exec {p[0]}<&- 2>/dev/null || true
     exec {p[1]}>&- 2>/dev/null || true

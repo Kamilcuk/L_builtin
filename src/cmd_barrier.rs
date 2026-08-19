@@ -13,14 +13,14 @@
 //! exposed to the user.
 
 use std::ffi::CString;
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int};
 
 use cmdargs_derive::CmdArgs;
 
-use crate::bash_api::{Cpnt, WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
+use crate::bash_api::{Cpnt, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
 use crate::pthread::PthreadMutexGuard;
-use crate::subcmd::{CmdDesc, CmdResult, SubcommandFn};
+use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
 use crate::{
     handles::{map_anonymous, map_named, HandleRegistry},
     l_builtin_error,
@@ -483,27 +483,12 @@ const BARRIER_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
 const BARRIER_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
     crate::intlookup!(&BARRIER_SUBCOMMANDS);
 
-#[derive(CmdArgs)]
-struct BarrierDispatchArgs {
-    #[positional]
-    action: *const c_char,
-    #[rest]
-    rest: WordListIterCpnt<'static>,
-}
-
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
 pub unsafe fn barrier_subcommand(list: *mut WORD_LIST) -> CmdResult {
     BARRIER_CMD.enter();
-    let args = BarrierDispatchArgs::parse(list)?;
-    let action_bytes = unsafe { std::ffi::CStr::from_ptr(args.action) }.to_bytes();
-    let handler = match BARRIER_TABLE.lookup(action_bytes) {
-        Some(h) => h,
-        None => {
-            l_builtin_error!(b"unknown barrier subcommand: ", action_bytes);
-            return Err(EX_USAGE);
-        }
-    };
-    handler(args.rest.as_ptr())
+    let args = SubCommandCallerArgs::parse(list)?;
+    let caller = args.handler(BARRIER_TABLE)?;
+    caller.call()
 }

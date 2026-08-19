@@ -8,7 +8,7 @@ use std::os::raw::{c_char, c_int};
 
 use cmdargs_derive::CmdArgs;
 
-use crate::bash_api::{builtin, current_builtin, WORD_LIST};
+use crate::bash_api::{builtin, current_builtin, EX_USAGE, WORD_LIST};
 use crate::intlookup::Lookup;
 use crate::l_builtin_error;
 
@@ -160,7 +160,10 @@ impl SubCommandCallerArgs {
     ) -> Result<SubCommandCaller, c_int> {
         let handler = table
             .lookup(self.command)
-            .ok_or_else(|| l_builtin_error!(b"unknown subcommand: ", self.command))?;
+            .ok_or_else(|| {
+                l_builtin_error!(b"unknown subcommand: ", self.command);
+                EX_USAGE
+            })?;
         Ok(SubCommandCaller {
             handler,
             rest: self.rest.clone(),

@@ -26,7 +26,7 @@ use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileExt;
-use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -249,7 +249,8 @@ fn memfd_create(name: &CStr) -> io::Result<File> {
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
-    ensure_high_fd(unsafe { File::from_raw_fd(fd as RawFd) })
+    let new_fd = ensure_high_fd(fd as RawFd)?;
+    Ok(unsafe { File::from_raw_fd(new_fd) })
 }
 
 /// Build the `shm_open` object name for a user `SHM_NAME`: `shm_open` requires
@@ -265,7 +266,8 @@ fn shm_open_obj(name: &CStr) -> io::Result<File> {
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
-    ensure_high_fd(unsafe { File::from_raw_fd(fd as RawFd) })
+    let new_fd = ensure_high_fd(fd as RawFd)?;
+    Ok(unsafe { File::from_raw_fd(new_fd) })
 }
 
 /// Remove a POSIX shared memory object via `shm_unlink`. Errors are ignored
@@ -291,10 +293,11 @@ impl LockedDatabase {
             .create(true)
             .truncate(false)
             .open(db_path)?;
-        let file = ensure_high_fd(file)?;
+        let raw_fd = file.into_raw_fd();
+        let new_fd = ensure_high_fd(raw_fd)?;
         Ok(Self {
             path: DbPath::File(db_path.to_owned()),
-            file,
+            file: unsafe { File::from_raw_fd(new_fd) },
             database: Mutex::new(DatabaseRepr::default()),
         })
     }

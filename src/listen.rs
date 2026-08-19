@@ -8,10 +8,12 @@
 
 use crate::bash_api::{EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
+use crate::shared::ensure_high_fd;
 use crate::subcmd::{CmdDesc, CmdResult};
 use crate::{l_builtin_error, l_builtin_usage_error};
 use cmdargs_derive::CmdArgs;
-use std::os::fd::{AsRawFd, IntoRawFd};
+use std::os::fd::AsRawFd;
+use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
     c"listen",
@@ -78,9 +80,10 @@ pub unsafe fn listen_subcommand(list: *mut WORD_LIST) -> CmdResult {
         let port_num = listener.local_addr().map(|a| a.port()).unwrap_or(0);
         port_var.set_int(port_num)?;
     }
-    let fd = listener.as_raw_fd();
-    args.listenfd_var.set_int(fd)?;
-    // Convert to raw fd (don't close the socket)
-    let _ = listener.into_raw_fd();
+    let raw_fd = listener.as_raw_fd();
+    let high_fd = ensure_high_fd(raw_fd).map_err(|e| l_builtin_error!(b"listen: fd dup failed: ", e))?;
+    args.listenfd_var.set_int(high_fd)?;
+    // Prevent TcpListener::drop from closing the original fd (already duplicated/closed by ensure_high_fd)
+    std::mem::forget(listener);
     Ok(())
 }
