@@ -17,6 +17,10 @@ pub use crate::bash_api::{
     reset_internal_getopt, Cpnt, WordListIterCpnt, WordListView, EX_USAGE, GETOPT_HELP, WORD_LIST,
 };
 pub use crate::intstr::{IntStrPtr, ToIntStr};
+use crate::{
+    bash_api::{find_variable, l_readonly_p},
+    subcmd::CmdResult,
+};
 pub use std::ffi::{c_char, c_int, CStr};
 
 /// Convert a single bash word ([`Cpnt`]) into a typed Rust value.
@@ -96,6 +100,24 @@ impl FromCpnt for &'static [u8] {
     }
 }
 
+/////////////////////////////////////////////////////////
+
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+unsafe fn l_bind_variable_check(name: *const c_char, value: *const c_char) -> CmdResult {
+    unsafe {
+        debug_assert!(!name.is_null(), "name is null");
+        debug_assert!(!value.is_null(), "value is null");
+        let var = find_variable(name);
+        if !var.is_null() && l_readonly_p(var) != 0 {
+            return Err(crate::l_builtin_error!(name, ": readonly variable"));
+        }
+        if crate::bash_api::bind_variable(name, value, 0).is_null() {
+            return Err(crate::l_builtin_error!("failed to set variable: ", name));
+        }
+    }
+    Ok(())
+}
+
 /// A shell variable name, validated at construction, that can bind a value to
 /// itself through [`crate::bash_api::bind_variable`].
 ///
@@ -118,23 +140,21 @@ impl Default for BashVar {
 
 impl BashVar {
     pub unsafe fn validate(name: *const c_char) -> Result<Self, String> {
-        if name.is_null() {
-            return Err("empty variable name".to_string());
-        }
         if crate::bash_api::legal_identifier(name) == 0 {
             let display = CStr::from_ptr(name).to_string_lossy();
-            return Err(format!("invalid shell variable name: {display}"));
+            return Err(format!("`{display}': not a valid identifier"));
+        }
+        let var = find_variable(name);
+        if !var.is_null() && l_readonly_p(var) != 0 {
+            let display = CStr::from_ptr(name).to_string_lossy();
+            return Err(format!("{display}: readonly variable"));
         }
         Ok(BashVar { name })
     }
-    pub fn set(&self, value: *const c_char) -> Result<(), c_int> {
-        if unsafe { crate::bash_api::bind_variable(self.name, value, 0) }.is_null() {
-            crate::l_builtin_error!(b"cannot bind variable: ", self.name);
-            return Err(crate::bash_api::EXECUTION_FAILURE);
-        }
-        Ok(())
+    pub fn set(&self, value: *const c_char) -> CmdResult {
+        unsafe { l_bind_variable_check(self.name, value) }
     }
-    pub fn set_int<T: ToIntStr>(&self, value: T) -> Result<(), c_int> {
+    pub fn set_int<T: ToIntStr>(&self, value: T) -> CmdResult {
         self.set(value.to_intstr().as_ptr())
     }
     pub fn as_ptr(&self) -> *const c_char {
@@ -148,6 +168,8 @@ impl FromCpnt for BashVar {
         BashVar::validate(cptr.as_ptr())
     }
 }
+
+/////////////////////////////////////////////////////////
 
 /// Run a custom `#[parse]` converter `f` against one bash word.
 ///

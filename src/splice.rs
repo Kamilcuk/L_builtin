@@ -7,14 +7,10 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
-use crate::bprintln;
-use crate::intstr::ToIntStr;
+use crate::bash_api::{EX_USAGE, WORD_LIST};
 use crate::l_builtin_error;
-use crate::shared::bind_variable_check;
 use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
-use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -53,41 +49,39 @@ Examples:
 ",
 );
 
-fn parse_flags(s: &str) -> Option<libc::c_uint> {
+fn parse_flags(cpnt: Cpnt) -> Result<libc::c_uint, String> {
     let mut flags = 0u32;
+    let s = unsafe { cpnt.as_str() }.map_err(|e| e.to_string())?;
     for tok in s.split(',') {
         match tok.trim().to_ascii_lowercase().as_str() {
             "move" => flags |= libc::SPLICE_F_MOVE,
             "nonblock" => flags |= libc::SPLICE_F_NONBLOCK,
             "more" => flags |= libc::SPLICE_F_MORE,
             "gift" => flags |= libc::SPLICE_F_GIFT,
-            _ => return None,
-        }
+            _ => return Err(format!("invalid flag: {tok}")),
+        };
     }
-    Some(flags)
+    Ok(flags)
 }
 
 #[derive(CmdArgs)]
 struct SpliceArgs {
     /// Store the number of bytes moved into shell variable BYTES_VAR.
     #[opt('v')]
-    var: Option<*const c_char>,
-
+    var: Option<BashVar>,
     /// Source file descriptor.
     #[positional]
     fd_in: c_int,
-
     /// Destination file descriptor.
     #[positional]
     fd_out: c_int,
-
     /// Maximum number of bytes to move.
-    #[positional]
+    #[optional(default=usize::MAX)]
     len: usize,
-
     /// Optional splice flags (comma-separated).
-    #[optional]
-    flags: Option<&'static CStr>,
+    #[optional(default=0 as libc::c_uint)]
+    #[parse(parse_flags)]
+    flags: libc::c_uint,
 }
 
 /// # Safety
@@ -95,53 +89,22 @@ struct SpliceArgs {
 /// Safe when called from bash with a valid WORD_LIST pointer.
 pub unsafe fn splice_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
-
     let args = SpliceArgs::parse(list)?;
-
-    let var = args.var.map_or(std::ptr::null_mut(), |p| p as *mut c_char);
-    let fd_in = args.fd_in;
-    let fd_out = args.fd_out;
-    let len = args.len;
-
-    let flags = match args.flags {
-        Some(c) => match c.to_str() {
-            Ok(s) => match parse_flags(s) {
-                Some(f) => f,
-                None => {
-                    l_builtin_error!(b"invalid FLAGS");
-                    return Err(EX_USAGE);
-                }
-            },
-            Err(_) => {
-                l_builtin_error!(b"invalid FLAGS encoding");
-                return Err(EX_USAGE);
-            }
-        },
-        None => 0,
-    };
-
     let moved = unsafe {
         libc::splice(
-            fd_in,
+            args.fd_in,
             std::ptr::null_mut(),
-            fd_out,
+            args.fd_out,
             std::ptr::null_mut(),
-            len,
-            flags,
+            args.len,
+            args.flags,
         )
     };
     if moved < 0 {
-        l_builtin_error!(b"splice: ", std::io::Error::last_os_error());
-        return Err(EXECUTION_FAILURE);
+        return Err(l_builtin_error!(b"splice: ", std::io::Error::last_os_error()));
     }
-
-    if var.is_null() {
-        bprintln!(moved as i64);
-    } else {
-        let moved_int: i64 = moved as i64;
-        if bind_variable_check(var, moved_int.to_intstr().as_ptr(), 0) != 0 {
-            return Err(EXECUTION_FAILURE);
-        }
+    if let Some(var) = args.var {
+        var.set_int(moved)?;
     }
     Ok(())
 }

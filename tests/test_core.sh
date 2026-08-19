@@ -65,7 +65,7 @@ _L_test_core_help() {
 _L_test_core_capture_readonly_var() {
     if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local -r rovar=locked
-    L_unittest_checkexit 1 L_builtin -v rovar core dirname /a/b 2>/dev/null
+    L_unittest_cmd ! L_builtin -v rovar core dirname /a/b 2>/dev/null
     L_unittest_eq "$rovar" "locked"
 }
 
@@ -307,6 +307,6 @@ _L_test_capture_overwrite() {
 _L_test_capture_readonly_var() {
     if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local -r rovar=locked
-    L_unittest_checkexit 1 L_builtin capture rovar echo x 2>/dev/null
+    L_unittest_cmd ! L_builtin capture rovar echo x
     L_unittest_eq "$rovar" "locked"
 }

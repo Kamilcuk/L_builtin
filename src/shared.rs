@@ -1,6 +1,5 @@
 //! Shared utilities for L_builtin Rust implementation
 
-use std::ffi::CStr;
 use std::fs::File;
 use std::io::{self, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -9,7 +8,7 @@ use std::os::raw::{c_char, c_int};
 use memmap2::MmapMut;
 
 use crate::bash_api::{
-    bind_variable, find_variable, l_readonly_p, EXECUTION_FAILURE, EXECUTION_SUCCESS,
+    bind_variable, EXECUTION_FAILURE, EXECUTION_SUCCESS,
 };
 use crate::cmdargs::BashVar;
 use crate::subcmd::CmdResult;
@@ -31,64 +30,6 @@ pub(crate) unsafe fn bind_variable_check(
     } else {
         EXECUTION_SUCCESS
     }
-}
-
-/// Bind `value` to the shell variable `name`.
-///
-/// Both `name` and `value` must be NUL-terminated C strings (as returned by
-/// bash's C API). No copying or allocation is performed.
-/// Fails on readonly variables or a failed bind.
-///
-/// # Safety
-/// `name` and `value` must be valid pointers to NUL-terminated C strings.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub(crate) unsafe fn bind_shell_variable(
-    name: *const c_char,
-    value: *const c_char,
-) -> Result<(), String> {
-    unsafe {
-        debug_assert!(!name.is_null(), "name is null");
-        debug_assert!(!value.is_null(), "value is null");
-        let var = find_variable(name);
-        if !var.is_null() && l_readonly_p(var) != 0 {
-            return Err(format!(
-                "{}: readonly variable",
-                CStr::from_ptr(name).to_string_lossy()
-            ));
-        }
-        if bind_variable(name, value, 0).is_null() {
-            return Err(format!(
-                "failed to set variable: {}",
-                CStr::from_ptr(name).to_string_lossy()
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[macro_export]
-macro_rules! return_on_err {
-    ($ename:expr, $expr:expr, $code:expr) => {
-        match $expr {
-            Ok(val) => val,
-            Err(e) => {
-                beprintln!($ename, ": ", e);
-                return $code;
-            }
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! return_on_err2 {
-    ($ename:expr, $prefix:expr, $expr:expr, $code:expr) => {
-        match $expr.inspect_err(|e| {
-            $crate::beprintln!($ename, concat!(": ", $prefix, ": "), e);
-        }) {
-            Ok(val) => val,
-            Err(_) => return $code,
-        }
-    };
 }
 
 ////////////////////////////////////
