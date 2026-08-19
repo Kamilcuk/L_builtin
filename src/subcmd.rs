@@ -158,12 +158,10 @@ impl SubCommandCallerArgs {
         &self,
         table: TABLE,
     ) -> Result<SubCommandCaller, c_int> {
-        let handler = table
-            .lookup(self.command)
-            .ok_or_else(|| {
-                l_builtin_error!(b"unknown subcommand: ", self.command);
-                EX_USAGE
-            })?;
+        let handler = table.lookup(self.command).ok_or_else(|| {
+            l_builtin_error!(b"unknown subcommand: ", self.command);
+            EX_USAGE
+        })?;
         Ok(SubCommandCaller {
             handler,
             rest: self.rest.clone(),

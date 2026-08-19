@@ -60,9 +60,8 @@ use cmdargs_derive::CmdArgs;
 use crate::bash_api::{
     array_insert, array_remove, arrayind_t, assoc_remove, find_variable, is_valid_var_name,
     l_array_cell, l_array_max_index, l_assoc_cell, l_assoc_insert, l_assoc_p,
-    l_init_dynamic_array_var, l_init_dynamic_assoc_var, l_unbind_variable, variable,
-    ArrayIterator, AssocIterator, WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, SHELL_VAR,
-    WORD_LIST,
+    l_init_dynamic_array_var, l_init_dynamic_assoc_var, l_unbind_variable, variable, ArrayIterator,
+    AssocIterator, WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, SHELL_VAR, WORD_LIST,
 };
 use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
 use crate::vardb::{open_db_loc, DbLoc, DbPath, LockedDatabase, VarData};

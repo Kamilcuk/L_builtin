@@ -6,7 +6,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::bash_api::{EX_RETRYFAIL, EX_USAGE, EXECUTION_FAILURE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EX_RETRYFAIL, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
 use crate::shared::ensure_high_fd;
 use crate::subcmd::{CmdDesc, CmdResult};

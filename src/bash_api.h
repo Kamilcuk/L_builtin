@@ -114,8 +114,8 @@ int l_unbind_variable(const char *name);
  * without a compile-time length.
  */
 typedef struct {
-    const char *name;
-    int flag;
+  const char *name;
+  int flag;
 } l_flag_entry_t;
 
 extern const l_flag_entry_t l_open_flags[];

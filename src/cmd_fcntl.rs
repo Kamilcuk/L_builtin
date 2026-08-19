@@ -23,9 +23,7 @@ use std::os::raw::c_int;
 
 use cmdargs_derive::CmdArgs;
 
-use crate::bash_api::{
-    l_fd_flags, l_flag_entry_t, l_open_flags, Cpnt, WORD_LIST,
-};
+use crate::bash_api::{l_fd_flags, l_flag_entry_t, l_open_flags, Cpnt, WORD_LIST};
 use crate::bprintln;
 use crate::cmdargs::BashVar;
 use crate::l_builtin_error;

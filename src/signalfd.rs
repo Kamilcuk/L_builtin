@@ -8,11 +8,11 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{WordListIterCpnt, EX_USAGE, WORD_LIST};
+use crate::bprintln;
 use crate::cmdargs::BashVar;
 use crate::l_builtin_error;
 use crate::shared::ensure_high_fd;
 use crate::subcmd::{CmdDesc, CmdResult};
-use crate::bprintln;
 use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
 
@@ -142,9 +142,7 @@ pub unsafe fn signalfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
             std::io::Error::last_os_error()
         ));
     }
-    let fd = ensure_high_fd(fd).map_err(|e| {
-        l_builtin_error!(b"signalfd: fd dup failed: ", e)
-    })?;
+    let fd = ensure_high_fd(fd).map_err(|e| l_builtin_error!(b"signalfd: fd dup failed: ", e))?;
     match args.fd_var {
         Some(v) => {
             if let Err(e) = v.set_int(fd as i64) {

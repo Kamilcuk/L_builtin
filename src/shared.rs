@@ -107,7 +107,9 @@ impl Memfd {
             return Err(io::Error::last_os_error());
         }
         let new_fd = ensure_high_fd(fd)?;
-        Ok(Self { file: unsafe { File::from_raw_fd(new_fd) } })
+        Ok(Self {
+            file: unsafe { File::from_raw_fd(new_fd) },
+        })
     }
 }
 
