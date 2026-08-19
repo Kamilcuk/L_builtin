@@ -52,7 +52,7 @@ _L_test_lua_many_args() {
 _L_test_lua_bind_var_readonly() {
     if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local -r rovar=locked
-    L_unittest_checkexit 1 L_builtin -v rovar lua "print('x')" 2>/dev/null
+    L_unittest_cmd ! L_builtin -v rovar lua "print('x')"
     L_unittest_eq "$rovar" "locked"
 }
 

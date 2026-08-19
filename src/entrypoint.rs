@@ -74,6 +74,7 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("close", crate::close::close_subcommand),
     ("splice", crate::splice::splice_subcommand),
     ("shm", crate::cmd_shm::shm_subcommand),
+    ("fcntl", crate::cmd_fcntl::fcntl_subcommand),
     ("barrier", crate::cmd_barrier::barrier_subcommand),
     ("mutex", crate::cmd_mutex::mutex_subcommand),
     ("semaphore", crate::cmd_semaphore::semaphore_subcommand),

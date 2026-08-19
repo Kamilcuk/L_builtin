@@ -14,6 +14,7 @@ pub(crate) mod bprint_bytes;
 pub(crate) mod close;
 pub(crate) mod cmd_barrier;
 pub(crate) mod cmd_core;
+pub(crate) mod cmd_fcntl;
 pub(crate) mod cmd_lua;
 pub(crate) mod cmd_mutex;
 pub(crate) mod cmd_semaphore;

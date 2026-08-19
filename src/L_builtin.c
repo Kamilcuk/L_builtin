@@ -22,6 +22,7 @@ const char *const L_builtin_doc[] = {
   "  eventfd    Create an eventfd counter",
   "  ext        Builtins from bash examples/loadables/ directory",
   "             (run 'L_builtin ext --help' to list available)",
+  "  fcntl      Manipulate file descriptor properties"
   "  listen     Create a listening TCP socket",
   "  lua        Execute LuaJIT script",
   "  memfd      Create an anonymous memory-backed file",

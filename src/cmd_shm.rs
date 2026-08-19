@@ -185,6 +185,14 @@ fn escape_quoted(out: &mut Vec<u8>, bytes: &[u8]) {
     out.push(b'"');
 }
 
+macro_rules! my_debug {
+    ($($arg:tt)*) => {
+        if true {
+            bprintln!($($arg)*);
+        }
+    };
+}
+
 /// Dynamic-array getter: rebuild the bash array from the shared database.
 /// Stateful: snapshot the indices bash currently holds and only insert/update
 /// the entries whose database value differs, then remove the indices the
@@ -215,12 +223,14 @@ unsafe extern "C" fn shm_array_getter(var: *mut variable) -> *mut variable {
                     None => true,
                 };
                 if changed {
+                    my_debug!("shm_array_getter: ", var_name, "[", idx, "]=", val.as_ptr());
                     array_insert(arr, *idx, val.as_ptr() as *mut c_char);
                 }
             }
         }
         // Whatever remains was deleted from the database.
         for idx in existing.keys() {
+            my_debug!("shm_array_getter: unset ", var_name, "[", idx, "]");
             array_remove(arr, *idx);
         }
     }

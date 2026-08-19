@@ -210,7 +210,8 @@ pub fn open_db_loc(loc: &DbLoc) -> Result<LockedDatabase, String> {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("shm: cannot create {}: {}", parent.display(), e))?;
             }
-            LockedDatabase::open_file(p).map_err(|e| format!("shm: cannot open {}: {}", p.display(), e))
+            LockedDatabase::open_file(p)
+                .map_err(|e| format!("shm: cannot open {}: {}", p.display(), e))
         }
         DbLoc::Shm(name) => LockedDatabase::open_shm(name).map_err(|e| {
             format!(

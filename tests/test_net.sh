@@ -202,8 +202,9 @@ _L_test_net_recv_poll_timeout() {
 _L_net_server_multiple() {
     local count=0
     local sfd=""
-    L_builtin listen -p net_port sfd 127.0.0.1
-    L_logrun L_is_integer "$net_port"
+    L_assert '' L_logrun L_builtin listen -p net_port sfd 127.0.0.1
+    L_assert '' L_logrun L_var_is_set net_port
+    L_assert '' L_logrun L_is_integer "$net_port"
     L_logrun L_builtin barrier wait "$net_barrier"
     while (( count < 3 )); do
         local cfd="" addr=""

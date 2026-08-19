@@ -7,12 +7,10 @@ use std::os::raw::{c_char, c_int};
 
 use memmap2::MmapMut;
 
-use crate::bash_api::{
-    bind_variable, EXECUTION_FAILURE, EXECUTION_SUCCESS,
-};
+use crate::bash_api::{bind_variable, EXECUTION_FAILURE, EXECUTION_SUCCESS};
 use crate::cmdargs::BashVar;
-use crate::subcmd::CmdResult;
 use crate::l_builtin_error;
+use crate::subcmd::CmdResult;
 
 /// Bind `value` to the shell variable `var`, returning `EXECUTION_SUCCESS` on
 /// success or `EXECUTION_FAILURE` if the bind failed (e.g. a readonly variable).

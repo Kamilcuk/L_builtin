@@ -6,7 +6,11 @@
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
+use cmdargs_derive::CmdArgs;
+
 use crate::bash_api::{builtin, current_builtin, WORD_LIST};
+use crate::intlookup::Lookup;
+use crate::l_builtin_error;
 
 /// Constant check that a C string ends with the NUL terminator (the pieces of
 /// a `CmdDesc` must be NUL-terminated: C code does `strlen()` on them).
@@ -124,3 +128,50 @@ pub(crate) fn cint_to_cmd_result(res: c_int) -> CmdResult {
 }
 
 pub(crate) type SubcommandFn = unsafe fn(*mut WORD_LIST) -> CmdResult;
+
+///////////////////////////////////////////////////////////////
+
+/// `L_builtin timerfd ACTION ...`
+#[derive(CmdArgs)]
+pub struct SubCommandCallerArgs {
+    /// Subcommand name: create | read.
+    #[positional]
+    command: &'static [u8],
+    /// Remaining words forwarded to the subcommand handler.
+    #[rest]
+    rest: WordListIterCpnt<'static>,
+}
+
+pub struct SubCommandCaller {
+    handler: SubcommandFn,
+    rest: WordListIterCpnt<'static>,
+}
+
+impl SubCommandCaller {
+    pub(crate) unsafe fn call(&self) -> CmdResult {
+        (self.handler)(self.rest.as_ptr())
+    }
+}
+
+impl SubCommandCallerArgs {
+    pub(crate) fn handler<TABLE: Lookup<SubcommandFn>>(
+        &self,
+        table: TABLE,
+    ) -> Result<SubCommandCaller, c_int> {
+        let handler = table
+            .lookup(self.command)
+            .ok_or_else(|| l_builtin_error!(b"unknown subcommand: ", self.command))?;
+        Ok(SubCommandCaller {
+            handler,
+            rest: self.rest.clone(),
+        })
+    }
+    pub(crate) unsafe fn call<TABLE: Lookup<SubcommandFn>>(
+        &self,
+        table: TABLE,
+    ) -> Result<CmdResult, c_int> {
+        Ok(self.handler(table)?.call())
+    }
+}
+
+///////////////////////////////////////////////////////////////

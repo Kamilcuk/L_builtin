@@ -101,7 +101,10 @@ pub unsafe fn splice_subcommand(list: *mut WORD_LIST) -> CmdResult {
         )
     };
     if moved < 0 {
-        return Err(l_builtin_error!(b"splice: ", std::io::Error::last_os_error()));
+        return Err(l_builtin_error!(
+            b"splice: ",
+            std::io::Error::last_os_error()
+        ));
     }
     if let Some(var) = args.var {
         var.set_int(moved)?;

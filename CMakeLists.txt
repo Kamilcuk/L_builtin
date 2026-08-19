@@ -139,7 +139,9 @@ function(generate_bash_bindings gen_file bash_source)
             --allowlist-var GETOPT_HELP
             --allowlist-var interactive_shell
             --allowlist-var ARRAY
-            --allowlist-var ARRAY
+            --allowlist-var l_open_flags
+            --allowlist-var l_fd_flags
+            --allowlist-type l_flag_entry_t
             --allowlist-var EX_USAGE
             --allowlist-var EX_RETRYFAIL
             --allowlist-var EX_NOTFOUND
@@ -315,6 +317,7 @@ add_library(L_builtin_module MODULE
     ./src/sig.c
     ./src/bash_api.c
     ./src/cmd_ext.c
+    ./src/cmd_fcntl.c
 )
 set_target_properties(L_builtin_module PROPERTIES
     PREFIX ""

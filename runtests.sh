@@ -67,5 +67,6 @@ if L_is_main; then
 	done
 
 	L_trap_err_enable
+	L_trap_err_disable
 	L_unittest_main -p _L_test_ "$@"
 fi

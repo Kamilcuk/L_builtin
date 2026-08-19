@@ -82,6 +82,20 @@ pub const fn key_type_bits<T>(arr: &[(&str, T)]) -> usize {
 
 pub struct KeyBits<const T_BITS: usize, T, const N: usize>(PhantomData<T>);
 
+/// Generic trait for integer-keyed lookup tables.
+///
+/// Implemented for [`IntLookup`] so that dispatch sites (e.g. subcommand
+/// handlers) can be generic over any lookup table type without knowing the
+/// concrete integer width.
+pub trait Lookup<V: Copy> {
+    /// Find the value associated with `name`, if present.
+    ///
+    /// If `name` is a unique prefix of an entry, that entry's value is returned;
+    /// if it is an ambiguous prefix (shared by two or more entries), `None` is
+    /// returned.
+    fn lookup(&self, name: &[u8]) -> Option<V>;
+}
+
 macro_rules! define_functions { ($NS:ident, $T:ty, $T_BITS:literal) => {
 pub mod $NS {
 
@@ -331,6 +345,13 @@ pub mod $NS {
             }
         }
     } // IntLookup
+
+    impl<V: Copy, const N: usize> Lookup<V> for IntLookup<V, N> {
+        #[inline]
+        fn lookup(&self, name: &[u8]) -> Option<V> {
+            IntLookup::lookup(self, name)
+        }
+    }
 
     pub struct Iter<'a, V, const N: usize> {
         table: &'a IntLookup<V, N>,

@@ -249,7 +249,6 @@ _L_test_capture_no_reexpansion() {
 _L_test_capture_arg_with_single_quote() {
     if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
     local myvar
-    set -x
     L_builtin capture myvar echo "it's"
     L_unittest_eq "$myvar" $'it\'s\n'
 }

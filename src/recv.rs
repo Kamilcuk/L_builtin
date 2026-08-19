@@ -8,8 +8,8 @@
 
 use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::{BashVar, Cpnt};
-use crate::subcmd::{CmdDesc, CmdResult};
 use crate::l_builtin_error;
+use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
 
@@ -97,8 +97,14 @@ pub unsafe fn recv_subcommand(list: *mut WORD_LIST) -> CmdResult {
     }
     let received;
     loop {
-        let result =
-            unsafe { libc::recv(args.fd, buf.as_mut_ptr() as *mut libc::c_void, args.size, flags) };
+        let result = unsafe {
+            libc::recv(
+                args.fd,
+                buf.as_mut_ptr() as *mut libc::c_void,
+                args.size,
+                flags,
+            )
+        };
         if result < 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EINTR) {
@@ -123,7 +129,7 @@ pub unsafe fn recv_subcommand(list: *mut WORD_LIST) -> CmdResult {
         break;
     }
     buf[received] = 0; // null terminate
-    // If -v RECV_VAR is provided, store the result
+                       // If -v RECV_VAR is provided, store the result
     if let Some(var) = args.var {
         match args.format {
             Format::Hex => {
