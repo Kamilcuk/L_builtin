@@ -2,7 +2,7 @@
 
 use std::fs::File;
 use std::io::{self, Write};
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::os::raw::{c_char, c_int};
 
 use memmap2::MmapMut;
@@ -31,6 +31,33 @@ pub(crate) unsafe fn bind_variable_check(
 }
 
 ////////////////////////////////////
+
+/// Minimum file descriptor number for internally-created fds.
+///
+/// Bash redirects stdin (fd 0) from `/dev/null` for asynchronous commands
+/// (commands launched with `&`), which silently reclaims fd 0. If a memfd or
+/// shm_open fd lands on 0/1/2 it is lost in the forked child. Ensuring every
+/// internal fd is >= this value keeps them out of the standard range.
+pub(crate) const L_FD_MIN: RawFd = 80;
+
+/// Ensure `file`'s underlying fd is >= [`L_FD_MIN`] by duplicating it with
+/// `F_DUPFD_CLOEXEC` when necessary. The original fd is closed; the returned
+/// `File` owns the new (high) fd. If the fd is already high enough it is
+/// returned unchanged.
+pub(crate) fn ensure_high_fd(file: File) -> io::Result<File> {
+    let fd = file.as_raw_fd();
+    if fd >= L_FD_MIN {
+        return Ok(file);
+    }
+    let new_fd = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, L_FD_MIN) };
+    if new_fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // Close the original low fd; the new fd is a copy that shares the
+    // same open file description.
+    let _ = file.into_raw_fd();
+    Ok(unsafe { File::from_raw_fd(new_fd) })
+}
 
 struct RedirectStdout {
     saved_stdout: File,
@@ -81,7 +108,7 @@ impl Memfd {
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
-        let memfd = unsafe { File::from_raw_fd(fd) };
+        let memfd = ensure_high_fd(unsafe { File::from_raw_fd(fd) })?;
         Ok(Self { file: memfd })
     }
 }

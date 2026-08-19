@@ -11,8 +11,10 @@ use crate::bash_api::{EXECUTION_FAILURE, WORD_LIST};
 use crate::cmdargs::BashVar;
 use crate::intstr::ToIntStr;
 use crate::l_builtin_error;
+use crate::shared::ensure_high_fd;
 use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -64,10 +66,14 @@ pub unsafe fn memfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
         l_builtin_error!(b"memfd_create: ", std::io::Error::last_os_error());
         return Err(EXECUTION_FAILURE);
     }
-    let fd_int: i64 = fd as i64;
+    let file = ensure_high_fd(unsafe { std::fs::File::from_raw_fd(fd) }).map_err(|e| {
+        l_builtin_error!(b"memfd_create: fd dup failed: ", e);
+        EXECUTION_FAILURE
+    })?;
+    let fd_int: i64 = file.as_raw_fd() as i64;
     if let Err(e) = args.var.set(fd_int.to_intstr().as_ptr()) {
-        unsafe { libc::close(fd) };
         return Err(e);
     }
+    std::mem::forget(file);
     Ok(())
 }

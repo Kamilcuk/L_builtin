@@ -32,6 +32,8 @@ use std::sync::Mutex;
 
 use rkyv::{util::AlignedVec, Archive, Deserialize, Serialize};
 
+use crate::shared::ensure_high_fd;
+
 /// Map any rkyv/rancor error into an `io::Error` so the rest of the crate can
 /// use a single error type.
 fn rkyv_err<E: std::fmt::Display>(e: E) -> io::Error {
@@ -247,7 +249,7 @@ fn memfd_create(name: &CStr) -> io::Result<File> {
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(unsafe { File::from_raw_fd(fd as RawFd) })
+    ensure_high_fd(unsafe { File::from_raw_fd(fd as RawFd) })
 }
 
 /// Build the `shm_open` object name for a user `SHM_NAME`: `shm_open` requires
@@ -263,7 +265,7 @@ fn shm_open_obj(name: &CStr) -> io::Result<File> {
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(unsafe { File::from_raw_fd(fd as RawFd) })
+    ensure_high_fd(unsafe { File::from_raw_fd(fd as RawFd) })
 }
 
 /// Remove a POSIX shared memory object via `shm_unlink`. Errors are ignored
@@ -289,6 +291,7 @@ impl LockedDatabase {
             .create(true)
             .truncate(false)
             .open(db_path)?;
+        let file = ensure_high_fd(file)?;
         Ok(Self {
             path: DbPath::File(db_path.to_owned()),
             file,
