@@ -100,6 +100,88 @@ impl FromCpnt for &'static [u8] {
     }
 }
 
+/// A duration value that can be used as a `#[derive(CmdArgs)]` field type.
+///
+/// Accepts both human-readable duration strings (via the `parse_duration`
+/// crate) and bare floating-point numbers for backward compatibility:
+///
+/// - `"500ms"`, `"1s"`, `"1h30m"`, `"2min"`, `"1d"` -- parsed by
+///   `parse_duration::parse`, which understands units like `ns`, `us`, `ms`,
+///   `s`, `m`, `h`, `d`, etc.
+/// - `"1.5"`, `"0.25"` -- interpreted as seconds (f64), preserving the
+///   original behavior of the `sleep` / `timerfd` subcommands.
+///
+/// Construct one from a bash word via `#[positional] name: Duration` (or
+/// `Option<Duration>` / `#[opt('s')] name: Option<Duration>`).
+///
+/// # Example
+/// ```ignore
+/// #[derive(CmdArgs)]
+/// struct SleepArgs {
+///     #[positional]
+///     seconds: Duration,
+/// }
+/// ```
+#[derive(Clone, Copy)]
+pub struct Duration(std::time::Duration);
+
+impl Duration {
+    /// Return the duration as seconds (f64), including fractional part.
+    pub fn as_secs_f64(&self) -> f64 {
+        self.0.as_secs_f64()
+    }
+
+    /// Convert to a `libc::timespec`, clamping nanoseconds to `[0, 1e9)`.
+    pub fn as_timespec(&self) -> libc::timespec {
+        let secs = self.0.as_secs();
+        let nanos = self.0.subsec_nanos();
+        libc::timespec {
+            tv_sec: secs as libc::time_t,
+            tv_nsec: nanos as libc::c_long,
+        }
+    }
+}
+
+impl Default for Duration {
+    fn default() -> Self {
+        Duration(std::time::Duration::ZERO)
+    }
+}
+
+impl From<std::time::Duration> for Duration {
+    fn from(d: std::time::Duration) -> Self {
+        Duration(d)
+    }
+}
+
+impl std::ops::Deref for Duration {
+    type Target = std::time::Duration;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl FromCpnt for Duration {
+    type Err = String;
+    unsafe fn from_cpnt(cptr: Cpnt) -> Result<Self, Self::Err> {
+        let s = cptr.as_str().map_err(|e| e.to_string())?;
+        // First try `parse_duration` for human-readable strings ("1s", "500ms",
+        // "1h30m", etc.).
+        if let Ok(d) = parse_duration::parse(s) {
+            return Ok(Duration(d));
+        }
+        // Fall back to a bare f64 number interpreted as seconds, preserving
+        // backward compatibility with the original `SECONDS` argument.
+        let secs = s
+            .parse::<f64>()
+            .map_err(|e| format!("invalid duration: {s}: {e}"))?;
+        if secs < 0.0 {
+            return Err(format!("invalid duration: {s}: negative value"));
+        }
+        Ok(Duration(std::time::Duration::from_secs_f64(secs)))
+    }
+}
+
 /////////////////////////////////////////////////////////
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]

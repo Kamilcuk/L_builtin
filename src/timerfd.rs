@@ -14,7 +14,7 @@ use std::os::raw::c_int;
 use cmdargs_derive::CmdArgs;
 
 use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
-use crate::cmdargs::BashVar;
+use crate::cmdargs::{BashVar, Duration};
 use crate::l_builtin_error;
 use crate::shared::ensure_high_fd;
 use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
@@ -25,6 +25,9 @@ const TIMERFD_CMD: CmdDesc = CmdDesc::new(
     c"\
 Create a timerfd(2) and arm it, or modify an existing timerfd's settings.
 
+SEC accepts a duration string (e.g. `1s`, `500ms`, `1h30m`) or a bare
+floating-point number interpreted as seconds.
+
 Subcommands:
   create [-c CLOCK] [-s SEC] [-i SEC] [-n] FD_VAR
                         Create a timerfd(2) and store its file descriptor in
@@ -33,10 +36,10 @@ Subcommands:
                         other fds - see also the `poll`/`ppoll` subcommands.
                         -c     CLOCK (CLOCK_REALTIME or CLOCK_MONOTONIC;
                                default CLOCK_MONOTONIC)
-                        -s     Initial expiry in (possibly fractional) seconds;
-                               default 0 = do not arm
-                        -i     Periodic interval in (possibly fractional) seconds;
-                               default 0
+                        -s     Initial expiry as a duration string or (possibly
+                                fractional) seconds; default 0 = do not arm
+                        -i     Periodic interval as a duration string or (possibly
+                                fractional) seconds; default 0
                         -n     TFD_NONBLOCK
 
   set FD [-s SEC] [-i SEC] [-c CLOCK]
@@ -61,21 +64,6 @@ fn parse_clock(s: Option<&str>) -> Option<libc::clockid_t> {
     Some(c)
 }
 
-fn to_timespec(secs: f64) -> libc::timespec {
-    let (s, n) = if secs > 0.0 {
-        (
-            secs.trunc() as libc::time_t,
-            ((secs.fract()) * 1e9) as libc::c_long,
-        )
-    } else {
-        (0, 0)
-    };
-    libc::timespec {
-        tv_sec: s,
-        tv_nsec: n,
-    }
-}
-
 /// `L_builtin timerfd create [-c CLOCK] [-s SEC] [-i SEC] [-n] FD_VAR`
 #[derive(CmdArgs)]
 struct TimerfdCreateArgs {
@@ -83,10 +71,10 @@ struct TimerfdCreateArgs {
     nonblock: bool,
     #[opt('c')]
     clock: Option<*const c_char>,
-    #[opt('s')]
-    initial: Option<f64>,
-    #[opt('i')]
-    interval: Option<f64>,
+    #[opt('s', default=Duration::default())]
+    initial: Duration,
+    #[opt('i', default=Duration::default())]
+    interval: Duration,
     /// Shell variable receiving the file descriptor.
     #[positional]
     fd_var: BashVar,
@@ -106,8 +94,8 @@ pub unsafe fn timerfd_create_subcommand(list: *mut WORD_LIST) -> CmdResult {
             }
         }
     }
-    let initial: f64 = args.initial.unwrap_or(0.0);
-    let interval: f64 = args.interval.unwrap_or(0.0);
+    let initial = args.initial;
+    let interval = args.interval;
 
     let mut flags = libc::TFD_CLOEXEC;
     if args.nonblock {
@@ -125,10 +113,10 @@ pub unsafe fn timerfd_create_subcommand(list: *mut WORD_LIST) -> CmdResult {
         EXECUTION_FAILURE
     })?;
 
-    if initial > 0.0 || interval > 0.0 {
+    if initial.as_secs_f64() > 0.0 || interval.as_secs_f64() > 0.0 {
         let spec = libc::itimerspec {
-            it_interval: to_timespec(interval),
-            it_value: to_timespec(initial),
+            it_interval: interval.as_timespec(),
+            it_value: initial.as_timespec(),
         };
         if unsafe { libc::timerfd_settime(fd_int, 0, &spec, std::ptr::null_mut()) } < 0 {
             l_builtin_error!(b"timerfd_settime: ", std::io::Error::last_os_error());
@@ -147,10 +135,10 @@ struct TimerfdSetArgs {
     /// File descriptor of the timerfd.
     #[positional]
     fd: c_int,
-    #[opt('s')]
-    initial: Option<f64>,
-    #[opt('i')]
-    interval: Option<f64>,
+    #[opt('s', default=Duration::default())]
+    initial: Duration,
+    #[opt('i', default=Duration::default())]
+    interval: Duration,
     #[opt('c')]
     clock: Option<*const c_char>,
 }
@@ -159,20 +147,14 @@ pub unsafe fn timerfd_set_subcommand(list: *mut WORD_LIST) -> CmdResult {
     TIMERFD_SET_CMD.enter();
     let args = TimerfdSetArgs::parse(list)?;
 
-    if args.initial.is_none() && args.interval.is_none() {
+    if args.initial.as_secs_f64() == 0.0 && args.interval.as_secs_f64() == 0.0 {
         l_builtin_error!(b"at least one of -s or -i is required");
         return Err(EX_USAGE);
     }
 
-    let mut cur: libc::itimerspec = unsafe { std::mem::zeroed() };
-    if unsafe { libc::timerfd_gettime(args.fd, &mut cur) } < 0 {
-        l_builtin_error!(b"timerfd_gettime: ", std::io::Error::last_os_error());
-        return Err(EXECUTION_FAILURE);
-    }
-
     let new_spec = libc::itimerspec {
-        it_interval: args.interval.map(to_timespec).unwrap_or(cur.it_interval),
-        it_value: args.initial.map(to_timespec).unwrap_or(cur.it_value),
+        it_interval: args.interval.as_timespec(),
+        it_value: args.initial.as_timespec(),
     };
 
     if unsafe { libc::timerfd_settime(args.fd, 0, &new_spec, std::ptr::null_mut()) } < 0 {
@@ -193,8 +175,8 @@ polled together with other fds - see also the `poll`/`ppoll` subcommands.
 
 Options:
   -c     CLOCK (CLOCK_REALTIME or CLOCK_MONOTONIC; default CLOCK_MONOTONIC)
-  -s     Initial expiry in (possibly fractional) seconds; default 0 = do not arm
-  -i     Periodic interval in (possibly fractional) seconds; default 0
+  -s     Initial expiry as a duration string or (possibly fractional) seconds; default 0 = do not arm
+  -i     Periodic interval as a duration string or (possibly fractional) seconds; default 0
   -n     TFD_NONBLOCK
 
 Examples:
