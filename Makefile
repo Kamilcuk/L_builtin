@@ -88,7 +88,9 @@ term: build/init.bash
 gdb: build
 	,gdbbatchrun bash -c "enable -f ./$(BUILD)/L_builtin.so L_builtin && L_builtin $(ARGS)"
 
-.PHONY: all build release test check rust-checks format check-format tidy cppcheck clean sh
+readme: build
+	uv run --with markdown-it-py scripts/gen_readme.py --so $(BUILD)/L_builtin.so --bash $(BASH_EXE)
+.PHONY: all build release test check rust-checks format check-format tidy cppcheck clean sh readme
 
 ###############################################################################
 # For all bash versions

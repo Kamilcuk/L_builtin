@@ -9,6 +9,14 @@ dispatched as `L_builtin <subcommand> ...` and loaded via `enable -f`.
   The `.so` is **tied to the bash version it was compiled against** (headers
   from that version). `BASH` make var selects the version (`system` default);
   `make release-build` for release.
+- `make readme` → regenerates the auto-generated "Subcommand Reference" section
+  and its TOC entries in `README.md` (and the TOC bullets) from
+  `L_builtin <subcommand> -h`. Requires a built `.so` plus `uv` (the `markdown-it-py`
+  library is fetched automatically). The boundaries are marked with
+  `<!-- README_GEN_START -->` / `<!-- README_GEN_END -->` (body) and
+  `<!-- TOC_GEN_START -->` / `<!-- TOC_GEN_END -->` (TOC). Edit
+  `scripts/gen_readme.py` to change generation.
+  Requires a built `.so`.
 - `make test` → compiles, then runs the **entire** test suite via
   `build/bash/system/bash ./runtests.sh build/Debug/system/L_builtin.so`.
 - `make sh` → interactive bash with the builtin already `enable`d (handy for
