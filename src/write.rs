@@ -1,6 +1,6 @@
-//! L_builtin `send` subcommand: send bytes over a socket.
+//! L_builtin `write` subcommand: write bytes to a file descriptor.
 //!
-//! Usage: `L_builtin send [-f format] [-v SENT_VAR] [-n] FD DATA`
+//! Usage: `L_builtin write [-f format] [-v WRITTEN_VAR] [-n] FD DATA`
 
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
@@ -14,29 +14,31 @@ use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
-    c"send",
-    c"[-f format] [-v SENT_VAR] [-n] FD DATA",
+    c"write",
+    c"[-f format] [-v WRITTEN_VAR] [-n] FD DATA",
     c"\
-Transmit raw or encoded data over the socket file descriptor FD.
-Supported formats (-f):
-  raw   Transmit DATA as raw characters (default)
-  hex   Transmit DATA after decoding from hex representation
+Write DATA to the file descriptor FD via write(2). Works on any fd
+(pipes, files, sockets, etc.), not just sockets.
 
-By default, send loops until all bytes are transmitted, retrying on short
+Supported formats (-f):
+  raw   Write DATA as raw bytes (default)
+  hex   Decode DATA from hex representation first, then write
+
+By default, write loops until all bytes are transmitted, retrying on short
 writes and interrupted system calls (EINTR). If -n is provided, only a
-single send(2) call is made and the result (which may be a short write)
+single write(2) call is made and the result (which may be a short write)
 is returned immediately.
 
-If -v SENT_VAR is provided, the number of bytes successfully transmitted
-is stored in SENT_VAR.
+If -v WRITTEN_VAR is provided, the number of bytes written is stored in
+WRITTEN_VAR.
 
 Exit Status:
-Returns success unless send fails or variable binding fails.
+Returns success unless write fails or variable binding fails.
 ",
 );
 
 #[derive(CmdArgs)]
-struct SendArgs {
+struct WriteArgs {
     #[opt('f', default=Format::Raw)]
     #[parse(parse_format)]
     format: Format,
@@ -53,9 +55,9 @@ struct SendArgs {
 /// # Safety
 ///
 /// Safe when called from bash with a valid WORD_LIST pointer.
-pub unsafe fn send_subcommand(list: *mut WORD_LIST) -> CmdResult {
+pub unsafe fn write_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
-    let args = SendArgs::parse(list)?;
+    let args = WriteArgs::parse(list)?;
     let hex_bytes;
     let data = match args.format {
         Format::Hex => match hex_decode(args.data) {
@@ -68,31 +70,30 @@ pub unsafe fn send_subcommand(list: *mut WORD_LIST) -> CmdResult {
         Format::Raw => args.data,
     };
 
-    let mut total_sent: usize = 0;
+    let mut total_written: usize = 0;
     loop {
-        let sent = unsafe {
-            libc::send(
+        let written = unsafe {
+            libc::write(
                 args.fd,
-                data[total_sent..].as_ptr().cast(),
-                data.len() - total_sent,
-                0,
+                data[total_written..].as_ptr().cast(),
+                data.len() - total_written,
             )
         };
-        if sent < 0 {
+        if written < 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EINTR) {
                 continue;
             }
-            return Err(l_builtin_error!(b"send failed: ", err));
+            return Err(l_builtin_error!(b"write failed: ", err));
         }
-        total_sent += sent as usize;
-        if args.non_blocking || total_sent == data.len() {
+        total_written += written as usize;
+        if args.non_blocking || total_written == data.len() {
             break;
         }
     }
 
     if let Some(ret) = args.var {
-        ret.set_int(total_sent as i64)?;
+        ret.set_int(total_written as i64)?;
     }
     Ok(())
 }

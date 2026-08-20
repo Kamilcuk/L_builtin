@@ -7,7 +7,8 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
-use crate::cmdargs::{BashVar, Cpnt};
+use crate::cmdargs::BashVar;
+use crate::io_common::{Format, hex_encode, parse_format};
 use crate::l_builtin_error;
 use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
@@ -32,38 +33,6 @@ Exit Status:
 Returns success unless recv fails or variable binding fails.
 ",
 );
-
-const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
-
-/// Hex-encode `data` into a NUL-terminated byte vector. It is passed straight
-/// to the bash interface, which only needs a zero-terminated string, so the
-/// bytes are written directly into the `Vec<u8>` (hex nibble lookup) instead
-/// of building a `String`/`format!` per byte.
-fn hex_encode(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len() * 2 + 1);
-    for byte in data {
-        out.push(HEX_CHARS[(byte >> 4) as usize]); // high nibble
-        out.push(HEX_CHARS[(byte & 0x0f) as usize]); // low nibble
-    }
-    out.push(0);
-    out
-}
-
-// Get format (optional, defaults to "raw")
-#[derive(Copy, Clone)]
-enum Format {
-    Raw,
-    Hex,
-}
-
-fn parse_format(cptr: Cpnt) -> Result<Format, String> {
-    match unsafe { cptr.as_str() } {
-        Ok("hex") => Ok(Format::Hex),
-        Ok("raw") => Ok(Format::Raw),
-        Ok(s) => Err(format!("invalid format, must be 'raw' or 'hex': {s}")),
-        Err(e) => Err(e.to_string()),
-    }
-}
 
 #[derive(CmdArgs)]
 struct RecvArgs {

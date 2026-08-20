@@ -12,7 +12,7 @@ _L_test_poll_pipe() {
     local -a results=()
     L_builtin poll -t 0.1 -v results "${p[0]}:r"
     L_unittest_eq "${#results[@]}" "1"
-    L_unittest_eq "${results[0]}" "${p[0]}:r"
+    L_unittest_eq "${results[${p[0]}]}" "r"
     
     eval "exec ${p[0]}<&-"
     eval "exec ${p[1]}>&-"

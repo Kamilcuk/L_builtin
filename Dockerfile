@@ -25,7 +25,7 @@ RUN set -eux && \
     done
 
 FROM bash-builder AS build
-COPY --parents Cargo.toml Cargo.lock Makefile CMakeLists.txt src scripts third_party .
+COPY --parents Cargo.toml Cargo.lock Makefile CMakeLists.txt src scripts third_party cmdargs-derive .
 ARG MAKEARGS=
 ENV MAKEARGS=${MAKEARGS}
 RUN --mount=type=cache,target=/src/build/Debug \

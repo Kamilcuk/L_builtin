@@ -197,12 +197,11 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
     array_flush(a);
 
     if (ret > 0) {
-      int count = 0;
       for (int i = 0; i < nfds; i++) {
         if (pfds[i].revents) {
-          char entry[64];
-          snprintf(entry, sizeof(entry), "%d:%s", pfds[i].fd, format_revents(pfds[i].revents));
-          array_insert(a, count++, entry);
+          /* Sparse indexed array: the fd is the index, the value is just the
+           * decoded readiness tokens (e.g. 'r', 'rw') - mirrors epoll_wait. */
+          array_insert(a, pfds[i].fd, format_revents(pfds[i].revents));
         }
       }
     }
@@ -219,8 +218,11 @@ static const char *const poll_doc[] = {
   "L_builtin poll [-t TIMEOUT] [-v ARRAY_VAR] [-i] [FD[:EVENTS] ...]",
   "",
   "Poll file descriptors using poll(2). EVENTS can be 'r', 'w', or 'p'.",
-  "Results are stored in the indexed array ARRAY_VAR as FD:REVENTS.",
-  "REVENTS contains 'r', 'w', 'p', 'h' (hangup), 'e' (error), or 'n' "
+  "Results are stored in the indexed array ARRAY_VAR as ARR[fd]=events: the fd",
+  "is the array index and the value is the decoded readiness tokens (e.g.",
+  "ARR[3]=\"r\", ARR[5]=\"rw\"). This sparse format matches the `epoll wait`",
+  "subcommand, so a readiness loop works against either.",
+  "REVENTS contains 'r', 'w', 'p', 'h' (hangup), 'e' (error), or 'n' ",
   "(invalid).",
   "",
   "If -i is provided, poll will not automatically retry on signal interruption",
@@ -248,7 +250,10 @@ static const char *const ppoll_doc[] = {
   "L_builtin ppoll [-t TIMEOUT] [-v ARRAY_VAR] [-u SIGSPEC] [-i] [FD[:EVENTS] ...]",
   "",
   "Poll file descriptors and unblock signals using ppoll(2).",
-  "Results are stored in the indexed array ARRAY_VAR as FD:REVENTS.",
+  "Results are stored in the indexed array ARRAY_VAR as ARR[fd]=events: the fd",
+  "is the array index and the value is the decoded readiness tokens (e.g.",
+  "ARR[3]=\"r\", ARR[5]=\"rw\"). This sparse format matches the `epoll wait`",
+  "subcommand, so a readiness loop works against either.",
   "",
   "Use -u SIGSPEC to temporarily unblock specified signals during ppoll.",
   "Use -u 'ALL' (case-insensitive) to unblock all signals.",

@@ -14,6 +14,7 @@ pub(crate) mod bprint_bytes;
 pub(crate) mod close;
 pub(crate) mod cmd_barrier;
 pub(crate) mod cmd_core;
+pub(crate) mod cmd_epoll;
 pub(crate) mod cmd_fcntl;
 pub(crate) mod cmd_lua;
 pub(crate) mod cmd_mutex;
@@ -27,11 +28,13 @@ pub(crate) mod flock;
 pub(crate) mod handles;
 pub(crate) mod intlookup;
 pub(crate) mod intstr;
+pub(crate) mod io_common;
 pub(crate) mod listen;
 pub(crate) mod lseek;
 pub(crate) mod memfd;
 pub(crate) mod pipe;
 pub(crate) mod pthread;
+pub(crate) mod read;
 pub(crate) mod recv;
 pub(crate) mod send;
 pub(crate) mod shared;
@@ -44,6 +47,7 @@ pub(crate) mod timerfd;
 pub(crate) mod unittest;
 pub(crate) mod vardb;
 pub(crate) mod variadic;
+pub(crate) mod write;
 
 // Test-only stand-ins for bash C symbols (allocator) so `cargo test` links
 // without a bash process. Never compiled into the shipped `.so`.
