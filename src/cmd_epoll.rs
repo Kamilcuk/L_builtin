@@ -47,7 +47,11 @@ fn parse_events(s: Option<&str>) -> u32 {
             _ => {}
         }
     }
-    if ev == 0 { libc::EPOLLIN as u32 } else { ev }
+    if ev == 0 {
+        libc::EPOLLIN as u32
+    } else {
+        ev
+    }
 }
 
 /// Decode an `epoll_event.events` bitmask back into event tokens for array output.
@@ -93,7 +97,11 @@ unsafe fn populate_ready_array(var: &BashVar, ready: &[(c_int, String)]) -> CmdR
     let name = var.as_ptr();
     let v = find_variable(name);
     if !v.is_null() && l_array_p(v as *mut SHELL_VAR) == 0 {
-        return Err(l_builtin_error!(b"epoll wait: ", name, ": not an indexed array"));
+        return Err(l_builtin_error!(
+            b"epoll wait: ",
+            name,
+            ": not an indexed array"
+        ));
     }
     let v = if v.is_null() {
         make_new_array_variable(name)
@@ -395,18 +403,16 @@ pub unsafe fn epoll_wait_subcommand(list: *mut WORD_LIST) -> CmdResult {
         vec![unsafe { std::mem::zeroed() }; EPOLL_MAX_EVENTS as usize];
     let maxev = EPOLL_MAX_EVENTS;
     let mut ready: Vec<(c_int, String)> = Vec::new();
-    let mut n = unsafe {
-        libc::epoll_wait(args.epfd, events.as_mut_ptr(), maxev, timeout_ms)
-    };
+    let mut n = unsafe { libc::epoll_wait(args.epfd, events.as_mut_ptr(), maxev, timeout_ms) };
     if n < 0 {
-        return Err(l_builtin_error!(b"epoll_wait: ", std::io::Error::last_os_error()));
+        return Err(l_builtin_error!(
+            b"epoll_wait: ",
+            std::io::Error::last_os_error()
+        ));
     }
     loop {
         for i in 0..n as usize {
-            ready.push((
-                events[i].u64 as c_int,
-                format_events(events[i].events),
-            ));
+            ready.push((events[i].u64 as c_int, format_events(events[i].events)));
         }
         if n < maxev {
             break;
@@ -435,7 +441,10 @@ pub unsafe fn epoll_close_subcommand(list: *mut WORD_LIST) -> CmdResult {
     EPOLL_CLOSE_CMD.enter();
     let args = EpollCloseArgs::parse(list)?;
     if unsafe { libc::close(args.epfd) } < 0 {
-        return Err(l_builtin_error!(b"epoll close: ", std::io::Error::last_os_error()));
+        return Err(l_builtin_error!(
+            b"epoll close: ",
+            std::io::Error::last_os_error()
+        ));
     }
     Ok(())
 }

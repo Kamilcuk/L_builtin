@@ -21,6 +21,7 @@ ARRAY_ELEMENT *l_element_forw(ARRAY_ELEMENT *ae) { return element_forw(ae); }
 char *l_element_value(ARRAY_ELEMENT *ae) { return element_value(ae); }
 long long l_element_index(ARRAY_ELEMENT *ae) { return (long long)element_index(ae); }
 arrayind_t l_array_max_index(ARRAY *a) { return array_max_index(a); }
+
 int l_readonly_p(SHELL_VAR *var) { return readonly_p(var); }
 int l_invisible_p(SHELL_VAR *var) { return invisible_p(var); }
 int l_array_p(SHELL_VAR *var) { return array_p(var); }
@@ -196,28 +197,51 @@ int l_execute_command_string(const char *cmd)
   } while (0)
 
 /* Initialize a dynamic array variable (l_ prefix version) exposed to Rust.
- * Reimplements bash's init_dynamic_array_var: creates an array variable and
- * attaches the dynamic value / assignment callbacks. */
+ *
+ * Unlike bash's own static init_dynamic_array_var (which silently returns a
+ * pre-existing variable untouched), this attaches the get/set callbacks to the
+ * variable *regardless* of where it lives. Crucially, it looks the variable up
+ * with find_variable -- which searches every scope, including the locals
+ * declared in the caller's function -- so that a `local V; L_builtin shm add
+ * V` makes the *local* V a shared dynamic variable rather than creating a
+ * separate global that is shadowed by the local (in which case assignments
+ * never reach the shared database). If no variable by that name exists, a fresh
+ * global array variable is created and the callbacks attached to it. */
 SHELL_VAR *l_init_dynamic_array_var(
   const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc, int attrs
 )
 {
-  SHELL_VAR *v;
-  INIT_DYNAMIC_ARRAY_VAR((char *)name, getfunc, setfunc);
+  SHELL_VAR *v = find_variable(name);
+  if (v == NULL) {
+    INIT_DYNAMIC_ARRAY_VAR((char *)name, getfunc, setfunc);
+  } else {
+    if (array_p(v) == 0) {
+      v = convert_var_to_array(v);
+    }
+    v->dynamic_value = getfunc;
+    v->assign_func = setfunc;
+  }
   if (attrs)
     VSETATTR(v, attrs);
   return v;
 }
 
 /* Initialize a dynamic associative array variable exposed to Rust.
- * Creates an associative array variable and attaches the dynamic value /
- * assignment callbacks. */
+ * See l_init_dynamic_array_var for the scope/local handling rationale. */
 SHELL_VAR *l_init_dynamic_assoc_var(
   const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc, int attrs
 )
 {
-  SHELL_VAR *v;
-  INIT_DYNAMIC_ASSOC_VAR((char *)name, getfunc, setfunc);
+  SHELL_VAR *v = find_variable(name);
+  if (v == NULL) {
+    INIT_DYNAMIC_ASSOC_VAR((char *)name, getfunc, setfunc);
+  } else {
+    if (assoc_p(v) == 0) {
+      v = convert_var_to_assoc(v);
+    }
+    v->dynamic_value = getfunc;
+    v->assign_func = setfunc;
+  }
   if (attrs)
     VSETATTR(v, attrs);
   return v;

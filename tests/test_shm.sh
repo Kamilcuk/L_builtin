@@ -1,6 +1,6 @@
 # Tests for the `L_builtin shm` subcommand: bash array variables whose value
 # is shared across processes. The database is selected by `-s NAME` (POSIX
-# shared memory), `-n NAME` (anonymous in-memory mapping), `-f PATH` (a regular
+# shared memory), `-n NAME` (anonymous in-memory mapping), `-F PATH` (a regular
 # file), or the default in-memory mapping named DEFAULT when no flag is given.
 
 _L_test_shm_add_and_read() {
@@ -272,16 +272,16 @@ _L_test_shm_posix_add_and_read() {
     L_unittest_eq "$(ls -1 /dev/shm/ 2>/dev/null | grep -c "^SHMTEST_POSIX$")" "0"
 }
 
-# File-backed (-f) database at an arbitrary path.
+# File-backed (-F) database at an arbitrary path.
 _L_test_shm_file_add_and_read() {
     local path
     path="$(mktemp)"
-    L_builtin shm rm -f "$path" 2>/dev/null || :
-    L_builtin shm add -f "$path" V
+    L_builtin shm rm -F "$path" 2>/dev/null || :
+    L_builtin shm add -F "$path" V
     V=(a b c)
     L_unittest_eq "${V[*]}" "a b c"
     L_unittest_eq "${V[1]}" "b"
-    L_builtin shm rm -f "$path"
+    L_builtin shm rm -F "$path"
 }
 
 # The default database (no flag) is the in-memory mapping named DEFAULT.
@@ -334,3 +334,552 @@ _L_test_shm_ls_named_distinguishes_backing() {
     L_unittest_eq "$out" ""
     L_builtin shm rm -n MEMDISTINCT
 }
+
+###############################################################################
+# Stress / scale tests
+###############################################################################
+#
+# These exercise the shm machinery under heavier load: large arrays, large
+# element values, many variables in one database, concurrent readers, repeated
+# bind/unbind cycles, and the `local` variable scoping regression fixed in the
+# dynamic-variable initializer.
+#
+# Note on concurrency: the in-memory (-n memfd) and POSIX (-s) backings share
+# their database across a fork via an inherited file descriptor / mmap. A
+# pshared `pthread_rwlock_t` in the header page provides true mutual exclusion
+# in this case, so concurrent *writers* are now safe (they are serialised by
+# the write lock). The test below exercises this directly.
+
+# A large indexed array round-trips intact through the shared database: a forked
+# child (which inherits the binding) reads every element back. Writing is O(n^2)
+# in the element count (each setter rewrites the whole blob), so keep n modest.
+_L_test_shm_stress_large_indexed_array() {
+    local shm="SHMTEST_STRESS_LARGE_IDX"
+    local n=200
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+    L_builtin shm add -n "$shm" V
+    local i
+    for ((i = 0; i < n; i++)); do V[i]="elem_$i"; done
+    # Verify via a forked read-back (the child materializes V from the db).
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() {
+        local s=0 i
+        for ((i = 0; i < n; i++)); do [[ "${V[$i]}" == "elem_$i" ]] && s=$((s + 1)); done
+        echo "$s" > "$1"
+    }
+    local pid=""
+    L_with_process_into pid bg "$tmpf"
+    wait "$pid"
+    L_unittest_eq "$(</"$tmpf")" "$n"
+    L_builtin shm rm -n "$shm"
+}
+
+# A large associative array round-trips intact: a forked child reads every key
+# back and counts the matches.
+_L_test_shm_stress_large_associative_array() {
+    local shm="SHMTEST_STRESS_LARGE_ASSOC"
+    local n=150
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+    L_builtin shm add -A -n "$shm" V
+    local i
+    for ((i = 0; i < n; i++)); do V["key_$i"]="val_$i"; done
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() {
+        local s=0 i
+        for ((i = 0; i < n; i++)); do [[ "${V[key_$i]}" == "val_$i" ]] && s=$((s + 1)); done
+        echo "$s" > "$1"
+    }
+    local pid=""
+    L_with_process_into pid bg "$tmpf"
+    wait "$pid"
+    L_unittest_eq "$(</"$tmpf")" "$n"
+    L_builtin shm rm -n "$shm"
+}
+
+# Large element values survive a write/read round-trip and are not truncated or
+# cross-contaminated: a forked child verifies every value's content verbatim.
+_L_test_shm_stress_large_values() {
+    local shm="SHMTEST_STRESS_LARGE_VALS"
+    local n=30
+    local padlen=8000
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+    L_builtin shm add -n "$shm" V
+    local pad
+    pad="$(head -c "$padlen" < /dev/zero | tr '\0' 'x')"
+    local i
+    for ((i = 0; i < n; i++)); do V[i]="$i:${pad}"; done
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() {
+        # Re-derive the canonical padding so length/prefix checks match the parent.
+        local pad
+        pad="$(head -c "$1" < /dev/zero | tr '\0' 'x')"
+        local s=0 i
+        for ((i = 0; i < n; i++)); do
+            local got="${V[$i]}"
+            local exp="$i:${pad}"
+            if [[ "${#got}" == "${#exp}" && "$got" == "$exp" ]]; then s=$((s + 1)); fi
+        done
+        echo "$s" > "$2"
+    }
+    local pid=""
+    L_with_process_into pid bg "$padlen" "$tmpf"
+    wait "$pid"
+    L_unittest_eq "$(</"$tmpf")" "$n"
+    L_builtin shm rm -n "$shm"
+}
+
+# Many distinct variables coexist in one database and are all readable from a
+# forked child, which writes back a count of how many it observed intact.
+_L_test_shm_stress_many_variables() {
+    local shm="SHMTEST_STRESS_MANY_VARS"
+    local n=30
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+    local i
+    for ((i = 0; i < n; i++)); do
+        L_builtin shm add -n "$shm" "VAR_$i"
+        eval "VAR_$i=(a b c d)"
+    done
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() {
+        local s=0 j v
+        for ((j = 0; j < n; j++)); do
+            eval "v=\${VAR_${j}[*]}"
+            [[ "$v" == "a b c d" ]] && s=$((s + 1))
+        done
+        echo "$s" > "$1"
+    }
+    local pid=""
+    L_with_process_into pid bg "$tmpf"
+    wait "$pid"
+    L_unittest_eq "$(</"$tmpf")" "$n"
+    L_builtin shm rm -n "$shm"
+}
+
+# A fan-out of concurrent readers all observe the full, consistent dataset
+# after a single writer has finished populating it (read-only stress of the
+# shared-lock + rkyv deserialization path). A `barrier` synchronizes the start
+# so the readers issue their (read-only) database reads simultaneously rather
+# than staggered.
+_L_test_shm_stress_concurrent_readers() {
+    local shm="SHMTEST_STRESS_READERS"
+    local n=150
+    local nreaders=8
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+    L_builtin shm add -n "$shm" V
+    local i
+    for ((i = 0; i < n; i++)); do V[i]="e_$i"; done
+    local tmpf
+    L_with_tmpfile_into tmpf
+    # Barrier of (nreaders + parent): the parent arrives last to release them.
+    local b
+    L_builtin barrier create b $((nreaders + 1))
+    L_finally L_builtin barrier destroy "$b" 2>/dev/null
+    bg() {
+        # All readers block here until the parent releases the barrier...
+        L_builtin barrier wait "$b"
+        # ...then issue their read-only database reads together.
+        echo "${#V[@]}" >> "$1"
+    }
+    local pids=()
+    for ((r = 0; r < nreaders; r++)); do
+        L_with_process_into pid bg "$tmpf"
+        pids+=("$pid")
+    done
+    # Release the readers (parent is the (nreaders+1)-th arrival).
+    L_builtin barrier wait "$b"
+    # Safety net so a stuck reader cannot hang the suite.
+    ( sleep 8; kill "${pids[@]}" 2>/dev/null ) &
+    local killer=$!
+    L_finally kill "$killer" 2>/dev/null
+    local p
+    for p in "${pids[@]}"; do wait "$p"; done
+    kill "$killer" 2>/dev/null
+    local lines
+    lines="$(sort -u "$tmpf")"
+    L_unittest_eq "$lines" "$n"
+    L_builtin shm rm -n "$shm"
+}
+
+# A fan-out of concurrent *writers* each assigns a distinct key in the same
+# shared (associative) variable. With the pshared rwlock, writes are serialised
+# — every key survives. Before the rwlock fix, writers clobbered each other's
+# read-modify-write cycle and ~most keys were lost.
+_L_test_shm_stress_concurrent_writers() {
+    local shm="SHMTEST_STRESS_WRITERS"
+    local nwriters=200
+    L_finally L_builtin shm rm -s "$shm"
+    L_builtin shm rm -s "$shm" 2>/dev/null || :
+    L_builtin shm add -A -s "$shm" V
+
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() {
+        # $1 = writer index, $2 = output file
+        local idx=$1 out=$2
+        V[w$idx]="val_$idx"
+        echo "w$idx" >> "$out"
+    }
+
+    local pids=()
+    local w
+    for ((w = 0; w < nwriters; w++)); do
+        L_with_process_into pid bg "$w" "$tmpf"
+        pids+=("$pid")
+    done
+    for p in "${pids[@]}"; do wait "$p" 2>/dev/null; done
+
+    # All writers finished.
+    L_unittest_eq "$(sort -u "$tmpf" | wc -l)" "$nwriters"
+    # Every key must survive in the shared database.
+    local count=0 i
+    for ((i = 0; i < nwriters; i++)); do
+        [[ "${V[w$i]}" == "val_$i" ]] && count=$((count + 1))
+    done
+    L_unittest_eq "$count" "$nwriters"
+}
+
+# Same concurrent-writers stress test for the -F file backend.
+_L_test_shm_stress_concurrent_writers_file() {
+    local shm="SHMTEST_STRESS_WRITERS_FILE"
+    local nwriters=200
+    L_finally L_builtin shm rm -F "$shm"
+    L_builtin shm rm -F "$shm" 2>/dev/null || :
+    L_builtin shm add -A -F "$shm" V
+
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() {
+        # $1 = writer index, $2 = output file
+        local idx=$1 out=$2
+        V[w$idx]="val_$idx"
+        echo "w$idx" >> "$out"
+    }
+
+    local pids=()
+    local w
+    for ((w = 0; w < nwriters; w++)); do
+        L_with_process_into pid bg "$w" "$tmpf"
+        pids+=("$pid")
+    done
+    for p in "${pids[@]}"; do wait "$p" 2>/dev/null; done
+
+    L_unittest_eq "$(sort -u "$tmpf" | wc -l)" "$nwriters"
+    local count=0 i
+    for ((i = 0; i < nwriters; i++)); do
+        [[ "${V[w$i]}" == "val_$i" ]] && count=$((count + 1))
+    done
+    L_unittest_eq "$count" "$nwriters"
+}
+
+# Same concurrent-writers stress test for the default (memfd) backend.
+_L_test_shm_stress_concurrent_writers_memfd() {
+    local shm="SHMTEST_STRESS_WRITERS_MEMFD"
+    local nwriters=200
+    L_finally L_builtin shm rm -n "$shm"
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+    L_builtin shm add -A -n "$shm" V
+
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() {
+        # $1 = writer index, $2 = output file
+        local idx=$1 out=$2
+        V[w$idx]="val_$idx"
+        echo "w$idx" >> "$out"
+    }
+
+    local pids=()
+    local w
+    for ((w = 0; w < nwriters; w++)); do
+        L_with_process_into pid bg "$w" "$tmpf"
+        pids+=("$pid")
+    done
+    for p in "${pids[@]}"; do wait "$p" 2>/dev/null; done
+
+    L_unittest_eq "$(sort -u "$tmpf" | wc -l)" "$nwriters"
+    local count=0 i
+    for ((i = 0; i < nwriters; i++)); do
+        [[ "${V[w$i]}" == "val_$i" ]] && count=$((count + 1))
+    done
+    L_unittest_eq "$count" "$nwriters"
+}
+
+# Same concurrent-writers stress test but for the -F file backend.
+_L_test_shm_stress_concurrent_writers_file() {
+    local shm="SHMTEST_STRESS_WRITERS_FILE"
+    local nwriters=200
+    L_builtin shm rm -F "$shm" 2>/dev/null || :
+    L_builtin shm add -A -F "$shm" V
+
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() {
+        # $1 = writer index, $2 = output file
+        local idx=$1 out=$2
+        V[w$idx]="val_$idx"
+        echo "w$idx" >> "$out"
+    }
+
+    local pids=()
+    local w
+    for ((w = 0; w < nwriters; w++)); do
+        L_with_process_into pid bg "$w" "$tmpf"
+        pids+=("$pid")
+    done
+    for p in "${pids[@]}"; do wait "$p" 2>/dev/null; done
+
+    L_unittest_eq "$(sort -u "$tmpf" | wc -l)" "$nwriters"
+    local count=0 i
+    for ((i = 0; i < nwriters; i++)); do
+        [[ "${V[w$i]}" == "val_$i" ]] && count=$((count + 1))
+    done
+    L_unittest_eq "$count" "$nwriters"
+    L_builtin shm rm -F "$shm"
+}
+
+
+
+# Repeated add/rm cycles do not corrupt state or leak the registry: each cycle
+# leaves a clean slate and the next add rebinds successfully. Reading an element
+# triggers the getter, which reloads it from the shared db (not the parent's
+# local cache), so a matching value proves the write persisted.
+_L_test_shm_stress_repeated_bind_unbind() {
+    local shm="SHMTEST_STRESS_CYCLES"
+    local rounds=100
+    local i
+    for ((i = 0; i < rounds; i++)); do
+        L_builtin shm add -n "$shm" V
+        V=(cycle_$i)
+        L_unittest_eq "${V[0]}" "cycle_$i"
+        L_builtin shm rm -n "$shm"
+    done
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+}
+
+# Regression: a variable declared `local` in a function must be shareable. Before
+# the fix, `add` created a global variable that was shadowed by the local, so
+# writes bypassed the shared database entirely. Now the local is bound in place;
+# a forked child observes the parent's writes.
+_L_test_shm_stress_local_variable() {
+    local shm="SHMTEST_STRESS_LOCAL"
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+    local V
+    L_builtin shm add -n "$shm" V
+    V=(a b c d e)
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() { echo "${V[*]}" > "$1"; }
+    local pid=""
+    L_with_process_into pid bg "$tmpf"
+    wait "$pid"
+    L_unittest_eq "$(</"$tmpf")" "a b c d e"
+    L_builtin shm rm -n "$shm"
+}
+
+# Same regression check for associative `local` variables.
+_L_test_shm_stress_local_variable_assoc() {
+    local shm="SHMTEST_STRESS_LOCAL_ASSOC"
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+    local V
+    L_builtin shm add -A -n "$shm" V
+    V=( [foo]=bar [baz]=qux [n1]=v1 )
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() { echo "${V[baz]} ${V[foo]} ${V[n1]}" > "$1"; }
+    local pid=""
+    L_with_process_into pid bg "$tmpf"
+    wait "$pid"
+    L_unittest_eq "$(</"$tmpf")" "qux bar v1"
+    L_builtin shm rm -n "$shm"
+}
+
+###############################################################################
+# `shm sync` subcommand
+###############################################################################
+
+# `sync` pushes the current bash variable contents into the shared database,
+# replacing the variable's existing entry. Verified with a forked read-back.
+_L_test_shm_sync_indexed() {
+    local shm="SHMTEST_SYNC_IDX"
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+    L_builtin shm add -n "$shm" V
+    V=(one two three)
+    L_builtin shm sync -n "$shm" V
+    # A forked child reads from the shared database, not the parent's cache.
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() { echo "${V[2]}" > "$1"; }
+    local pid=""
+    L_with_process_into pid bg "$tmpf"
+    wait "$pid"
+    L_unittest_eq "$(</"$tmpf")" "three"
+    L_builtin shm rm -n "$shm"
+}
+
+# `sync` for an associative array: the child reads a key that only exists in the
+# shared database.
+_L_test_shm_sync_assoc() {
+    local shm="SHMTEST_SYNC_ASSOC"
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+    L_builtin shm add -A -n "$shm" V
+    V=( [k1]=first [k2]=second [k3]=third )
+    L_builtin shm sync -A -n "$shm" V
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() { echo "${V[k3]}" > "$1"; }
+    local pid=""
+    L_with_process_into pid bg "$tmpf"
+    wait "$pid"
+    L_unittest_eq "$(</"$tmpf")" "third"
+    L_builtin shm rm -n "$shm"
+}
+
+###############################################################################
+# `shm ... -M NAME` (named, fixed-size anonymous mmap backend)
+###############################################################################
+
+# `add -M NAME:SIZE` binds a variable to a named fixed-size anonymous mmap; a
+# forked child sees the parent's writes. The bash array is updated first, then
+# serialized into the bounded region.
+_L_test_shm_mmap_add_and_read() {
+    local m="SHMTEST_MMAP_ADD"
+    L_builtin shm rm -M "$m" 2>/dev/null || :
+    L_builtin shm add -M "$m:100000" V
+    V=(a b c)
+    L_unittest_eq "${V[*]}" "a b c"
+    L_unittest_eq "${V[1]}" "b"
+    local tmpf
+    tmpf="$(mktemp)"
+    bg() { echo "V=${V[*]}" > "$1"; }
+    local pid=""
+    L_with_process_into pid bg "$tmpf"
+    wait "$pid"
+    L_unittest_eq "$(<"$tmpf")" "V=a b c"
+    rm -f "$tmpf"
+    L_builtin shm rm -M "$m"
+}
+
+# `sync -M NAME` pushes current bash contents into the named fixed-size db; a
+# forked child reads the synced value from the shared mapping.
+_L_test_shm_mmap_sync() {
+    local m="SHMTEST_MMAP_SYNC"
+    L_builtin shm rm -M "$m" 2>/dev/null || :
+    L_builtin shm add -M "$m:100000" V
+    V=(one two three)
+    L_builtin shm sync -M "$m" V
+    local tmpf
+    L_with_tmpfile_into tmpf
+    bg() { echo "${V[2]}" > "$1"; }
+    local pid=""
+    L_with_process_into pid bg "$tmpf"
+    wait "$pid"
+    L_unittest_eq "$(</"$tmpf")" "three"
+    L_builtin shm rm -M "$m"
+}
+
+# `info -M NAME` lists the variable stored in the named mmap db.
+_L_test_shm_mmap_info() {
+    local m="SHMTEST_MMAP_INFO"
+    L_builtin shm rm -M "$m" 2>/dev/null || :
+    L_builtin shm add -M "$m:100000" V
+    V=(p q r)
+    local out
+    out="$(L_builtin shm info -M "$m")"
+    L_unittest_contains "$out" "V="
+    L_builtin shm rm -M "$m"
+}
+
+# `ls -M NAME` lists only the variables bound to the selected named mmap db.
+_L_test_shm_mmap_ls() {
+    local m="SHMTEST_MMAP_LS"
+    L_builtin shm rm -M "$m" 2>/dev/null || :
+    L_builtin shm add -M "$m:100000" V
+    local out
+    out="$(L_builtin shm ls -M "$m")"
+    L_unittest_contains "$out" "V"
+    L_builtin shm rm -M "$m"
+}
+
+# `add -M NAME` (no size) to a fresh store is rejected: creation needs NAME:SIZE.
+_L_test_shm_mmap_select_no_size_is_ok_only_if_created() {
+    local m="SHMTEST_MMAP_CREATE"
+    L_builtin shm rm -M "$m" 2>/dev/null || :
+    # Selecting a not-yet-created named store for `add` creation fails because no
+    # size is given.
+    L_unittest_checkexit 2 L_builtin shm add -M "$m" V
+    L_builtin shm rm -M "$m" 2>/dev/null || :
+}
+
+# `create -M NAME:SIZE` with SIZE below the header minimum is rejected.
+_L_test_shm_mmap_size_too_small() {
+    L_unittest_checkexit 2 L_builtin shm add -M "small:50" V
+}
+
+# Two distinct named mmap stores are independent: writing one must not appear in
+# the other, even though both are anonymous mappings in this process tree.
+_L_test_shm_mmap_distinct_named_stores() {
+    L_builtin shm rm -M storeA 2>/dev/null || :
+    L_builtin shm rm -M storeB 2>/dev/null || :
+    L_builtin shm add -M "storeA:100000" A
+    L_builtin shm add -M "storeB:100000" B
+    A=(1 2 3)
+    B=(x y)
+    local outa outb
+    outa="$(L_builtin shm info -M storeA)"
+    outb="$(L_builtin shm info -M storeB)"
+    L_unittest_contains "$outa" "A="
+    L_unittest_eq "$outa" "${outa#*B=}"
+    L_unittest_contains "$outb" "B="
+    L_unittest_eq "$outb" "${outb#*A=}"
+    L_builtin shm rm -M storeA
+    L_builtin shm rm -M storeB
+}
+
+# `drop` erases a single variable's data from its mmap store and unbinds it,
+# without touching other variables in the same store.
+_L_test_shm_mmap_drop_one_var() {
+    local m="SHMTEST_MMAP_DROP"
+    L_builtin shm rm -M "$m" 2>/dev/null || :
+    L_builtin shm add -M "$m:100000" A
+    L_builtin shm add -M "$m:100000" B
+    A=(1 2)
+    B=(x y)
+    L_builtin shm drop A
+    # A is unbound in this shell now.
+    L_unittest_eq "${A[*]}" ""
+    # B is intact in the same store.
+    local out
+    out="$(L_builtin shm info -M "$m")"
+    L_unittest_contains "$out" "B="
+    L_unittest_eq "$out" "${out#*A=}"
+    L_builtin shm rm -M "$m"
+}
+
+# `clear -M NAME` wipes all data from the store but keeps the backing (the named
+# store can be reused). Bound variables read as empty until repopulated.
+_L_test_shm_mmap_clear_keeps_backing() {
+    local m="SHMTEST_MMAP_CLEAR"
+    L_builtin shm rm -M "$m" 2>/dev/null || :
+    L_builtin shm add -M "$m:100000" A
+    L_builtin shm add -M "$m:100000" B
+    A=(1 2)
+    B=(x y)
+    L_builtin shm clear -M "$m"
+    local out
+    out="$(L_builtin shm info -M "$m")"
+    # No variables stored after clear.
+    L_unittest_eq "$out" "${out#*A=}"
+    L_unittest_eq "$out" "${out#*B=}"
+    # The backing still exists: re-add to the same named store and write.
+    L_builtin shm add -M "$m:100000" C
+    C=(hello)
+    out="$(L_builtin shm info -M "$m")"
+    L_unittest_contains "$out" "C="
+    L_builtin shm rm -M "$m"
+}
+
+

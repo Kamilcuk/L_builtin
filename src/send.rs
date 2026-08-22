@@ -7,7 +7,7 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::WORD_LIST;
-use crate::io_common::{Format, hex_decode, parse_format};
+use crate::io_common::{hex_decode, parse_format, Format};
 use crate::l_builtin_error;
 use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;

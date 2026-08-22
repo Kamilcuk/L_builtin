@@ -8,7 +8,7 @@
 
 use crate::bash_api::{EXECUTION_FAILURE, WORD_LIST};
 use crate::cmdargs::BashVar;
-use crate::io_common::{Format, hex_encode, parse_format};
+use crate::io_common::{hex_encode, parse_format, Format};
 use crate::l_builtin_error;
 use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
@@ -105,13 +105,8 @@ pub unsafe fn read_subcommand(list: *mut WORD_LIST) -> CmdResult {
 
     let received;
     loop {
-        let result = unsafe {
-            libc::read(
-                args.fd,
-                buf.as_mut_ptr() as *mut libc::c_void,
-                args.size,
-            )
-        };
+        let result =
+            unsafe { libc::read(args.fd, buf.as_mut_ptr() as *mut libc::c_void, args.size) };
         if result < 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EINTR) {

@@ -101,6 +101,27 @@ Do not re-`open` a memfd by name expecting the same object.
   `make rustchecks` adds `cargo fmt --check` + clippy + `cargo test`
   (the `cargo test` step fails to link here — see above).
 
+## Public API
+
+The **only** public API for `L_builtin` is the **CLI** — the set of `L_builtin <subcommand>`
+invocations as documented in `README.md`. All Rust types and functions in `src/`
+(`cmd_shm.rs`, `vardb.rs`, `cmd_mutex.rs`, etc.) are `pub(crate)` and exist solely to
+implement that CLI. There are no external Rust consumers and no public library API.
+
+This means **internal refactoring, restructuring, or simplification of module boundaries
+within `src/` is unconstrained** as long as:
+- The CLI behavior (subcommand names, flags, output, exit codes) is unchanged.
+- `make test` still passes (the shell test suite is the source of truth for behavior).
+- The module wiring in `src/lib.rs` (`pub(crate) mod ...`) is kept consistent with the
+  file layout.
+
+In particular, types like `DbPath`, `DbLoc`, `LockedDatabase`, `VarData`, `DatabaseRepr`
+in `vardb.rs` and the functions imported by `cmd_shm.rs` are internal implementation details.
+They may be freely changed, inlined, or reorganized to reduce complexity — e.g. collapsing
+the `Backend` enum and `FlockDb`/`MemfdDb` structs into a single `LockedDatabase` if the
+pshared-rwlock approach suffices, or removing the `Backend` indirection if only one
+locking strategy remains.
+
 ## CI & known issues
 
 - `.github/workflows/ci.yml` only **builds** the `.so` via Docker

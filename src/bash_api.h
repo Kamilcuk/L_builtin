@@ -25,6 +25,7 @@
 #include <variables.h>
 #include <array.h>
 #include <assoc.h>
+#include <arrayfunc.h>
 #include <command.h>
 #include <general.h>
 #include <externs.h>

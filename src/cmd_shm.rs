@@ -13,24 +13,10 @@
 //! the blob.
 //!
 //! The database is selected by one of `-s NAME` (POSIX shared memory),
-//! `-n NAME` (anonymous in-memory mapping), `-f PATH` (regular file); with none
-//! of them the default in-memory mapping named `DEFAULT` is used.
-//!
-//! Interface:
-//!   L_builtin shm add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME
-//!       Bind bash variable VAR_NAME (indexed, or associative with -A) to a
-//!       shared database.
-//!   L_builtin shm rm [-s NAME | -n NAME | -f PATH]
-//!       Remove the whole database (unbind its variables, unlink backing).
-//!   L_builtin shm unbind [-s NAME | -n NAME | -f PATH] VAR_NAME [VAR_NAME...]
-//!       Unbind variable(s) from this shell (drop registry entry); the data
-//!       stays in the database.
-//!   L_builtin shm info [-s NAME | -n NAME | -f PATH]
-//!       Print every variable stored in the database.
-//!   L_builtin shm ls [-s NAME | -n NAME | -f PATH]
-//!       List databases and the variables bound to each.
-//!   L_builtin shm sync [-s NAME | -n NAME | -f PATH] VAR_NAME
-//!       Push the current bash variable values into the shared database.
+//! `-n NAME` (anonymous in-memory mapping), `-M NAME:SIZE` (anonymous
+//! fixed-size mmap, created with a size and then referenced by NAME),
+//! `-F PATH` (regular file); with none of them the default in-memory mapping
+//! named `DEFAULT` is used.
 //!
 //! Example (indexed array, default database):
 //!   L_builtin shm add MYVAR
@@ -64,7 +50,7 @@ use crate::bash_api::{
     AssocIterator, WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, SHELL_VAR, WORD_LIST,
 };
 use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
-use crate::vardb::{open_db_loc, DbLoc, DbPath, LockedDatabase, VarData};
+use crate::vardb::{open_db_loc, DbPath, LockedDatabase, VarData};
 use crate::{beprintln, bprintln, l_builtin_error};
 
 /// Bash variable attribute for associative arrays (att). From bash's
@@ -72,7 +58,6 @@ use crate::{beprintln, bprintln, l_builtin_error};
 const ATT_ASSOC: c_int = 0x0000040;
 
 thread_local! {
-    /// Registry: bash variable name -> opened shared database for its name.
     static REGISTRY: std::cell::RefCell<HashMap<CString, Arc<LockedDatabase>>> =
         std::cell::RefCell::new(HashMap::new());
 }
@@ -81,12 +66,12 @@ thread_local! {
 /// databases are reopened by name/path, while an in-memory `Mem` database can
 /// only be shared with forked children and so must already be bound (it is found
 /// through the registry).
-fn get_db_loc(loc: &DbLoc) -> Result<Arc<LockedDatabase>, String> {
+fn get_db_loc(loc: &DbPath) -> Result<Arc<LockedDatabase>, String> {
     match loc {
-        DbLoc::Mem(name) => REGISTRY.with(|r| {
+        DbPath::Mem(name) => REGISTRY.with(|r| {
             r.borrow()
                 .values()
-                .find(|db| matches!(&db.path, DbPath::Mem(n) if n.as_bytes() == name.to_bytes()))
+                .find(|db| matches!(&db.path(), DbPath::Mem(n) if n.as_bytes() == name.to_bytes()))
                 .cloned()
                 .ok_or_else(|| {
                     format!(
@@ -95,31 +80,35 @@ fn get_db_loc(loc: &DbLoc) -> Result<Arc<LockedDatabase>, String> {
                     )
                 })
         }),
-        DbLoc::Shm(_) | DbLoc::File(_) => open_db_loc(loc).map(Arc::new),
+        DbPath::Mmap { name, .. } => REGISTRY.with(|r| {
+            r.borrow()
+                .values()
+                .find(|db| matches!(&db.path(), DbPath::Mmap { name: n, .. } if n.as_bytes() == name.to_bytes()))
+                .cloned()
+                .ok_or_else(|| {
+                    format!("shm: no anonymous mmap database named {}", name.to_string_lossy())
+                })
+        }),
+        DbPath::Shm(_) | DbPath::File(_) => open_db_loc(loc).map(Arc::new),
     }
 }
 
 /// A stable key for a database location, matching the keys produced by
 /// [`db_key`] for an opened database.
-fn loc_key(loc: &DbLoc) -> String {
-    let path = match loc {
-        DbLoc::File(p) => DbPath::File(p.clone()),
-        DbLoc::Shm(n) => DbPath::Shm(n.clone()),
-        DbLoc::Mem(n) => DbPath::Mem(n.clone()),
-    };
-    db_key(&path)
+fn loc_key(loc: &DbPath) -> String {
+    db_key(loc)
 }
 
 /// Unlink the backing object/file for a database location. An in-memory (memfd)
-/// database has no backing object to unlink; its data disappears when the last
-/// reference is dropped.
-fn unlink_db_backing(loc: &DbLoc) {
+/// or anonymous-mmap database has no backing object to unlink; its data
+/// disappears when the last reference is dropped.
+fn unlink_db_backing(loc: &DbPath) {
     match loc {
-        DbLoc::File(p) => {
+        DbPath::File(p) => {
             let _ = std::fs::remove_file(p);
         }
-        DbLoc::Shm(name) => LockedDatabase::unlink_shm(name),
-        DbLoc::Mem(_) => {}
+        DbPath::Shm(name) => LockedDatabase::unlink_shm(name),
+        DbPath::Mem(_) | DbPath::Mmap { .. } => {}
     }
 }
 
@@ -131,7 +120,7 @@ fn unbind_registry_vars(key: &str) {
     REGISTRY.with(|r| {
         let reg = r.borrow();
         for (var, db) in reg.iter() {
-            if db_key(&db.path) == key {
+            if db_key(&db.path()) == key {
                 to_remove.push(var.clone());
             }
         }
@@ -151,16 +140,19 @@ fn unbind_registry_vars(key: &str) {
 /// outside any builtin command context (so `this_cmd_name()` is meaningless); on
 /// failure it prints a hard-coded, builtin-scoped message and returns `None`.
 fn get_shm(var: &CStr) -> Option<Arc<LockedDatabase>> {
-    let db = REGISTRY.with(|r| r.borrow().get(var).cloned());
-    if db.is_none() {
-        beprintln!(
-            b"L_builtin: shm: variable ",
-            var.to_bytes(),
-            b" is not bound to a shared database; bind it with `L_builtin shm add \
+    REGISTRY.with(|r| {
+        let reg = r.borrow();
+        let db = reg.get(var);
+        if db.is_none() {
+            beprintln!(
+                b"L_builtin: shm: variable ",
+                var.to_bytes(),
+                b" is not bound to a shared database; bind it with `L_builtin shm add \
 <NAME>`, or it was unbound/removed (shm unbind / shm rm) while the shell variable still exists",
-        );
-    }
-    db
+            );
+        }
+        db.cloned()
+    })
 }
 
 /// Return `p` unchanged, or a pointer to an empty NUL string when `p` is null.
@@ -188,11 +180,10 @@ fn escape_quoted(out: &mut Vec<u8>, bytes: &[u8]) {
 }
 
 macro_rules! my_debug {
-    ($($arg:tt)*) => {
-        if true {
-            bprintln!($($arg)*);
-        }
-    };
+    ($($arg:tt)*) => {{
+        #[cfg(test)]
+        bprintln!($($arg)*);
+    }};
 }
 
 /// Dynamic-array getter: rebuild the bash array from the shared database.
@@ -347,8 +338,8 @@ unsafe extern "C" fn shm_assoc_setter(
     var
 }
 
-/// Shared backing flags (`-s`/`-n`/`-f`) for the `shm` subcommands that only
-/// select a database. `post()` enforces that at most one of them is given.
+/// Shared backing flags (`-s`/`-n`/`-M`/`-F`) for the `shm` subcommands that
+/// only select a database. `post()` enforces that at most one of them is given.
 #[derive(CmdArgs)]
 struct ShmLocArgs {
     /// POSIX shared memory object name (`-s NAME`).
@@ -357,8 +348,11 @@ struct ShmLocArgs {
     /// Anonymous in-memory mapping name (`-n NAME`).
     #[opt('n')]
     n: Option<&'static CStr>,
-    /// Regular file path (`-f PATH`).
-    #[opt('f')]
+    /// Named anonymous mmap (`-M NAME` to select, `-M NAME:SIZE` to create).
+    #[opt('M')]
+    m: Option<&'static CStr>,
+    /// Regular file path (`-F PATH`).
+    #[opt('F')]
     f: Option<&'static CStr>,
 }
 
@@ -399,40 +393,82 @@ struct ShmUnbindArgs {
     vars: WordListIterCpnt<'static>,
 }
 
-/// Validate that at most one of `-s`, `-n`, `-f` was supplied. Shared by every
-/// `shm` args struct via its inherent `post` implementation.
+/// `shm drop VAR_NAME`: remove a single variable's data from its store (and drop
+/// the local binding). The store is located via the variable's binding, so no
+/// backing flags are needed/used.
+#[derive(CmdArgs)]
+struct ShmDropArgs {
+    /// Bash variable name whose stored data is removed.
+    #[positional]
+    var: BashVar,
+}
+
+/// `shm clear [BACKING]`: wipe every variable's data from a store, leaving the
+/// backing object in place. The store is selected by the backing flags (or the
+/// default `DEFAULT` store).
+#[derive(CmdArgs)]
+struct ShmClearArgs {
+    /// Backing selection flags, shared with the other `shm` subcommands.
+    #[flatten]
+    loc: ShmLocArgs,
+}
+
+/// Validate that at most one of `-s`, `-n`, `-M`, `-F` was supplied. Shared by
+/// every `shm` args struct via its inherent `post` implementation.
 impl ShmLocArgs {
     fn post(&self) -> CmdResult {
-        let n = [self.s, self.n, self.f]
-            .iter()
-            .filter(|o| o.is_some())
-            .count();
+        let n = [
+            self.s.is_some(),
+            self.n.is_some(),
+            self.m.is_some(),
+            self.f.is_some(),
+        ]
+        .iter()
+        .filter(|&&b| b)
+        .count();
         if n > 1 {
-            l_builtin_error!(b"shm: -s, -n and -f are mutually exclusive");
+            l_builtin_error!(b"shm: -s, -n, -M and -F are mutually exclusive");
             return Err(EX_USAGE);
         }
         Ok(())
     }
 
-    fn resolve_dbloc(&self) -> Result<DbLoc, c_int> {
-        let n = [self.s, self.n, self.f]
-            .iter()
-            .filter(|o| o.is_some())
-            .count();
+    fn resolve_dbloc(&self) -> Result<DbPath, c_int> {
+        let n = [
+            self.s.is_some(),
+            self.n.is_some(),
+            self.m.is_some(),
+            self.f.is_some(),
+        ]
+        .iter()
+        .filter(|&&b| b)
+        .count();
         if n > 1 {
-            l_builtin_error!(b"shm: -s, -n and -f are mutually exclusive");
+            l_builtin_error!(b"shm: -s, -n, -M and -F are mutually exclusive");
             return Result::Err(EX_USAGE);
         }
         let loc = if let Some(p) = self.f {
-            DbLoc::File(PathBuf::from(OsStr::from_bytes(p.to_bytes())))
+            DbPath::File(PathBuf::from(OsStr::from_bytes(p.to_bytes())))
         } else if let Some(s) = self.s {
-            DbLoc::Shm(s.to_owned())
+            DbPath::Shm(s.to_owned())
+        } else if let Some(spec) = self.m {
+            let (name, opt_size) = parse_mmap_spec(spec)?;
+            if let Some(sz) = opt_size {
+                if sz < 100 {
+                    l_builtin_error!(b"shm: -M NAME:SIZE requires SIZE >= 100 bytes");
+                    return Result::Err(EX_USAGE);
+                }
+            }
+            DbPath::Mmap {
+                name,
+                size: opt_size,
+            }
         } else if let Some(a) = self.n {
-            DbLoc::Mem(a.to_owned())
+            DbPath::Mem(a.to_owned())
         } else {
-            DbLoc::Mem(CString::new("DEFAULT").unwrap())
+            DbPath::Mem(CString::new("DEFAULT").unwrap())
         };
-        if let DbLoc::Shm(n) | DbLoc::Mem(n) = &loc {
+        if let DbPath::Shm(n) | DbPath::Mem(n) = &loc {
             if !is_valid_var_name(n.to_bytes()) {
                 l_builtin_error!(b"shm: NAME must be a valid shell variable name");
                 return Result::Err(EXECUTION_FAILURE);
@@ -440,6 +476,39 @@ impl ShmLocArgs {
         }
         Result::Ok(loc)
     }
+}
+
+/// Parse a `-M` selector: `NAME:SIZE` (create a named anonymous mmap store) or
+/// `NAME` (select an existing named store; `SIZE` is supplied only when creating).
+fn parse_mmap_spec(spec: &CStr) -> Result<(CString, Option<u64>), c_int> {
+    let bytes = spec.to_bytes();
+    let (name_bytes, size_opt) = match bytes.iter().position(|&b| b == b':') {
+        Some(idx) => {
+            let name = &bytes[..idx];
+            let size = &bytes[idx + 1..];
+            if name.is_empty() || size.is_empty() {
+                l_builtin_error!(b"shm: -M NAME:SIZE has an empty field");
+                return Err(EX_USAGE);
+            }
+            let size = match std::str::from_utf8(size)
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+            {
+                Some(s) => s,
+                None => {
+                    l_builtin_error!(b"shm: -M SIZE is not a valid number");
+                    return Err(EX_USAGE);
+                }
+            };
+            (name, Some(size))
+        }
+        None => (bytes, None),
+    };
+    let name = CString::new(name_bytes).map_err(|_| {
+        l_builtin_error!(b"shm: -M NAME contains a NUL byte");
+        EX_USAGE
+    })?;
+    Ok((name, size_opt))
 }
 
 impl ShmAddArgs {
@@ -454,25 +523,17 @@ impl ShmUnbindArgs {
     }
 }
 
-/// Resolve the database location from the three optional backing identifiers.
-/// Mutual exclusivity of `-s`/`-n`/`-f` is enforced earlier by [`ShmLocArgs::post`].
-fn resolve_loc(shared: Option<&CStr>, full: Option<&CStr>, anon: Option<&CStr>) -> DbLoc {
-    if let Some(p) = full {
-        DbLoc::File(PathBuf::from(OsStr::from_bytes(p.to_bytes())))
-    } else if let Some(s) = shared {
-        DbLoc::Shm(s.to_owned())
-    } else if let Some(a) = anon {
-        DbLoc::Mem(a.to_owned())
-    } else {
-        DbLoc::Mem(CString::new("DEFAULT").unwrap())
+impl ShmClearArgs {
+    fn post(&self) -> CmdResult {
+        self.loc.post()
     }
 }
 
-/// `L_builtin shm add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME`
+/// `L_builtin shm add [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME`
 ///
 /// Bind bash variable VAR_NAME (indexed, or associative with `-A`) to a shared
 /// database. The database is selected by `-s` (POSIX shared memory), `-n`
-/// (anonymous in-memory mapping) or `-f` (a regular file); with none of them the
+/// (anonymous in-memory mapping) or `-F` (a regular file); with none of them the
 /// default `DEFAULT` in-memory database is used.
 unsafe fn shm_add_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SHM_ADD_CMD.enter();
@@ -480,11 +541,17 @@ unsafe fn shm_add_subcommand(list: *mut WORD_LIST) -> CmdResult {
     let loc = args.loc.resolve_dbloc()?;
     let db = match get_db_loc(&loc) {
         Ok(d) => d,
-        // A memfd database not yet created in this process: create it. POSIX
+        // A memfd/mmap database not yet created in this process: create it. POSIX
         // shared memory and file backings are (re)opened by name via get_db_loc.
         Err(_) => match open_db_loc(&loc) {
             Ok(d) => Arc::new(d),
             Err(e) => {
+                // Selecting a named mmap store without the creation `SIZE` is a
+                // usage error, since the store doesn't exist yet to select.
+                if matches!(&loc, DbPath::Mmap { size: None, .. }) {
+                    l_builtin_error!(b"shm: -M NAME requires -M NAME:SIZE to create");
+                    return Err(EX_USAGE);
+                }
                 l_builtin_error!(e);
                 return Err(EXECUTION_FAILURE);
             }
@@ -519,7 +586,7 @@ unsafe fn shm_add_subcommand(list: *mut WORD_LIST) -> CmdResult {
     Ok(())
 }
 
-/// `L_builtin shm sync [-s NAME | -n NAME | -f PATH] VAR_NAME`
+/// `L_builtin shm sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME`
 ///
 /// Push the current bash variable values into the shared database, replacing the
 /// variable's existing entry. Unlike `add` (which binds a new dynamic variable),
@@ -563,16 +630,17 @@ unsafe fn shm_sync_subcommand(list: *mut WORD_LIST) -> CmdResult {
         }
     }
 
-    let _ = db.with_write(|repr| {
+    db.with_write(|repr| {
         repr.vars.insert(name, new_data);
-    });
+    })
+    .map_err(|e| l_builtin_error!(e))?;
     Ok(())
 }
 
-/// `L_builtin shm rm [-s NAME | -n NAME | -f PATH]`
+/// `L_builtin shm rm [-s NAME | -n NAME | -M NAME | -F PATH]`
 ///
 /// Remove the whole database: unbind every variable this shell has bound to it,
-/// drop the registry entries, and unlink the backing object/file (for `-s`/`-f`).
+/// drop the registry entries, and unlink the backing object/file (for `-s`/`-F`).
 /// Takes no positional arguments; the database is selected by the flags, or the
 /// default `DEFAULT` database when none are given.
 unsafe fn shm_rm_subcommand(list: *mut WORD_LIST) -> CmdResult {
@@ -585,7 +653,7 @@ unsafe fn shm_rm_subcommand(list: *mut WORD_LIST) -> CmdResult {
     Ok(())
 }
 
-/// `L_builtin shm unbind [-s NAME | -n NAME | -f PATH] VAR_NAME [VAR_NAME...]`
+/// `L_builtin shm unbind [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME [VAR_NAME...]`
 ///
 /// Unbind the named variable(s) from this shell: drop the registry entry and
 /// unbind the bash variable. This does NOT remove the variable's data from the
@@ -609,6 +677,49 @@ unsafe fn shm_unbind_subcommand(list: *mut WORD_LIST) -> CmdResult {
     Ok(())
 }
 
+/// `L_builtin shm drop VAR_NAME`
+///
+/// Remove a single variable's data from its shared database, and drop the local
+/// binding in this shell. The store is located via the variable's binding (no
+/// backing flags), since each bash variable is bound to exactly one store. Use
+/// `rm` to destroy a whole store; `drop` targets one variable.
+unsafe fn shm_drop_subcommand(list: *mut WORD_LIST) -> CmdResult {
+    SHM_DROP_CMD.enter();
+    let args = ShmDropArgs::parse(list)?;
+    let cname = CStr::from_ptr(args.var.as_ptr());
+    let name = CString::new(cname.to_bytes()).unwrap_or_default();
+    let db = match get_shm(cname) {
+        Some(db) => db,
+        // `get_shm` already printed a scoped error.
+        None => return Err(EXECUTION_FAILURE),
+    };
+    db.with_write(|repr| {
+        repr.vars.remove(name.as_c_str());
+    })
+    .map_err(|e| l_builtin_error!(e))?;
+    // Drop the local binding (registry entry + bash dynamic var).
+    REGISTRY.with(|r| r.borrow_mut().remove(&name));
+    unsafe { l_unbind_variable(cname.as_ptr()) };
+    Ok(())
+}
+
+/// `L_builtin shm clear [-s NAME | -n NAME | -M NAME | -F PATH]`
+///
+/// Wipe every variable's data from the selected database, leaving the backing
+/// object/file in place. Bound bash variables in this shell are left bound (they
+/// will read as empty until re-added); use `rm` to also drop the backing.
+unsafe fn shm_clear_subcommand(list: *mut WORD_LIST) -> CmdResult {
+    SHM_CLEAR_CMD.enter();
+    let args = ShmClearArgs::parse(list)?;
+    let loc = args.loc.resolve_dbloc()?;
+    let db = get_db_loc(&loc).map_err(|e| l_builtin_error!(e))?;
+    db.with_write(|repr| {
+        repr.vars.clear();
+    })
+    .map_err(|e| l_builtin_error!(e))?;
+    Ok(())
+}
+
 /// A human-readable label for a database backing, used as a header in `ls`/
 /// `info` output.
 fn db_key(path: &DbPath) -> String {
@@ -616,6 +727,7 @@ fn db_key(path: &DbPath) -> String {
         DbPath::File(p) => p.to_string_lossy().into_owned(),
         DbPath::Shm(n) => format!("shm:{}", n.to_string_lossy()),
         DbPath::Mem(n) => format!("memfd:{}", n.to_string_lossy()),
+        DbPath::Mmap { name, .. } => format!("mmap:{}", name.to_string_lossy()),
     }
 }
 
@@ -655,7 +767,7 @@ unsafe fn print_var_assignment(name: &CString, vd: &VarData) {
     bprintln!(line);
 }
 
-/// `L_builtin shm info [-s NAME | -n NAME | -f PATH]`
+/// `L_builtin shm info [-s NAME | -n NAME | -M NAME | -F PATH]`
 ///
 /// Print every variable stored in the database as bash array assignments. The
 /// database is selected by the flags, or the default `DEFAULT` database when
@@ -672,7 +784,7 @@ unsafe fn shm_info_subcommand(list: *mut WORD_LIST) -> CmdResult {
     Ok(())
 }
 
-/// `L_builtin shm ls [-s NAME | -n NAME | -f PATH]`
+/// `L_builtin shm ls [-s NAME | -n NAME | -M NAME | -F PATH]`
 ///
 /// Without any flag, list every database this session knows about together with
 /// the variables bound to each. With a backing flag, list only the variables
@@ -680,15 +792,13 @@ unsafe fn shm_info_subcommand(list: *mut WORD_LIST) -> CmdResult {
 unsafe fn shm_ls_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SHM_LIST_CMD.enter();
     let args = ShmLocArgs::parse(list)?;
-    if args.s.is_some() || args.n.is_some() || args.f.is_some() {
+    if args.s.is_some() || args.n.is_some() || args.m.is_some() || args.f.is_some() {
         let loc = args.resolve_dbloc()?;
-        // List only the variables bound to the database in this session's
-        // REGISTRY (not every entry another process may have written to it).
         let key = loc_key(&loc);
         let mut names: Vec<CString> = REGISTRY.with(|r| {
             r.borrow()
                 .iter()
-                .filter(|(_, db)| db_key(&db.path) == key)
+                .filter(|(_, db)| db_key(&db.path()) == key)
                 .map(|(var, _)| var.clone())
                 .collect()
         });
@@ -703,7 +813,7 @@ unsafe fn shm_ls_subcommand(list: *mut WORD_LIST) -> CmdResult {
         let mut groups: HashMap<String, Vec<CString>> = HashMap::new();
         for (var, db) in reg.iter() {
             groups
-                .entry(db_key(&db.path))
+                .entry(db_key(&db.path()))
                 .or_default()
                 .push(var.clone());
         }
@@ -730,41 +840,56 @@ unsafe fn shm_ls_subcommand(list: *mut WORD_LIST) -> CmdResult {
 
 const SHM_CMD: CmdDesc = CmdDesc::new(
     c"shm",
-    c"add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME | rm [-s NAME | -n NAME | -f PATH] | unbind [-s NAME | -n NAME | -f PATH] VAR_NAME... | info [-s NAME | -n NAME | -f PATH] | ls [-s NAME | -n NAME | -f PATH] | sync [-s NAME | -n NAME | -f PATH] VAR_NAME",
+    c"add [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME | rm [-s NAME | -n NAME | -M NAME | -F PATH] | unbind [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME... | drop VAR_NAME | clear [-s NAME | -n NAME | -M NAME | -F PATH] | info [-s NAME | -n NAME | -M NAME | -F PATH] | ls [-s NAME | -n NAME | -M NAME | -F PATH] | sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME",
     c"\
 Shared-memory variables backed by a rkyv database.
 
+Each backing is referenced by a single, consistent selector:
+  -s NAME   a POSIX shared memory object (shm_open), shared across processes;
+  -n NAME   an anonymous in-memory mapping (memfd_create), shared with forked children;
+  -M NAME   a fixed-size anonymous mmap (MAP_SHARED|MAP_ANONYMOUS), shared with
+            forked children. Created with `-M NAME:SIZE` (SIZE in bytes, >= 100);
+            once named, referenced by NAME alone. Write overflow fails with exit 1.
+  -F PATH   a regular file, shared across processes;
+  (none)    the default in-memory mapping named DEFAULT (same as -n DEFAULT).
+
 Subcommands:
-  add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME
-                           Bind bash variable VAR_NAME (indexed, or associative
-                           with -A) to a shared database. -s selects a POSIX
-                           shared memory object named NAME; -n an anonymous
-                           in-memory mapping (memfd) named NAME; -f a regular file
-                           at PATH; with none the default in-memory mapping named
-                           DEFAULT is used. The value is stored under VAR_NAME.
-  rm [-s NAME | -n NAME | -f PATH]
-                            Remove the whole database: unbind every variable bound
-                            to it and unlink its backing object/file (for -s/-f).
-  unbind [-s NAME | -n NAME | -f PATH] VAR_NAME...
-                           Unbind the named variable(s) from this shell (drop the
-                           registry entry and unbind the bash variable); does not
-                           remove the data from the database.
-  info [-s NAME | -n NAME | -f PATH]
-                           Print every variable stored in the database (default:
-                           the DEFAULT database).
-  ls  [-s NAME | -n NAME | -f PATH]
+  add [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME
+                            Bind bash variable VAR_NAME (indexed, or associative
+                            with -A) to a shared database and store its value.
+                            -s/-n/-M/-F selects the backing (see above); none uses
+                            DEFAULT. The value is stored under VAR_NAME.
+  rm [-s NAME | -n NAME | -M NAME | -F PATH]
+                            Destroy the whole database: unbind every variable bound
+                            to it and unlink/drop its backing object/file (-s/-F).
+                            Bound variables become empty; the store is gone.
+  unbind [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME...
+                            Drop the local binding(s) only; store data is untouched,
+                            and other processes may still read it.
+  drop VAR_NAME
+                            Erase VAR's data from its store and drop the local
+                            binding. The store is found via VAR's binding; use `rm`
+                            to destroy a whole store.
+  clear [-s NAME | -n NAME | -M NAME | -F PATH]
+                            Wipe all variables' data from the selected store,
+                            leaving the backing in place. Bound vars stay bound
+                            (read as empty).
+  info [-s NAME | -n NAME | -M NAME | -F PATH]
+                            Print every variable stored in the database (default:
+                            the DEFAULT database).
+  ls  [-s NAME | -n NAME | -M NAME | -F PATH]
                             List databases. With no flag, list every database this
                             session knows about with the variables bound to each;
                             with a backing flag, list only the variables bound to
                             that database in this session's REGISTRY.
-  sync [-s NAME | -n NAME | -f PATH] VAR_NAME
+  sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME
                             Push the current bash variable values into the shared
                             database, replacing the variable's existing entry. The
                             variable must already be bound via 'add'.
 
 The variable (indexed or associative array) is serialized into a rkyv blob on
 every assignment and is visible to every process that maps the same database
- (e.g. a background job started with &, when using -s or -f or -n).
+ (e.g. a background job started with &, when using -s or -F or -n).
 ",
 );
 
@@ -772,6 +897,8 @@ const SHM_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("add", shm_add_subcommand),
     ("rm", shm_rm_subcommand),
     ("unbind", shm_unbind_subcommand),
+    ("drop", shm_drop_subcommand),
+    ("clear", shm_clear_subcommand),
     ("info", shm_info_subcommand),
     ("ls", shm_ls_subcommand),
     ("sync", shm_sync_subcommand),
@@ -779,22 +906,30 @@ const SHM_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
 
 const SHM_ADD_CMD: CmdDesc = CmdDesc::new(
     c"add",
-    c"add [-A] [-s NAME | -n NAME | -f PATH] VAR_NAME",
+    c"add [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME",
     c"\
 Bind bash variable VAR_NAME (indexed, or associative with -A) to a shared
 database.
 
 The database is selected by one of:
-  -s NAME   a POSIX shared memory object (shm_open) named NAME;
-  -n NAME   an anonymous in-memory mapping (memfd_create) named NAME;
-  -f PATH   a regular file at PATH (a path on a disc);
-  neither   the default in-memory mapping named DEFAULT.
+  -s NAME   a POSIX shared memory object (shm_open) named NAME, shared across
+            processes;
+  -n NAME   an anonymous in-memory mapping (memfd_create) named NAME, shared
+            with forked children (the same name within a process tree reuses the
+            same mapping);
+  -M NAME:SIZE  a fixed-size anonymous mmap (MAP_SHARED|MAP_ANONYMOUS) of SIZE
+            bytes, named NAME. Shared with forked children only; the region is
+            preallocated and write operations fail when it is exhausted (exit
+            status 1). Once created, reference it by NAME alone (-M NAME) from
+            any other `shm` subcommand.
+  -F PATH   a regular file at PATH (a path on a disc), shared across processes;
+  (none)    the default in-memory mapping named DEFAULT (same as -n DEFAULT).
 Every assignment is written through to the blob and is visible to every process
-that maps the same database, e.g. a background job started with & (for -s/-f/-n).
+that maps the same database, e.g. a background job started with & (for -s/-F/-n).
 
 With -A, create an associative array (key-value pairs with string keys) instead
-of an indexed array (integer indices). NAME (for -s/-n) must be a valid shell
-variable name; -f takes a path.
+of an indexed array (integer indices). NAME (for -s/-n/-M) must be a valid shell
+variable name; -F takes a path; the SIZE in -M NAME:SIZE must be >= 100 bytes.
 
 Examples:
   L_builtin shm add v
@@ -804,8 +939,12 @@ Examples:
   L_builtin shm add -s mydb v
   v=(a b c)          # POSIX shared memory 'mydb', shared across processes
 
-  L_builtin shm add -f /tmp/mydb v
+  L_builtin shm add -F /tmp/mydb v
   v=(a b c)          # regular file at /tmp/mydb
+
+  L_builtin shm add -M store:1048576 v
+  v=(a b c)          # named fixed-size anonymous mmap; later cmds use -M store
+  v=(big...)         # writes fail (exit 1) if the region is exhausted
 
   L_builtin shm add -A -s mydb v
   v=( [foo]=bar [baz]=qux )  # associative array in shared memory 'mydb'
@@ -814,12 +953,12 @@ Examples:
 
 const SHM_REMOVE_CMD: CmdDesc = CmdDesc::new(
     c"rm",
-    c"rm [-s NAME | -n NAME | -f PATH]",
+    c"rm [-s NAME | -n NAME | -M NAME | -F PATH]",
     c"\
 Remove the whole shared database: unbind every variable this shell has bound to
-it, drop the registry entries, and unlink the backing object/file (for -s/-f).
+it, drop the registry entries, and unlink the backing object/file (for -s/-F).
 
-The database is selected by the same -s/-n/-f flags as 'add'; with none given,
+The database is selected by the same -s/-n/-F flags as 'add'; with none given,
 the default 'DEFAULT' database is removed.
 
 Examples:
@@ -831,13 +970,13 @@ Examples:
 
 const SHM_UNBIND_CMD: CmdDesc = CmdDesc::new(
     c"unbind",
-    c"unbind [-s NAME | -n NAME | -f PATH] VAR_NAME [VAR_NAME...]",
+    c"unbind [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME [VAR_NAME...]",
     c"\
 Unbind the named variable(s) from this shell: drop the registry entry and unbind
 the bash variable. This does NOT remove the variable's data from the shared
 database; another process that has the variable bound may still read it.
 
-The database is selected by the same -s/-n/-f flags as 'add'; with none given,
+The database is selected by the same -s/-n/-F flags as 'add'; with none given,
 the default 'DEFAULT' database is used.
 
 Examples:
@@ -846,13 +985,48 @@ Examples:
 ",
 );
 
+const SHM_DROP_CMD: CmdDesc = CmdDesc::new(
+    c"drop",
+    c"drop VAR_NAME",
+    c"\
+Remove a single variable's data from its shared database and drop the local
+binding in this shell. The store is located via the variable's binding (each
+bash variable is bound to exactly one store), so no backing flags are needed.
+
+This is the data-deleting counterpart to `unbind` (which only drops the local
+binding): `drop` also erases the variable's entry from the shared blob, so other
+processes mapping the same store no longer see it. To destroy a whole store, use
+`rm`.
+
+Examples:
+  L_builtin shm drop v           # erase v's data and unbind it in this shell
+",
+);
+
+const SHM_CLEAR_CMD: CmdDesc = CmdDesc::new(
+    c"clear",
+    c"clear [-s NAME | -n NAME | -M NAME | -F PATH]",
+    c"\
+Wipe every variable's data from the selected database, leaving the backing
+object/file in place. Variables bound in this shell are left bound (they read as
+empty until re-added); use `rm` to also drop the backing.
+
+The database is selected by the backing flags, or the default `DEFAULT`
+database when none are given.
+
+Examples:
+  L_builtin shm clear -s mydb     # empty shared mem 'mydb', keep the object
+  L_builtin shm clear             # empty the default 'DEFAULT' database
+",
+);
+
 const SHM_INFO_CMD: CmdDesc = CmdDesc::new(
     c"info",
-    c"info [-s NAME | -n NAME | -f PATH]",
+    c"info [-s NAME | -n NAME | -M NAME | -F PATH]",
     c"\
 Print every variable stored in a shared-memory database.
 
-The database is selected by the same -s/-n/-f flags as 'add' (default: the
+The database is selected by the same -s/-n/-F flags as 'add' (default: the
 'DEFAULT' database). The output is a series of bash array assignments, one per
 variable, that can be eval'd to reconstruct the shared state.
 
@@ -863,20 +1037,20 @@ Examples:
 
 const SHM_LIST_CMD: CmdDesc = CmdDesc::new(
     c"ls",
-    c"ls [-s NAME | -n NAME | -f PATH]",
+    c"ls [-s NAME | -n NAME | -M NAME | -F PATH]",
     c"\
 List databases. With no flag, list every database this shell session currently
 knows about, together with the bash variables bound to each. With a backing flag,
 list only the variables bound to that database in this session's REGISTRY.
 
 Databases are shown by their backing kind and name: 'shm:NAME' for POSIX shared
-memory, 'memfd:NAME' for in-memory, and the file path for -f databases.
+memory, 'memfd:NAME' for in-memory, and the file path for -F databases.
 ",
 );
 
 const SHM_SYNC_CMD: CmdDesc = CmdDesc::new(
     c"sync",
-    c"sync [-s NAME | -n NAME | -f PATH] VAR_NAME",
+    c"sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME",
     c"\
 Push the current bash variable values into the shared database, replacing the
 variable's existing entry. The variable must already be bound to the database
@@ -898,7 +1072,7 @@ Examples:
 ",
 );
 
-const SHM_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
+const SHM_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 8> =
     crate::intlookup!(&SHM_SUBCOMMANDS);
 
 /// # Safety
