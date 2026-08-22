@@ -181,7 +181,7 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
                                 ::core::result::Result::Ok(v) => v,
                                 #err_arm
                             });
-                        };
+                      };
                         apply_opt_own.push(quote! {
                             if c == (#ch_lit as c_int) {
                                 #assign
@@ -249,26 +249,75 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
             },
             FieldKind::Rest => {
                 has_rest = true;
-                // Captured after every other positional so the view spans the
-                // words remaining once positionals are consumed. The lifetime is
-                // erased to 'static: cmdargs is only ever driven by bash for the
-                // duration of a single builtin invocation, and the WORD_LIST is
-                // owned by bash for at least that long.
-                rest_ptr_stmts.push(quote! {
-                    self.#ident = unsafe {
-                        ::core::mem::transmute::<WordListIterCpnt<'_>, WordListIterCpnt<'static>>(
-                            WordListView::from_raw(iter.as_ptr()).iter(),
-                        )
+                // Check if the field type is Vec<T>. If so, collect the
+                // remaining positional words into a Vec instead of returning
+                // a WordListIterCpnt view.
+                let is_vec = matches!(ty, syn::Type::Path(p) if {
+                    p.path.segments.last().map_or(false, |s| s.ident == "Vec")
+                });
+                if is_vec {
+                    // Extract the inner type T from Vec<T>
+                    let inner_ty = if let syn::Type::Path(p) = ty {
+                        if let Some(seg) = p.path.segments.last() {
+                            if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                                if let Some(syn::GenericArgument::Type(t)) = args.args.first() {
+                                    t
+                                } else {
+                                    panic!("Vec<T> rest field must specify T: Vec<_>");
+                                }
+                            } else {
+                                panic!("Vec<T> rest field must specify T: Vec<_>");
+                            }
+                        } else {
+                            panic!("Vec<T> rest field must specify T: Vec<_>");
+                        }
+                    } else {
+                        panic!("Vec<T> rest field must be a Type::Path");
                     };
-                });
-                default_inits.push(quote! {
-                    #ident: unsafe {
-                        ::core::mem::transmute::<WordListIterCpnt<'_>, WordListIterCpnt<'static>>(
-                            WordListView::from_raw(::std::ptr::null_mut()).iter(),
-                        )
-                    }
-                });
-            }
+                    let pos_conv = |cpnt: proc_macro2::TokenStream| match &info.parser {
+                        Some(p) => quote!(parse_with(#cpnt, #p)),
+                        None => quote!(FromCpnt::from_cpnt(#cpnt)),
+                    };
+                    let conv = pos_conv(quote!(cptr));
+                    rest_ptr_stmts.push(quote! {
+                        let mut __v = ::std::vec::Vec::<#inner_ty>::new();
+                        while let ::core::option::Option::Some(cptr) = iter.next() {
+                            match #conv {
+                                ::core::result::Result::Ok(val) => __v.push(val),
+                                Err(e) => {
+                                    let msg = e.to_string();
+                                    crate::l_builtin_usage_error!(msg.as_bytes());
+                                    return ::core::result::Result::Err(crate::cmdargs::EX_USAGE);
+                                }
+                            }
+                        }
+                        self.#ident = __v;
+                    });
+                    default_inits.push(quote! {
+                        #ident: ::std::vec::Vec::<#inner_ty>::new()
+                    });
+                } else {
+                    // Captured after every other positional so the view spans the
+                    // words remaining once positionals are consumed. The lifetime is
+                    // erased to 'static: cmdargs is only ever driven by bash for the
+                    // duration of a single builtin invocation, and the WORD_LIST is
+                    // owned by bash for at least that long.
+                    rest_ptr_stmts.push(quote! {
+                        self.#ident = unsafe {
+                            ::core::mem::transmute::<WordListIterCpnt<'_>, WordListIterCpnt<'static>>(
+                                WordListView::from_raw(iter.as_ptr()).iter(),
+                            )
+                        };
+                    });
+                    default_inits.push(quote! {
+                        #ident: unsafe {
+                            ::core::mem::transmute::<WordListIterCpnt<'_>, WordListIterCpnt<'static>>(
+                                WordListView::from_raw(::std::ptr::null_mut()).iter(),
+                            )
+                        }
+                    });
+                }
+        }
             FieldKind::Flatten => {
                 let child_ident = match ty {
                     syn::Type::Path(p) => p.path.segments.last().unwrap().ident.clone(),

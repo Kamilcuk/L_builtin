@@ -223,7 +223,7 @@ _L_test_net_multiple_connections() {
     # Server function will create its own listener on the given port
     # We pass a fixed port to avoid conflict
     # local net_port net_barrier
-    L_logrun L_builtin shm add net_port
+    L_logrun L_builtin shm bind net_port
     L_logrun L_builtin barrier create net_barrier 2
     net_port=""
 

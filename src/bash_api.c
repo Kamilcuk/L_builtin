@@ -208,7 +208,7 @@ int l_execute_command_string(const char *cmd)
  * never reach the shared database). If no variable by that name exists, a fresh
  * global array variable is created and the callbacks attached to it. */
 SHELL_VAR *l_init_dynamic_array_var(
-  const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc, int attrs
+  const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc
 )
 {
   SHELL_VAR *v = find_variable(name);
@@ -221,15 +221,13 @@ SHELL_VAR *l_init_dynamic_array_var(
     v->dynamic_value = getfunc;
     v->assign_func = setfunc;
   }
-  if (attrs)
-    VSETATTR(v, attrs);
   return v;
 }
 
 /* Initialize a dynamic associative array variable exposed to Rust.
  * See l_init_dynamic_array_var for the scope/local handling rationale. */
 SHELL_VAR *l_init_dynamic_assoc_var(
-  const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc, int attrs
+  const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc
 )
 {
   SHELL_VAR *v = find_variable(name);
@@ -242,8 +240,7 @@ SHELL_VAR *l_init_dynamic_assoc_var(
     v->dynamic_value = getfunc;
     v->assign_func = setfunc;
   }
-  if (attrs)
-    VSETATTR(v, attrs);
+  VSETATTR(v, att_assoc);
   return v;
 }
 

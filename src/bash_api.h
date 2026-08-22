@@ -93,14 +93,14 @@ int l_execute_command_string(const char *cmd);
 /* ------------------------------------------------------------------------- */
 
 SHELL_VAR *l_init_dynamic_array_var(
-  const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc, int attrs
+  const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc
 );
 
 /* Initialize a dynamic associative array variable exposed to Rust.
  * Creates an associative array variable and attaches the dynamic value /
  * assignment callbacks. */
 SHELL_VAR *l_init_dynamic_assoc_var(
-  const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc, int attrs
+  const char *name, sh_var_value_func_t *getfunc, sh_var_assign_func_t *setfunc
 );
 
 /* Unbind (remove) a shell variable by name; returns 1 if it existed. */

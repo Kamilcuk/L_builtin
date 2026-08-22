@@ -3,10 +3,10 @@
 # shared memory), `-n NAME` (anonymous in-memory mapping), `-F PATH` (a regular
 # file), or the default in-memory mapping named DEFAULT when no flag is given.
 
-_L_test_shm_add_and_read() {
+_L_test_shm_bind_and_read() {
     local shm="SHMTEST_ADD"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" V
+    L_builtin shm bind -n "$shm" V
     V=(a b c)
     L_unittest_eq "${V[*]}" "a b c"
     L_unittest_eq "${V[1]}" "b"
@@ -16,7 +16,7 @@ _L_test_shm_add_and_read() {
 _L_test_shm_single_index_rmw() {
     local shm="SHMTEST_RMW"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" V
+    L_builtin shm bind -n "$shm" V
     V=(1 2 3 4 5)
     # A single-index assignment must not clobber the other elements, because the
     # setter read-modify-writes the whole array in the shared database.
@@ -29,7 +29,7 @@ _L_test_shm_single_index_rmw() {
 _L_test_shm_info() {
     local shm="SHMTEST_INFO"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" V
+    L_builtin shm bind -n "$shm" V
     V=(p q r)
     # Verify the data persisted in the database via a forked read-back (this is
     # what `info` reads), rather than asserting on bash's printed array format.
@@ -55,11 +55,11 @@ _L_test_shm_info() {
 _L_test_shm_unbind_var() {
     local shm="SHMTEST_UNBIND"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" A
-    L_builtin shm add -n "$shm" B
+    L_builtin shm bind -n "$shm" A
+    L_builtin shm bind -n "$shm" B
     A=(1 2)
     B=(x y)
-    L_builtin shm unbind -n "$shm" A
+    L_builtin shm unbind A
     # The unbound variable is now empty.
     L_unittest_eq "${A[*]}" ""
     # The other variable remains bound and its data is intact.
@@ -72,8 +72,8 @@ _L_test_shm_unbind_var() {
 _L_test_shm_remove() {
     local shm="SHMTEST_REMOVE"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" REM_A
-    L_builtin shm add -n "$shm" REM_B
+    L_builtin shm bind -n "$shm" REM_A
+    L_builtin shm bind -n "$shm" REM_B
     REM_A=(1 2)
     REM_B=(x y)
     L_builtin shm rm -n "$shm"
@@ -88,7 +88,7 @@ _L_test_shm_remove() {
 _L_test_shm_cross_process() {
     local shm="SHMTEST_XPROC"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" B
+    L_builtin shm bind -n "$shm" B
     B=(a b c)
 
     local tmpf
@@ -124,11 +124,11 @@ _L_test_shm_help_long() {
     L_unittest_contains "$out" "Subcommands"
 }
 
-_L_test_shm_help_add() {
+_L_test_shm_help_bind() {
     local out rc
-    out="$(L_builtin shm add -h 2>&1)"; rc=$?
+    out="$(L_builtin shm bind -h 2>&1)"; rc=$?
     L_unittest_eq "$rc" 0
-    L_unittest_contains "$out" "L_builtin shm add: usage: add"
+    L_unittest_contains "$out" "L_builtin shm bind: usage: bind"
     L_unittest_contains "$out" "Examples"
 }
 
@@ -163,10 +163,10 @@ _L_test_shm_help_ls() {
     L_unittest_contains "$out" "L_builtin shm ls: usage: ls"
 }
 
-_L_test_shm_assoc_add_and_read() {
+_L_test_shm_assoc_bind_and_read() {
     local shm="SHMTEST_ASSOC_ADD"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -A -n "$shm" V
+    L_builtin shm bind -A -n "$shm" V
     V=( [foo]=bar [baz]=qux )
     L_unittest_eq "${V[foo]}" "bar"
     L_unittest_eq "${V[baz]}" "qux"
@@ -179,7 +179,7 @@ _L_test_shm_assoc_add_and_read() {
 _L_test_shm_assoc_single_key_rmw() {
     local shm="SHMTEST_ASSOC_RMW"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -A -n "$shm" V
+    L_builtin shm bind -A -n "$shm" V
     V=( [a]=1 [b]=2 [c]=3 )
     # A single-key assignment must not clobber the other elements
     V[a]=X
@@ -193,7 +193,7 @@ _L_test_shm_assoc_single_key_rmw() {
 _L_test_shm_assoc_info() {
     local shm="SHMTEST_ASSOC_INFO"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -A -n "$shm" V
+    L_builtin shm bind -A -n "$shm" V
     V=( [p]=x [q]=y [r]=z )
     local out
     out="$(L_builtin shm info -n "$shm")"
@@ -206,7 +206,7 @@ _L_test_shm_assoc_info() {
 _L_test_shm_assoc_cross_process() {
     local shm="SHMTEST_ASSOC_XPROC"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -A -n "$shm" V
+    L_builtin shm bind -A -n "$shm" V
     V=( [a]=1 [b]=2 [c]=3 )
 
     local tmpf
@@ -231,8 +231,8 @@ _L_test_shm_assoc_cross_process() {
 _L_test_shm_mixed_indexed_and_assoc() {
     local shm="SHMTEST_MIXED"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" IDX
-    L_builtin shm add -A -n "$shm" ASSOC
+    L_builtin shm bind -n "$shm" IDX
+    L_builtin shm bind -A -n "$shm" ASSOC
     IDX=(a b c)
     ASSOC=( [foo]=bar [baz]=qux )
     # Both an indexed and an associative array live in the SAME database: a
@@ -259,10 +259,10 @@ _L_test_shm_mixed_indexed_and_assoc() {
 
 # POSIX shared memory (-s): a name-based database shared across unrelated
 # processes. Verified here within a forked child.
-_L_test_shm_posix_add_and_read() {
+_L_test_shm_posix_bind_and_read() {
     local shm="SHMTEST_POSIX"
     L_builtin shm rm -s "$shm" 2>/dev/null || :
-    L_builtin shm add -s "$shm" V
+    L_builtin shm bind -s "$shm" V
     V=(a b c)
     L_unittest_eq "${V[*]}" "a b c"
     L_unittest_eq "${V[1]}" "b"
@@ -273,11 +273,11 @@ _L_test_shm_posix_add_and_read() {
 }
 
 # File-backed (-F) database at an arbitrary path.
-_L_test_shm_file_add_and_read() {
+_L_test_shm_file_bind_and_read() {
     local path
     path="$(mktemp)"
     L_builtin shm rm -F "$path" 2>/dev/null || :
-    L_builtin shm add -F "$path" V
+    L_builtin shm bind -F "$path" V
     V=(a b c)
     L_unittest_eq "${V[*]}" "a b c"
     L_unittest_eq "${V[1]}" "b"
@@ -285,9 +285,9 @@ _L_test_shm_file_add_and_read() {
 }
 
 # The default database (no flag) is the in-memory mapping named DEFAULT.
-_L_test_shm_default_add_and_read() {
+_L_test_shm_default_bind_and_read() {
     L_builtin shm rm 2>/dev/null || :
-    L_builtin shm add DEFV
+    L_builtin shm bind DEFV
     DEFV=(a b c)
     L_unittest_eq "${DEFV[*]}" "a b c"
     L_unittest_eq "${DEFV[1]}" "b"
@@ -301,8 +301,8 @@ _L_test_shm_ls_all() {
     local shm2="SHMTEST_LS2"
     L_builtin shm rm -n "$shm1" 2>/dev/null || :
     L_builtin shm rm -n "$shm2" 2>/dev/null || :
-    L_builtin shm add -n "$shm1" A
-    L_builtin shm add -n "$shm2" B
+    L_builtin shm bind -n "$shm1" A
+    L_builtin shm bind -n "$shm2" B
     local out
     out="$(L_builtin shm ls)"
     L_unittest_contains "$out" "DB memfd:$shm1: A"
@@ -316,8 +316,8 @@ _L_test_shm_ls_all() {
 _L_test_shm_ls_named() {
     local shm="SHMTEST_LSNAMED"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" A
-    L_builtin shm add -n "$shm" B
+    L_builtin shm bind -n "$shm" A
+    L_builtin shm bind -n "$shm" B
     local out
     out="$(L_builtin shm ls -n "$shm")"
     L_unittest_contains "$out" "A"
@@ -328,7 +328,7 @@ _L_test_shm_ls_named() {
 # `ls -s NAME` matches only the database created with -s; a memfd database of
 # the same name is a different backing and must not be listed.
 _L_test_shm_ls_named_distinguishes_backing() {
-    L_builtin shm add -n MEMDISTINCT MEMDISTINCT
+    L_builtin shm bind -n MEMDISTINCT MEMDISTINCT
     local out
     out="$(L_builtin shm ls -s MEMDISTINCT)"
     L_unittest_eq "$out" ""
@@ -357,7 +357,7 @@ _L_test_shm_stress_large_indexed_array() {
     local shm="SHMTEST_STRESS_LARGE_IDX"
     local n=200
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" V
+    L_builtin shm bind -n "$shm" V
     local i
     for ((i = 0; i < n; i++)); do V[i]="elem_$i"; done
     # Verify via a forked read-back (the child materializes V from the db).
@@ -381,7 +381,7 @@ _L_test_shm_stress_large_associative_array() {
     local shm="SHMTEST_STRESS_LARGE_ASSOC"
     local n=150
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -A -n "$shm" V
+    L_builtin shm bind -A -n "$shm" V
     local i
     for ((i = 0; i < n; i++)); do V["key_$i"]="val_$i"; done
     local tmpf
@@ -405,7 +405,7 @@ _L_test_shm_stress_large_values() {
     local n=30
     local padlen=8000
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" V
+    L_builtin shm bind -n "$shm" V
     local pad
     pad="$(head -c "$padlen" < /dev/zero | tr '\0' 'x')"
     local i
@@ -439,7 +439,7 @@ _L_test_shm_stress_many_variables() {
     L_builtin shm rm -n "$shm" 2>/dev/null || :
     local i
     for ((i = 0; i < n; i++)); do
-        L_builtin shm add -n "$shm" "VAR_$i"
+        L_builtin shm bind -n "$shm" "VAR_$i"
         eval "VAR_$i=(a b c d)"
     done
     local tmpf
@@ -469,7 +469,7 @@ _L_test_shm_stress_concurrent_readers() {
     local n=150
     local nreaders=8
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" V
+    L_builtin shm bind -n "$shm" V
     local i
     for ((i = 0; i < n; i++)); do V[i]="e_$i"; done
     local tmpf
@@ -513,7 +513,7 @@ _L_test_shm_stress_concurrent_writers() {
     local nwriters=200
     L_finally L_builtin shm rm -s "$shm"
     L_builtin shm rm -s "$shm" 2>/dev/null || :
-    L_builtin shm add -A -s "$shm" V
+    L_builtin shm bind -A -s "$shm" V
 
     local tmpf
     L_with_tmpfile_into tmpf
@@ -548,7 +548,7 @@ _L_test_shm_stress_concurrent_writers_file() {
     local nwriters=200
     L_finally L_builtin shm rm -F "$shm"
     L_builtin shm rm -F "$shm" 2>/dev/null || :
-    L_builtin shm add -A -F "$shm" V
+    L_builtin shm bind -A -F "$shm" V
 
     local tmpf
     L_with_tmpfile_into tmpf
@@ -581,7 +581,7 @@ _L_test_shm_stress_concurrent_writers_memfd() {
     local nwriters=200
     L_finally L_builtin shm rm -n "$shm"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -A -n "$shm" V
+    L_builtin shm bind -A -n "$shm" V
 
     local tmpf
     L_with_tmpfile_into tmpf
@@ -613,7 +613,7 @@ _L_test_shm_stress_concurrent_writers_file() {
     local shm="SHMTEST_STRESS_WRITERS_FILE"
     local nwriters=200
     L_builtin shm rm -F "$shm" 2>/dev/null || :
-    L_builtin shm add -A -F "$shm" V
+    L_builtin shm bind -A -F "$shm" V
 
     local tmpf
     L_with_tmpfile_into tmpf
@@ -652,7 +652,7 @@ _L_test_shm_stress_repeated_bind_unbind() {
     local rounds=100
     local i
     for ((i = 0; i < rounds; i++)); do
-        L_builtin shm add -n "$shm" V
+        L_builtin shm bind -n "$shm" V
         V=(cycle_$i)
         L_unittest_eq "${V[0]}" "cycle_$i"
         L_builtin shm rm -n "$shm"
@@ -668,7 +668,7 @@ _L_test_shm_stress_local_variable() {
     local shm="SHMTEST_STRESS_LOCAL"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
     local V
-    L_builtin shm add -n "$shm" V
+    L_builtin shm bind -n "$shm" V
     V=(a b c d e)
     local tmpf
     L_with_tmpfile_into tmpf
@@ -685,7 +685,7 @@ _L_test_shm_stress_local_variable_assoc() {
     local shm="SHMTEST_STRESS_LOCAL_ASSOC"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
     local V
-    L_builtin shm add -A -n "$shm" V
+    L_builtin shm bind -A -n "$shm" V
     V=( [foo]=bar [baz]=qux [n1]=v1 )
     local tmpf
     L_with_tmpfile_into tmpf
@@ -706,7 +706,7 @@ _L_test_shm_stress_local_variable_assoc() {
 _L_test_shm_sync_indexed() {
     local shm="SHMTEST_SYNC_IDX"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -n "$shm" V
+    L_builtin shm bind -n "$shm" V
     V=(one two three)
     L_builtin shm sync -n "$shm" V
     # A forked child reads from the shared database, not the parent's cache.
@@ -725,7 +725,7 @@ _L_test_shm_sync_indexed() {
 _L_test_shm_sync_assoc() {
     local shm="SHMTEST_SYNC_ASSOC"
     L_builtin shm rm -n "$shm" 2>/dev/null || :
-    L_builtin shm add -A -n "$shm" V
+    L_builtin shm bind -A -n "$shm" V
     V=( [k1]=first [k2]=second [k3]=third )
     L_builtin shm sync -A -n "$shm" V
     local tmpf
@@ -748,7 +748,7 @@ _L_test_shm_sync_assoc() {
 _L_test_shm_mmap_add_and_read() {
     local m="SHMTEST_MMAP_ADD"
     L_builtin shm rm -M "$m" 2>/dev/null || :
-    L_builtin shm add -M "$m:100000" V
+    L_builtin shm bind -M "$m:100000" V
     V=(a b c)
     L_unittest_eq "${V[*]}" "a b c"
     L_unittest_eq "${V[1]}" "b"
@@ -768,7 +768,7 @@ _L_test_shm_mmap_add_and_read() {
 _L_test_shm_mmap_sync() {
     local m="SHMTEST_MMAP_SYNC"
     L_builtin shm rm -M "$m" 2>/dev/null || :
-    L_builtin shm add -M "$m:100000" V
+    L_builtin shm bind -M "$m:100000" V
     V=(one two three)
     L_builtin shm sync -M "$m" V
     local tmpf
@@ -785,7 +785,7 @@ _L_test_shm_mmap_sync() {
 _L_test_shm_mmap_info() {
     local m="SHMTEST_MMAP_INFO"
     L_builtin shm rm -M "$m" 2>/dev/null || :
-    L_builtin shm add -M "$m:100000" V
+    L_builtin shm bind -M "$m:100000" V
     V=(p q r)
     local out
     out="$(L_builtin shm info -M "$m")"
@@ -797,7 +797,7 @@ _L_test_shm_mmap_info() {
 _L_test_shm_mmap_ls() {
     local m="SHMTEST_MMAP_LS"
     L_builtin shm rm -M "$m" 2>/dev/null || :
-    L_builtin shm add -M "$m:100000" V
+    L_builtin shm bind -M "$m:100000" V
     local out
     out="$(L_builtin shm ls -M "$m")"
     L_unittest_contains "$out" "V"
@@ -810,13 +810,13 @@ _L_test_shm_mmap_select_no_size_is_ok_only_if_created() {
     L_builtin shm rm -M "$m" 2>/dev/null || :
     # Selecting a not-yet-created named store for `add` creation fails because no
     # size is given.
-    L_unittest_checkexit 2 L_builtin shm add -M "$m" V
+    L_unittest_checkexit 2 L_builtin shm bind -M "$m" V
     L_builtin shm rm -M "$m" 2>/dev/null || :
 }
 
 # `create -M NAME:SIZE` with SIZE below the header minimum is rejected.
 _L_test_shm_mmap_size_too_small() {
-    L_unittest_checkexit 2 L_builtin shm add -M "small:50" V
+    L_unittest_checkexit 2 L_builtin shm bind -M "small:50" V
 }
 
 # Two distinct named mmap stores are independent: writing one must not appear in
@@ -824,8 +824,8 @@ _L_test_shm_mmap_size_too_small() {
 _L_test_shm_mmap_distinct_named_stores() {
     L_builtin shm rm -M storeA 2>/dev/null || :
     L_builtin shm rm -M storeB 2>/dev/null || :
-    L_builtin shm add -M "storeA:100000" A
-    L_builtin shm add -M "storeB:100000" B
+    L_builtin shm bind -M "storeA:100000" A
+    L_builtin shm bind -M "storeB:100000" B
     A=(1 2 3)
     B=(x y)
     local outa outb
@@ -844,8 +844,8 @@ _L_test_shm_mmap_distinct_named_stores() {
 _L_test_shm_mmap_drop_one_var() {
     local m="SHMTEST_MMAP_DROP"
     L_builtin shm rm -M "$m" 2>/dev/null || :
-    L_builtin shm add -M "$m:100000" A
-    L_builtin shm add -M "$m:100000" B
+    L_builtin shm bind -M "$m:100000" A
+    L_builtin shm bind -M "$m:100000" B
     A=(1 2)
     B=(x y)
     L_builtin shm drop A
@@ -864,8 +864,8 @@ _L_test_shm_mmap_drop_one_var() {
 _L_test_shm_mmap_clear_keeps_backing() {
     local m="SHMTEST_MMAP_CLEAR"
     L_builtin shm rm -M "$m" 2>/dev/null || :
-    L_builtin shm add -M "$m:100000" A
-    L_builtin shm add -M "$m:100000" B
+    L_builtin shm bind -M "$m:100000" A
+    L_builtin shm bind -M "$m:100000" B
     A=(1 2)
     B=(x y)
     L_builtin shm clear -M "$m"
@@ -875,11 +875,99 @@ _L_test_shm_mmap_clear_keeps_backing() {
     L_unittest_eq "$out" "${out#*A=}"
     L_unittest_eq "$out" "${out#*B=}"
     # The backing still exists: re-add to the same named store and write.
-    L_builtin shm add -M "$m:100000" C
+    L_builtin shm bind -M "$m:100000" C
     C=(hello)
     out="$(L_builtin shm info -M "$m")"
     L_unittest_contains "$out" "C="
     L_builtin shm rm -M "$m"
+}
+
+###############################################################################
+# bind / local scoping
+###############################################################################
+
+# When a database already contains data for a variable (written by another
+# process), binding the variable in this process must populate it from the
+# database, overriding any stale local bash value.  Uses `-s` (POSIX shared
+# memory) so the data survives the subshell that created it.
+_L_test_shm_bind_uses_existing_db() {
+    local shm="SHMTEST_BIND_EXISTING"
+    L_builtin shm rm -s "$shm" 2>/dev/null || :
+    L_finally L_builtin shm rm -s "$shm" 2>/dev/null
+    # In a subshell, create the POSIX-shm database, bind V, and set values.
+    (
+        L_builtin shm bind -s "$shm" V
+        V[0]=a
+        V[1]=b
+        V[2]=c
+    )
+    # In the main process, set a *different* local value before binding.
+    V[0]=x
+    V[1]=y
+    V[2]=z
+    # Bind to the *existing* database; the getter must read (a b c) from the
+    # shared db, overriding the local (x y z).
+    L_builtin shm bind -s "$shm" V
+    L_unittest_arreq V a b c
+}
+
+# Four nested functions, each declaring `local V`.  Levels 1 and 3 bind V to
+# the shared database (so their values flow through the db via the dynamic
+# getter/setter); levels 2 and 4 use a plain local variable with no binding.
+# Verifies that:
+#  - bound variables round-trip their values through the db
+#  - unbound local variables are properly isolated across scopes (writes do
+#    not leak into the shared database)
+#  - values set at an inner level are preserved when control returns to it
+#  - an outer bound variable retains its cached value after nested calls
+_L_test_shm_local_nested_bind() {
+    local shm="SHMTEST_NESTED_LOCAL"
+    L_builtin shm rm -n "$shm" 2>/dev/null || :
+    L_finally L_builtin shm rm -n "$shm" 2>/dev/null
+
+    _shm_nested_f4() {
+        local V
+        V[0]=l4
+        V[1]=l4b
+        L_unittest_arreq V l4 l4b
+    }
+
+    _shm_nested_f3() {
+        local V
+        L_builtin shm bind -n "$shm" V
+        V[0]=l3
+        V[1]=l3b
+        L_unittest_arreq V l3 l3b
+        _shm_nested_f4
+        # After f4 returned (its own local V), V is still l3 from the db.
+        L_unittest_arreq V l3 l3b
+    }
+
+    _shm_nested_f2() {
+        local V
+        V[0]=l2
+        V[1]=l2b
+        L_unittest_arreq V l2 l2b
+        _shm_nested_f3
+        # After f3 returned (which wrote l3 to the db), f2's *local* V is
+        # unaffected — it remains l2 (writes did not leak into the db).
+        L_unittest_arreq V l2 l2b
+    }
+
+    _shm_nested_f1() {
+        local V
+        L_builtin shm bind -n "$shm" V
+        V[0]=l1
+        V[1]=l1b
+        L_unittest_arreq V l1 l1b
+        _shm_nested_f2
+        # After f2/f3 returned, the db holds l3 (last write by f3). Since
+        # dynamic variables re-read from the db on every access, f1's V
+        # reflects the latest db state — the shared database bridges scopes.
+        L_unittest_arreq V l3 l3b
+    }
+
+    _shm_nested_f1
 }
 
 

@@ -129,7 +129,7 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
     - [L_builtin sigunmask](#l_builtin-sigunmask)
     - [L_builtin sleep](#l_builtin-sleep)
     - [L_builtin shm](#l_builtin-shm)
-      - [L_builtin shm add](#l_builtin-shm-add)
+      - [L_builtin shm bind](#l_builtin-shm-bind)
       - [L_builtin shm rm](#l_builtin-shm-rm)
       - [L_builtin shm unbind](#l_builtin-shm-unbind)
       - [L_builtin shm drop](#l_builtin-shm-drop)
@@ -2380,7 +2380,7 @@ Exit Status:
 ### `L_builtin shm`
 
 ```
-L_builtin shm: usage: add [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME | rm [-s NAME | -n NAME | -M NAME | -F PATH] | unbind [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME... | drop VAR_NAME | clear [-s NAME | -n NAME | -M NAME | -F PATH] | info [-s NAME | -n NAME | -M NAME | -F PATH] | ls [-s NAME | -n NAME | -M NAME | -F PATH] | sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME
+L_builtin shm: usage: bind [-A] [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME | rm [-s NAME | -n NAME | -M NAME | -F PATH] | unbind VAR_NAME... | drop VAR_NAME | clear [-s NAME | -n NAME | -M NAME | -F PATH] | info [-s NAME | -n NAME | -M NAME | -F PATH] | ls [-s NAME | -n NAME | -M NAME | -F PATH] | sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME
 
 Shared-memory variables backed by a rkyv database.
 
@@ -2394,7 +2394,7 @@ Each backing is referenced by a single, consistent selector:
   (none)    the default in-memory mapping named DEFAULT (same as -n DEFAULT).
 
 Subcommands:
-  add [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME
+  bind [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME
                             Bind bash variable VAR_NAME (indexed, or associative
                             with -A) to a shared database and store its value.
                             -s/-n/-M/-F selects the backing (see above); none uses
@@ -2403,9 +2403,10 @@ Subcommands:
                             Destroy the whole database: unbind every variable bound
                             to it and unlink/drop its backing object/file (-s/-F).
                             Bound variables become empty; the store is gone.
-  unbind [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME...
+  unbind VAR_NAME...
                             Drop the local binding(s) only; store data is untouched,
-                            and other processes may still read it.
+                            and other processes may still read it. The store is found
+                            via each variable's existing binding.
   drop VAR_NAME
                             Erase VAR's data from its store and drop the local
                             binding. The store is found via VAR's binding; use `rm`
@@ -2425,17 +2426,17 @@ Subcommands:
   sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME
                             Push the current bash variable values into the shared
                             database, replacing the variable's existing entry. The
-                            variable must already be bound via 'add'.
+                            variable must already be bound via 'bind'.
 
 The variable (indexed or associative array) is serialized into a rkyv blob on
 every assignment and is visible to every process that maps the same database
  (e.g. a background job started with &, when using -s or -F or -n).
 ```
 
-#### `L_builtin shm add`
+#### `L_builtin shm bind`
 
 ```
-L_builtin shm add: usage: add [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME
+L_builtin shm bind: usage: bind [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME
 
 Bind bash variable VAR_NAME (indexed, or associative with -A) to a shared
 database.
@@ -2461,21 +2462,21 @@ of an indexed array (integer indices). NAME (for -s/-n/-M) must be a valid shell
 variable name; -F takes a path; the SIZE in -M NAME:SIZE must be >= 100 bytes.
 
 Examples:
-  L_builtin shm add v
+  L_builtin shm bind v
   v=(a b c)          # default in-memory mapping 'DEFAULT', shared with forked children
   v[0]=changed       # a single-index write is visible to other processes
 
-  L_builtin shm add -s mydb v
+  L_builtin shm bind -s mydb v
   v=(a b c)          # POSIX shared memory 'mydb', shared across processes
 
-  L_builtin shm add -F /tmp/mydb v
+  L_builtin shm bind -F /tmp/mydb v
   v=(a b c)          # regular file at /tmp/mydb
 
-  L_builtin shm add -M store:1048576 v
+  L_builtin shm bind -M store:1048576 v
   v=(a b c)          # named fixed-size anonymous mmap; later cmds use -M store
   v=(big...)         # writes fail (exit 1) if the region is exhausted
 
-  L_builtin shm add -A -s mydb v
+  L_builtin shm bind -A -s mydb v
   v=( [foo]=bar [baz]=qux )  # associative array in shared memory 'mydb'
 ```
 
@@ -2487,7 +2488,7 @@ L_builtin shm rm: usage: rm [-s NAME | -n NAME | -M NAME | -F PATH]
 Remove the whole shared database: unbind every variable this shell has bound to
 it, drop the registry entries, and unlink the backing object/file (for -s/-F).
 
-The database is selected by the same -s/-n/-F flags as 'add'; with none given,
+The database is selected by the same -s/-n/-F flags as 'bind'; with none given,
 the default 'DEFAULT' database is removed.
 
 Examples:
@@ -2499,18 +2500,18 @@ Examples:
 #### `L_builtin shm unbind`
 
 ```
-L_builtin shm unbind: usage: unbind [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME [VAR_NAME...]
+L_builtin shm unbind: usage: unbind VAR_NAME [VAR_NAME...]
 
 Unbind the named variable(s) from this shell: drop the registry entry and unbind
 the bash variable. This does NOT remove the variable's data from the shared
 database; another process that has the variable bound may still read it.
 
-The database is selected by the same -s/-n/-F flags as 'add'; with none given,
-the default 'DEFAULT' database is used.
+The store is found via each variable's existing binding; no backing flags are
+needed.
 
 Examples:
-  L_builtin shm unbind -s mydb v   # stop sharing 'v' from shared memory 'mydb'
-  L_builtin shm unbind v w         # unbind 'v' and 'w' from the default database
+  L_builtin shm unbind v         # stop sharing 'v' in this shell
+  L_builtin shm unbind v w       # unbind 'v' and 'w'
 ```
 
 #### `L_builtin shm drop`
@@ -2555,7 +2556,7 @@ L_builtin shm info: usage: info [-s NAME | -n NAME | -M NAME | -F PATH]
 
 Print every variable stored in a shared-memory database.
 
-The database is selected by the same -s/-n/-F flags as 'add' (default: the
+The database is selected by the same -s/-n/-F flags as 'bind' (default: the
 'DEFAULT' database). The output is a series of bash array assignments, one per
 variable, that can be eval'd to reconstruct the shared state.
 
@@ -2583,7 +2584,7 @@ L_builtin shm sync: usage: sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME
 
 Push the current bash variable values into the shared database, replacing the
 variable's existing entry. The variable must already be bound to the database
-via 'add'. For each element in the bash array (indexed or associative), the
+the database, via 'bind'. For each element in the bash array (indexed or associative), the
 current value is written to the database.
 
 Normally the dynamic setter (invoked on each element assignment) keeps the
@@ -2595,7 +2596,7 @@ shrinking) or for explicitly committing the current state after a batch of
 operations.
 
 Examples:
-   L_builtin shm add -s mydb v
+   L_builtin shm bind -s mydb v
    v=( a b c )
    L_builtin shm sync -s mydb v       # push v=(a b c) into shared mem 'mydb'
 ```

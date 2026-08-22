@@ -147,6 +147,7 @@ function(generate_bash_bindings gen_file bash_source)
             --allowlist-var EX_NOTFOUND
             --allowlist-var EXECUTION_SUCCESS
             --allowlist-var EXECUTION_FAILURE
+            --allowlist-var att_assoc
             # --fit-macro-constant-types
             --default-macro-constant-type signed
             --allowlist-type builtin
