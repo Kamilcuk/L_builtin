@@ -388,7 +388,7 @@ struct ShmUnbindArgs {
 }
 
 /// `shm drop VAR_NAME...`: remove each variable's data from its store (and drop
-/// the local binding). Var-located — the store is found via each variable's
+/// the local binding). Var-located - the store is found via each variable's
 /// binding, so no backing flags are needed/used.
 #[derive(CmdArgs)]
 struct ShmDropArgs {
