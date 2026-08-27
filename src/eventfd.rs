@@ -170,7 +170,7 @@ Examples:
   L_builtin eventfd read \"$ev\" val       # val=5, counter reset to 0
   L_builtin eventfd write \"$ev\" 1        # counter += 1
   L_builtin eventfd read \"$ev\"           # prints 1
-  L_builtin close \"$ev\"
+  exec {ev}<&-
 ",
 );
 

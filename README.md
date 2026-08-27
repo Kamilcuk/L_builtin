@@ -48,7 +48,6 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
       - [L_builtin epoll mod](#l_builtin-epoll-mod)
       - [L_builtin epoll del](#l_builtin-epoll-del)
       - [L_builtin epoll wait](#l_builtin-epoll-wait)
-      - [L_builtin epoll close](#l_builtin-epoll-close)
     - [L_builtin ext](#l_builtin-ext)
       - [L_builtin ext accept](#l_builtin-ext-accept)
       - [L_builtin ext asort](#l_builtin-ext-asort)
@@ -103,6 +102,7 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
       - [L_builtin fcntl getfd](#l_builtin-fcntl-getfd)
       - [L_builtin fcntl setfd](#l_builtin-fcntl-setfd)
       - [L_builtin fcntl dup](#l_builtin-fcntl-dup)
+      - [L_builtin fcntl list](#l_builtin-fcntl-list)
     - [L_builtin listen](#l_builtin-listen)
     - [L_builtin lua](#l_builtin-lua)
     - [L_builtin memfd](#l_builtin-memfd)
@@ -510,6 +510,20 @@ The client's address (IP:PORT) is stored in ADDR_VAR.
 
 Exit Status:
 Returns success unless accept fails or variable binding fails.
+
+Examples:
+  L_builtin listen -p PORT LFD 127.0.0.1 0
+  (
+    exec {cli}<>/dev/tcp/127.0.0.1/"$PORT"
+    printf 'ping' >&"$cli"
+    read -r r <&"$cli"
+    echo "server said $r"
+  ) &
+  L_builtin accept CFD ADDR "$LFD"
+  L_builtin recv -v msg "$CFD" 4
+  echo "client $ADDR said: $msg"
+  L_builtin send "$CFD" 'pong'
+  exec {CFD}>&- {LFD}>&-
 ```
 
 ### `L_builtin capture`
@@ -626,7 +640,7 @@ Examples:
   L_builtin eventfd read "$ev" val       # val=5, counter reset to 0
   L_builtin eventfd write "$ev" 1        # counter += 1
   L_builtin eventfd read "$ev"           # prints 1
-  L_builtin close "$ev"
+  exec {ev}<&-
 ```
 
 #### `L_builtin eventfd create`
@@ -692,7 +706,7 @@ Examples:
 ### `L_builtin epoll`
 
 ```
-L_builtin epoll: usage: create FD_VAR | add EPOLLFD FD [r|w|p|t] | mod EPOLLFD FD [r|w|p|t] | del EPOLLFD FD | wait [-t SECS] [-v ARR] EPOLLFD | close EPOLLFD
+L_builtin epoll: usage: create FD_VAR | add EPOLLFD FD [r|w|p|t] | mod EPOLLFD FD [r|w|p|t] | del EPOLLFD FD | wait [-t SECS] [-v ARR] EPOLLFD
 
 Scalable I/O event notification via epoll(7), the Linux-specific readiness
 mechanism that scales O(1) per ready fd (unlike poll/ppoll, which scan the full
@@ -712,7 +726,6 @@ Subcommands:
                              events. -t SECS sets a timeout (durations like
                              '1.5', '500ms' accepted); without -t it blocks
                              forever.
-  close EPOLLFD             Close the epoll instance fd (close(2)).
 
 EVENTS tokens (add/mod):  r EPOLLIN | w EPOLLOUT | p EPOLLPRI | t EPOLLET
                           (edge-triggered; combine, e.g. 'rw', 'rt').
@@ -721,13 +734,23 @@ Readiness tokens (wait -> ARR[FD]): r w p | h EPOLLHUP | e EPOLLERR | t EPOLLET
 The fd is just an integer bash variable; there is no handle registry.
 
 Examples:
-   # Wait for two pipes to become readable (edge-triggered)
-   L_builtin epoll create -n ep
-   L_builtin epoll add $ep ${p[0]} rt
-   L_builtin epoll add $ep ${p[1]} rt
+   # Watch a pipe and a timerfd, then decode readiness per fd
+   L_builtin epoll create ep
+   L_builtin pipe in
+   L_builtin timerfd t 500ms
+   printf 'hello' >&"${in[1]}" &
+   L_builtin epoll add $ep ${in[0]} r
+   L_builtin epoll add $ep $t r
    L_builtin epoll wait -v ready $ep
-   for fd in "${!ready[@]}"; do echo "fd $fd: ${ready[$fd]}"; done
-   L_builtin epoll close $ep
+   for fd in "${!ready[@]}"; do
+       rev=${ready[fd]}
+       echo "fd $fd ready: $rev"
+       [[ $rev == *r* ]] && echo "  fd $fd is readable"
+       [[ $rev == *w* ]] && echo "  fd $fd is writable"
+       [[ $rev == *h* ]] && echo "  fd $fd hung up"
+       [[ $rev == *e* ]] && echo "  fd $fd errored"
+   done
+   exec {in[0]}<&- {in[1]}>&- {t}<&- {ep}<&-
 ```
 
 #### `L_builtin epoll create`
@@ -802,22 +825,8 @@ fds), failure only on error. Without -v no array is populated.
 
 Examples:
    L_builtin epoll wait -v ready $ep
-   for fd in "${!ready[@]}"; do
-       echo "fd $fd: ${ready[$fd]}"
-   done
+   for fd in "${!ready[@]}"; do echo "fd $fd: ${ready[$fd]}"; done
    L_builtin epoll wait -t 2.5 -v r $ep   # timeout after 2.5s
-```
-
-#### `L_builtin epoll close`
-
-```
-L_builtin epoll close: usage: close EPOLLFD
-
-Close the epoll instance file descriptor EPOLLFD via close(2). Use this to
-release an epoll fd created with `create`.
-
-Examples:
-   L_builtin epoll close $ep
 ```
 
 ### `L_builtin ext`
@@ -1606,7 +1615,7 @@ Display name of current user.
 ### `L_builtin fcntl`
 
 ```
-L_builtin fcntl: usage: getfl [-v VAR] FD | setfl FD FLAGS | getfd [-v VAR] FD | setfd FD FLAGS | dup [-v VAR] [-c] FD [START]
+L_builtin fcntl: usage: getfl [-v VAR] FD | setfl FD FLAGS | getfd [-v VAR] FD | setfd FD FLAGS | dup [-v VAR] [-c] FD [START] | list [open|fd]
 
 Manipulate file descriptor properties via fcntl(2).
 
@@ -1626,6 +1635,10 @@ Subcommands:
                            Duplicate FD via F_DUPFD.  START is the minimum fd
                            (default 0).  With -c, F_DUPFD_CLOEXEC is used
                            instead (close-on-exec is set on the new fd).
+  list [open|fd]           Enumerate the internal fcntl flag lookup tables.
+                           `list open` prints the open(2) status flags,
+                           `list fd` the descriptor flags, and plain `list`
+                           prints both.  Each line is `TABLE: NAME=VALUE`.
 
 The file descriptor can be any open fd (as with the `close`, `lseek`,
 `timerfd` and `signalfd` subcommands).
@@ -1643,6 +1656,8 @@ Examples:
   L_builtin fcntl dup 3
   L_builtin fcntl dup -c 3 256    # new fd >= 256 with close-on-exec
   L_builtin fcntl getfl -v result 3
+  L_builtin fcntl list
+  L_builtin fcntl list open
 ```
 
 #### `L_builtin fcntl getfl`
@@ -1723,13 +1738,32 @@ Without -v, the new fd is printed; with -v VAR it is stored in VAR.
 
 Options:
   -c   Use F_DUPFD_CLOEXEC instead of F_DUPFD (the new fd has close-on-exec
-      set).
+       set).
   -v   Store the result in VAR instead of printing.
 
 Examples:
   L_builtin fcntl dup 3
   L_builtin fcntl dup -c 3
   L_builtin fcntl dup -v newfd 3 256
+```
+
+#### `L_builtin fcntl list`
+
+```
+L_builtin fcntl list: usage: list [open|fd]
+
+Enumerate the internal fcntl flag lookup tables used to translate flag names
+to numeric values.
+
+Without an argument, both the open(2) status flag table and the file
+descriptor flag table are printed.  With `open` or `fd`, only that table is
+printed.  Each output line is `TABLE: NAME=VALUE`, where VALUE is the numeric
+flag (a value may be 0, e.g. O_RDONLY).
+
+Examples:
+  L_builtin fcntl list
+  L_builtin fcntl list open
+  L_builtin fcntl list fd
 ```
 
 ### `L_builtin listen`
@@ -1749,6 +1783,11 @@ for ephemeral port allocation) is stored in PORT_VAR.
 
 Exit Status:
 Returns success unless socket/bind/listen fails or variable binding fails.
+
+Examples:
+  L_builtin listen -p PORT LFD 127.0.0.1 0
+  echo "listening on fd $LFD (port $PORT); next run: L_builtin accept CFD ADDR $LFD"
+  exec {LFD}>&-
 ```
 
 ### `L_builtin lua`
@@ -1870,16 +1909,12 @@ Exit Status:
   Returns success unless memfd_create fails or the variable cannot be bound.
 
 Examples:
-  // Create memfd with default name, store fd in MYFD
   L_builtin memfd MYFD
-
-  // Create memfd named mydata, store fd in MYFD
   L_builtin memfd MYFD mydata
-
-  // Use memfd as temporary in-RAM storage
   L_builtin memfd FD
-  echo data >&$FD
-  cat <&$FD
+  echo data >&"$FD"
+  cat <&"$FD"
+  exec {FD}>&-
 ```
 
 ### `L_builtin mutex`
@@ -2028,6 +2063,14 @@ L_builtin pipe: usage: ARRAY
 Create a new pipe and store the file descriptors in the indexed
 array ARRAY. ARRAY[0] is the read end, ARRAY[1] is the write end.
 
+Examples:
+  L_builtin pipe p
+  printf 'hello
+' >&"${p[1]}" &
+  IFS= read -r line <&"${p[0]}"
+  echo "$line"
+  exec {p[0]}<&- {p[1]}>&-
+
 Exit Status:
 Returns success unless the pipe cannot be created or ARRAY is invalid.
 ```
@@ -2052,6 +2095,22 @@ REVENTS contains 'r', 'w', 'p', 'h' (hangup), 'e' (error), or 'n'
 If -i is provided, poll will not automatically retry on signal interruption
 (EINTR). Instead, it will fail with an error. By default, poll retries on
 EINTR.
+
+Example:
+  L_builtin pipe in
+  L_builtin pipe out
+  L_builtin timerfd t 500ms
+  printf 'hello' >&"${in[1]}" &
+  L_builtin poll -t 2 -v res "${in[0]}:r" "${out[0]}:w" "$t:r"
+  for fd in "${!res[@]}"; do
+    rev=${res[fd]}
+    echo "fd $fd ready: $rev"
+    [[ $rev == *r* ]] && echo "  fd $fd is readable"
+    [[ $rev == *w* ]] && echo "  fd $fd is writable"
+    [[ $rev == *h* ]] && echo "  fd $fd hung up"
+    [[ $rev == *e* ]] && echo "  fd $fd errored"
+  done
+  exec {in[0]}<&- {in[1]}>&- {out[0]}<&- {out[1]}>&- {t}<&-
 
 Exit Status:
 Returns success if poll succeeds, even if it timed out. Returns failure on
@@ -2294,6 +2353,14 @@ prints the current signal mask. -s blocks, -u unblocks.
 Use 'ALL' (case-insensitive) with -s or -u to block or unblock all
 signals respectively. Positional arguments are always blocked.
 
+Example:
+  trap 'cancel=1' INT TERM
+  L_builtin sigmask INT TERM
+  while ! cancel; do
+    echo 'critical step'
+    L_builtin sigunmask -s INT TERM sleep 1
+  done
+
 Exit Status:
 Returns success unless an invalid signal is provided or a system error occurs.
 ```
@@ -2315,6 +2382,14 @@ The command can be any shell command (builtin, function, or external).
 WARNING: There is a small window between unblocking and starting the command.
 If a signal arrives in this window, it may be delivered to the command itself
 rather than being caught by this builtin's check.
+
+Example:
+  trap 'cancel=1' INT TERM
+  L_builtin sigmask INT TERM
+  while ! cancel; do
+    echo 'critical step'
+    L_builtin sigunmask -s INT TERM sleep 1
+  done
 
 Exit Status:
 Returns the status of the command, or 128+signum if a signal was caught.
@@ -2579,20 +2654,10 @@ Exit Status:
 Returns success unless splice fails.
 
 Examples:
-  // Splice 1024 bytes from fd 3 (pipe) to fd 4 (pipe), print bytes moved
   L_builtin splice 3 4 1024
-
-  // Splice with nonblock flag, store bytes moved in MOVED
   L_builtin splice -v MOVED 3 4 4096 nonblock
-
-  // Splice with multiple flags (comma-separated)
   L_builtin splice 3 4 8192 move,more
-
-  // Typical use: zero-copy pipe-to-pipe transfer
-  // (assuming fd 3 is readable pipe, fd 4 is writable pipe)
   L_builtin splice 3 4 65536
-
-  // Copy file to pipe (fd 3=file, fd 4=pipe) - requires splice support
   L_builtin splice 3 4 1048576
 ```
 

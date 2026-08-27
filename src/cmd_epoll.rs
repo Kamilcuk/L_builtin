@@ -227,7 +227,7 @@ pub unsafe fn epoll_del_subcommand(list: *mut WORD_LIST) -> CmdResult {
 
 const EPOLL_CMD: CmdDesc = CmdDesc::new(
     c"epoll",
-    c"create FD_VAR | add EPOLLFD FD [r|w|p|t] | mod EPOLLFD FD [r|w|p|t] | del EPOLLFD FD | wait [-t SECS] [-v ARR] EPOLLFD | close EPOLLFD",
+     c"create FD_VAR | add EPOLLFD FD [r|w|p|t] | mod EPOLLFD FD [r|w|p|t] | del EPOLLFD FD | wait [-t SECS] [-v ARR] EPOLLFD",
     c"\
 Scalable I/O event notification via epoll(7), the Linux-specific readiness
 mechanism that scales O(1) per ready fd (unlike poll/ppoll, which scan the full
@@ -247,7 +247,6 @@ Subcommands:
                              events. -t SECS sets a timeout (durations like
                              '1.5', '500ms' accepted); without -t it blocks
                              forever.
-  close EPOLLFD             Close the epoll instance fd (close(2)).
 
 EVENTS tokens (add/mod):  r EPOLLIN | w EPOLLOUT | p EPOLLPRI | t EPOLLET
                           (edge-triggered; combine, e.g. 'rw', 'rt').
@@ -256,13 +255,23 @@ Readiness tokens (wait -> ARR[FD]): r w p | h EPOLLHUP | e EPOLLERR | t EPOLLET
 The fd is just an integer bash variable; there is no handle registry.
 
 Examples:
-   # Wait for two pipes to become readable (edge-triggered)
-   L_builtin epoll create -n ep
-   L_builtin epoll add $ep ${p[0]} rt
-   L_builtin epoll add $ep ${p[1]} rt
+   # Watch a pipe and a timerfd, then decode readiness per fd
+   L_builtin epoll create ep
+   L_builtin pipe in
+   L_builtin timerfd t 500ms
+   printf 'hello' >&\"${in[1]}\" &
+   L_builtin epoll add $ep ${in[0]} r
+   L_builtin epoll add $ep $t r
    L_builtin epoll wait -v ready $ep
-   for fd in \"${!ready[@]}\"; do echo \"fd $fd: ${ready[$fd]}\"; done
-   L_builtin epoll close $ep
+   for fd in \"${!ready[@]}\"; do
+       rev=${ready[fd]}
+       echo \"fd $fd ready: $rev\"
+       [[ $rev == *r* ]] && echo \"  fd $fd is readable\"
+       [[ $rev == *w* ]] && echo \"  fd $fd is writable\"
+       [[ $rev == *h* ]] && echo \"  fd $fd hung up\"
+       [[ $rev == *e* ]] && echo \"  fd $fd errored\"
+   done
+   exec {in[0]}<&- {in[1]}>&- {t}<&- {ep}<&-
 ",
 );
 
@@ -337,22 +346,8 @@ fds), failure only on error. Without -v no array is populated.
 
 Examples:
    L_builtin epoll wait -v ready $ep
-   for fd in \"${!ready[@]}\"; do
-       echo \"fd $fd: ${ready[$fd]}\"
-   done
+   for fd in \"${!ready[@]}\"; do echo \"fd $fd: ${ready[$fd]}\"; done
    L_builtin epoll wait -t 2.5 -v r $ep   # timeout after 2.5s
-",
-);
-
-const EPOLL_CLOSE_CMD: CmdDesc = CmdDesc::new(
-    c"close",
-    c"close EPOLLFD",
-    c"\
-Close the epoll instance file descriptor EPOLLFD via close(2). Use this to
-release an epoll fd created with `create`.
-
-Examples:
-   L_builtin epoll close $ep
 ",
 );
 
@@ -362,10 +357,9 @@ const EPOLL_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("mod", epoll_mod_subcommand),
     ("del", epoll_del_subcommand),
     ("wait", epoll_wait_subcommand),
-    ("close", epoll_close_subcommand),
 ];
 
-const EPOLL_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
+const EPOLL_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 5> =
     crate::intlookup!(&EPOLL_SUBCOMMANDS);
 
 /// # Safety
@@ -425,26 +419,6 @@ pub unsafe fn epoll_wait_subcommand(list: *mut WORD_LIST) -> CmdResult {
     }
     if let Some(var) = &args.var {
         populate_ready_array(var, &ready)?;
-    }
-    Ok(())
-}
-
-/// `L_builtin epoll close EPOLLFD`
-#[derive(CmdArgs)]
-struct EpollCloseArgs {
-    /// The epoll instance file descriptor to close.
-    #[positional]
-    epfd: c_int,
-}
-
-pub unsafe fn epoll_close_subcommand(list: *mut WORD_LIST) -> CmdResult {
-    EPOLL_CLOSE_CMD.enter();
-    let args = EpollCloseArgs::parse(list)?;
-    if unsafe { libc::close(args.epfd) } < 0 {
-        return Err(l_builtin_error!(
-            b"epoll close: ",
-            std::io::Error::last_os_error()
-        ));
     }
     Ok(())
 }

@@ -22,10 +22,7 @@ Exit Status:
   Returns success unless FD is invalid or close(2) fails.
 
 Examples:
-  // Close fd 3
   L_builtin close 3
-
-  // Close the fd held in MYFD
   L_builtin close $MYFD
 ",
 );

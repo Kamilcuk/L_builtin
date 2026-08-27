@@ -37,6 +37,13 @@ const CMD: CmdDesc = CmdDesc::new(
 Create a new pipe and store the file descriptors in the indexed
 array ARRAY. ARRAY[0] is the read end, ARRAY[1] is the write end.
 
+Examples:
+  L_builtin pipe p
+  printf 'hello\n' >&\"${p[1]}\" &
+  IFS= read -r line <&\"${p[0]}\"
+  echo \"$line\"
+  exec {p[0]}<&- {p[1]}>&-
+
 Exit Status:
 Returns success unless the pipe cannot be created or ARRAY is invalid.
 ",

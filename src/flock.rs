@@ -33,13 +33,8 @@ Exit Status:
   flock(2) fails (a non-blocking lock that would block returns failure).
 
 Examples:
-  // Exclusive-lock fd 3 (blocks until acquired)
   L_builtin flock -x 3
-
-  // Non-blocking shared lock on the fd held in MYFD
   L_builtin flock -n -s $MYFD
-
-  // Release the lock on fd 3
   L_builtin flock -u 3
 ",
 );

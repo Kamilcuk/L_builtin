@@ -31,6 +31,11 @@ for ephemeral port allocation) is stored in PORT_VAR.
 
 Exit Status:
 Returns success unless socket/bind/listen fails or variable binding fails.
+
+Examples:
+  L_builtin listen -p PORT LFD 127.0.0.1 0
+  echo \"listening on fd $LFD (port $PORT); next run: L_builtin accept CFD ADDR $LFD\"
+  exec {LFD}>&-
 ",
 );
 

@@ -30,16 +30,12 @@ Exit Status:
   Returns success unless memfd_create fails or the variable cannot be bound.
 
 Examples:
-  // Create memfd with default name, store fd in MYFD
   L_builtin memfd MYFD
-
-  // Create memfd named mydata, store fd in MYFD
   L_builtin memfd MYFD mydata
-
-  // Use memfd as temporary in-RAM storage
   L_builtin memfd FD
-  echo data >&$FD
-  cat <&$FD
+  echo data >&\"$FD\"
+  cat <&\"$FD\"
+  exec {FD}>&-
 ",
 );
 

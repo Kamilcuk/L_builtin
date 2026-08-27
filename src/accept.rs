@@ -24,6 +24,20 @@ The client's address (IP:PORT) is stored in ADDR_VAR.
 
 Exit Status:
 Returns success unless accept fails or variable binding fails.
+
+Examples:
+  L_builtin listen -p PORT LFD 127.0.0.1 0
+  (
+    exec {cli}<>/dev/tcp/127.0.0.1/\"$PORT\"
+    printf 'ping' >&\"$cli\"
+    read -r r <&\"$cli\"
+    echo \"server said $r\"
+  ) &
+  L_builtin accept CFD ADDR \"$LFD\"
+  L_builtin recv -v msg \"$CFD\" 4
+  echo \"client $ADDR said: $msg\"
+  L_builtin send \"$CFD\" 'pong'
+  exec {CFD}>&- {LFD}>&-
 ",
 );
 
