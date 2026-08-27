@@ -17,21 +17,16 @@
 #define SENTINEL
 #endif
 
-static int compare_builtin(const void *key, const void *elem)
-{
-  const char *search_name = (const char *)key;
-  const struct builtin *b = *(const struct builtin **)elem;
-  return strcmp(search_name, b->name);
-}
-
-static struct builtin *find_loadable_builtin(const char *name)
+static const struct builtin *find_loadable_builtin(const char *name)
 {
   assert(name);
-  size_t n = LEN(bash_loadables_gen);
-  assert(n);
-  struct builtin **match =
-    (void *)bsearch(name, bash_loadables_gen, n, sizeof(struct builtin *), compare_builtin);
-  return match ? *match : NULL;
+  for (size_t i = 0; i < LEN(bash_loadables_gen); i++) {
+    const struct builtin *const b = bash_loadables_gen[i];
+    if (strcmp(name, b->name) == 0) {
+      return b;
+    }
+  }
+  return NULL;
 }
 
 static void print_loadables_usage(void)
@@ -39,14 +34,30 @@ static void print_loadables_usage(void)
   fprintf(
     stderr, "%s: usage: %s [-h] <subcommand> [args ...]\n", this_command_name, this_command_name
   );
-  fprintf(stderr, "Available subcommands:\n");
+  fprintf(
+    stderr,
+    "\n"
+    "Builtins from bash's source code examples/loadables/ directory.\n"
+    "\n"
+    "Available subcommands:\n"
+  );
   for (size_t i = 0; i < LEN(bash_loadables_gen); i++) {
     const struct builtin *b = bash_loadables_gen[i];
     assert(b);
     assert(b->name);
     assert(*b->name);
     fprintf(stderr, "  %-15s ", b->name);
+    /* Print the one-line description from long_doc[0] if available. */
+    if (b->long_doc && b->long_doc[0]) {
+      const char *nl = strchr(b->long_doc[0], '\n');
+      if (nl) {
+        fwrite(b->long_doc[0], 1, (size_t)(nl - b->long_doc[0]), stderr);
+      } else {
+        fputs(b->long_doc[0], stderr);
+      }
+    }
     if (b->short_doc) {
+      fputs("  ", stderr);
       const char *nl = strchr(b->short_doc, '\n');
       if (nl) {
         /* Multi-line path: process line segments without per-char fputc */
@@ -105,7 +116,7 @@ int l_cmd_ext(WORD_LIST *list)
   }
   const char *subcmd = list->word->word;
   assert(subcmd);
-  struct builtin *b = find_loadable_builtin(subcmd);
+  const struct builtin *const b = find_loadable_builtin(subcmd);
   if (!b) {
     builtin_error("unknown subcommand `%s'", subcmd);
     print_loadables_usage();

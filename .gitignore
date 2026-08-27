@@ -28,6 +28,7 @@ L_builtin.so
 
 temp/
 plan.md
+task.md
 
 # Python (scripts/gen_readme.py)
 __pycache__/
