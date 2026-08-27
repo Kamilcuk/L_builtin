@@ -24,8 +24,9 @@ and the per-command reference text is written between
 Rules:
   * Every section title carries the ``L_builtin`` prefix, e.g.
     ``### `L_builtin lseek```.
-  * ``core`` is a thin wrapper around Rust/uutils coreutils: only its own
-    ``-h`` listing is emitted (no per-utility sub-sections).
+  * ``core`` is a thin wrapper around Rust/uutils coreutils: its ``-h`` listing
+    is emitted *and* a placeholder section is created for each core utility
+    subcommand (with a one-line test description, not the utility's own ``-h``).
   * ``ext`` is a wrapper around Bash's example loadables: its ``-h`` listing
     is emitted *and* the ``-h`` output of every child builtin (asort, basename,
     ...) is included as a sub-section.
@@ -83,7 +84,11 @@ def _extract_listing(text: str, header: str) -> list[str]:
         return []
     region = text[idx + len(header):]
     names: list[str] = []
-    entry_re = re.compile(r"^  (\S+)\s+(\S.*)$")
+    # Match entries with exactly 2 or 4 leading spaces.  Two-space indent is
+    # used by top-level, ext and compound-command listings; four-space indent
+    # is used by the core/utils listing.  Deeper-indented (6+ spaces) lines are
+    # description/continuation lines and must not be treated as entries.
+    entry_re = re.compile(r"^(?: {4}|  )(\S+)\s+(\S.*)$")
     for line in region.splitlines():
         if line.strip() == "":
             # End of the listing block once we've collected at least one entry.
@@ -95,11 +100,11 @@ def _extract_listing(text: str, header: str) -> list[str]:
             if names:
                 break
             continue
-        # Indented line: an entry starts with exactly two spaces + non-space.
+        # Indented line: an entry starts with exactly 2 or 4 spaces + non-space.
         m = entry_re.match(line)
         if m:
             names.append(m.group(1))
-        # Deeper-indented (3+ spaces) lines are descriptions / continuations.
+        # Deeper-indented lines are descriptions / continuations.
     return names
 
 
@@ -137,8 +142,13 @@ def build_parts(b, so) -> list[tuple[int, str, str]]:
             continue
 
         if name == "core":
-            # Just the listing; do not recurse into coreutils utilities.
+            # Listing plus per-utility placeholder sections (no -h descent).
             parts.append((3, f"L_builtin {name}", help_text))
+            for child in _extract_listing(help_text, "Available subcommands:"):
+                # Emit a placeholder section with a test description instead
+                # of recursing into the coreutils utility's own -h output.
+                child_help = f"runs coreutils `{child}` command\n"
+                parts.append((4, f"L_builtin {name} {child}", child_help))
             continue
 
         if name == "ext":
@@ -253,11 +263,6 @@ def main() -> int:
     body = generate(str(bash), str(so))
     body_block = (
         "<!-- README_GEN_START -->\n"
-        "\n"
-        "This section is **auto-generated** from `L_builtin <subcommand> -h`.\n"
-        "Regenerate with `make readme` or `uv run --with markdown-it-py "
-        "scripts/gen_readme.py`. Do not edit by hand between the markers.\n"
-        "\n"
         + body
         + "\n<!-- README_GEN_END -->"
     )

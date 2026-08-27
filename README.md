@@ -1,14 +1,8 @@
 # L_builtin
 
-
-
 A collection of loadable C/Rust builtins designed to extend Bash with OS-level capabilities.
 
-
-
 These builtins are compiled into a shared library (`L_builtin.so`) which can be dynamically loaded into Bash using the `enable` command. They provide abstractions for file operations, signal masking, polling, Lua integration, networking, and core utilities via Rust/uutils.
-
-
 
 ## Table of Contents
 
@@ -38,6 +32,12 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
     - [L_builtin capture](#l_builtin-capture)
     - [L_builtin connect](#l_builtin-connect)
     - [L_builtin core](#l_builtin-core)
+      - [L_builtin core ls](#l_builtin-core-ls)
+      - [L_builtin core stat](#l_builtin-core-stat)
+      - [L_builtin core dirname](#l_builtin-core-dirname)
+      - [L_builtin core rm](#l_builtin-core-rm)
+      - [L_builtin core tee](#l_builtin-core-tee)
+      - [L_builtin core sleep](#l_builtin-core-sleep)
     - [L_builtin eventfd](#l_builtin-eventfd)
       - [L_builtin eventfd create](#l_builtin-eventfd-create)
       - [L_builtin eventfd write](#l_builtin-eventfd-write)
@@ -50,6 +50,7 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
       - [L_builtin epoll wait](#l_builtin-epoll-wait)
       - [L_builtin epoll close](#l_builtin-epoll-close)
     - [L_builtin ext](#l_builtin-ext)
+      - [L_builtin ext accept](#l_builtin-ext-accept)
       - [L_builtin ext asort](#l_builtin-ext-asort)
       - [L_builtin ext basename](#l_builtin-ext-basename)
       - [L_builtin ext cat](#l_builtin-ext-cat)
@@ -153,10 +154,7 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
   - [Self promotion](#self-promotion)
 <!-- TOC_GEN_END -->
 
-
 ## Quick Reference
-
-
 
 ```bash
 
@@ -164,15 +162,11 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
 
 enable -f ./build/L_builtin.so L_builtin
 
-
-
 # Help
 
 L_builtin -h
 
 L_builtin <subcommand> -h
-
-
 
 # File/Process
 
@@ -182,23 +176,17 @@ L_builtin pipe fds
 
 L_builtin sleep 0.05
 
-
-
 # Signals
 
 L_builtin sigmask -s SIGUSR1
 
 L_builtin sigunmask -s SIGUSR1 cmd
 
-
-
 # Polling
 
 L_builtin poll -t 1000 -v ready 0:r 1:w
 
 L_builtin ppoll -t 1000 -v ready -u SIGINT 0:r
-
-
 
 # Networking
 
@@ -214,13 +202,9 @@ L_builtin recv -f hex -v data -n fd 4096
 
 L_builtin shutdown fd WR
 
-
-
 # Lua
 
 L_builtin lua 'local home = bash.get("HOME"); print(home)'
-
-
 
 # Core utils
 
@@ -228,23 +212,15 @@ L_builtin core ls -la
 
 L_builtin core stat file.txt
 
-
-
 # Capture
 
 L_builtin capture var echo hello
 
 ```
 
-
-
 ## Installation
 
-
-
 The library is one file. Download the latest release from GitHub and put in your shell's builtin path:
-
-
 
 ```bash
 
@@ -253,8 +229,6 @@ mkdir -vp ~/.local/lib/bash/
 wget -O ~/.local/lib/bash/L_builtin.so https://github.com/Kamilcuk/L_builtin/releases/latest/download/L_builtin-linux-x86_64-bash-5.3.so
 
 ```
-
-
 
 Then load in your `.bashrc` or interactively:
 
@@ -266,15 +240,9 @@ L_builtin --help
 
 ```
 
-
-
 > **Note:** `L_builtin.so` is a Bash loadable builtin (shared library), not a standalone executable. It must be loaded via `enable -f` inside Bash - it cannot be run directly.
 
-
-
 ## Quick Start
-
-
 
 ### Prerequisites (Build)
 
@@ -286,15 +254,11 @@ L_builtin --help
 
 - A C compiler (e.g., clang or gcc)
 
-
-
 ### Prerequisites (Run)
 
 - Bash (any version with `enable -f` support)
 
 - `L_builtin.so` (built artifact)
-
-
 
 ### Build
 
@@ -312,8 +276,6 @@ cmake --build build
 
 Creates `build/L_builtin.so`.
 
-
-
 ### Load into Bash
 
 ```bash
@@ -322,15 +284,11 @@ Creates `build/L_builtin.so`.
 
 make sh
 
-
-
 # Or manually:
 
 enable -f ./build/L_builtin.so L_builtin
 
 ```
-
-
 
 ### Run Tests
 
@@ -341,8 +299,6 @@ make test
 ```
 
 This compiles the module, runs all modular test files in `tests/`, and executes style checks, formatting validation, and static analysis.
-
-
 
 ## Features
 
@@ -432,8 +388,6 @@ This compiles the module, runs all modular test files in `tests/`, and executes 
   ```
 ## Usage Examples
 
-
-
 ### Sleep
 
 ```bash
@@ -441,8 +395,6 @@ This compiles the module, runs all modular test files in `tests/`, and executes 
 L_builtin sleep 0.001  # 1 millisecond
 
 ```
-
-
 
 ### Create and Use a Pipe
 
@@ -458,8 +410,6 @@ $line"
 
 ```
 
-
-
 ### Signal Masking
 
 ```bash
@@ -474,8 +424,6 @@ L_builtin sigunmask -s SIGUSR1 my_command
 
 ```
 
-
-
 ### Poll Multiple FDs
 
 ```bash
@@ -485,8 +433,6 @@ L_builtin poll -t 5000 -v ready_fds 3:r 4:w 5:p
 # ready_fds contains entries like "3:r" when fd 3 is readable
 
 ```
-
-
 
 ### TCP Networking
 
@@ -504,8 +450,6 @@ L_builtin send -v sent client_fd "Hello from server"
 
 L_builtin shutdown client_fd WR
 
-
-
 # Client
 
 L_builtin connect client_fd 127.0.0.1 $port_var
@@ -515,8 +459,6 @@ L_builtin recv -v data client_fd 1024
 $data"
 
 ```
-
-
 
 ### Embedded Lua
 
@@ -534,8 +476,6 @@ L_builtin lua '
 
 ```
 
-
-
 ### Core Utilities (Rust/uutils)
 
 ```bash
@@ -545,8 +485,6 @@ L_builtin core ls -la /tmp
 L_builtin core stat /etc/passwd
 
 ```
-
-
 
 ### Capture Command Output
 
@@ -558,14 +496,9 @@ $output_var"
 
 ```
 
-
 ## Subcommand Reference
 
 <!-- README_GEN_START -->
-
-This section is **auto-generated** from `L_builtin <subcommand> -h`.
-Regenerate with `make readme` or `uv run --with markdown-it-py scripts/gen_readme.py`. Do not edit by hand between the markers.
-
 ### `L_builtin accept`
 
 ```
@@ -618,6 +551,42 @@ Available subcommands:
     sleep    Delay for a specified amount of time
 
 Use 'L_builtin core <subcommand> --help' for more information.
+```
+
+#### `L_builtin core ls`
+
+```
+runs coreutils `ls` command
+```
+
+#### `L_builtin core stat`
+
+```
+runs coreutils `stat` command
+```
+
+#### `L_builtin core dirname`
+
+```
+runs coreutils `dirname` command
+```
+
+#### `L_builtin core rm`
+
+```
+runs coreutils `rm` command
+```
+
+#### `L_builtin core tee`
+
+```
+runs coreutils `tee` command
+```
+
+#### `L_builtin core sleep`
+
+```
+runs coreutils `sleep` command
 ```
 
 ### `L_builtin eventfd`
@@ -855,53 +824,86 @@ Examples:
 
 ```
 L_builtin ext: usage: L_builtin ext [-h] <subcommand> [args ...]
+
+Builtins from bash's source code examples/loadables/ directory.
+
 Available subcommands:
-  asort           asort [-nr] array ...  or  asort [-nr] -i dest source
-  basename        basename string [suffix]
-  cat             cat [-] [file ...]
-  chmod           chmod [-R] mode file [file...]
-  csv             csv [-a ARRAY] string
-  cut             cut [-a ARRAY] [-b LIST] [-c LIST] [-f LIST] [-d CHAR] [-sn] [file ...]
-  dirname         dirname string
-  dsv             dsv [-a ARRAYNAME] [-d DELIMS] [-Sgp] string
-  enable_mypid    enable_mypid N
-  false           false
-  fdflags         fdflags [-v] [-s flags_string] [fd ...]
-  finfo           finfo [-acdgiflmnopsuACGMPU] file [file...]
-  fltexpr         fltexpr [-p] expression
-  getconf         getconf -[ah] [file] or getconf [-v spec] sysvar or getconf [-v spec] pathvar pathname
-  head            head [-n num] [file ...]
-  hello           hello
-  id              id [user]  id -G [-n] [user]  id -g [-nr] [user]  id -u [-nr] [user]
-  kv              kv [-A ARRAYNAME] [-s SEPARATORS] [-d RS]
-  lcut            lcut [-a ARRAY] [-b LIST] [-c LIST] [-f LIST] [-d CHAR] [-sn] line
-  ln              ln [-fhns] file1 [file2] OR ln [-fhns] file ... directory
-  logname         logname
-  mkdir           mkdir [-p] [-m mode] directory [directory ...]
-  mkfifo          mkfifo [-m mode] fifo_name [fifo_name ...]
-  mktemp          mktemp [-d] [-q] [-t prefix] [-u] [-v varname] [template] ...
-  echo            echo [args]
-  pathchk         pathchk [-p] pathname ...
-  print           print [-Rnprs] [-u unit] [-f format] [arguments]
-  printenv        printenv [varname]
-  push            push
-  realpath        realpath [-a varname] [-cqsv] pathname [pathname...]
-  rm              rm [-rf] file ...
-  rmdir           rmdir directory ...
-  seq             seq [-f format] [-s separator] [-w] [FIRST [INCR]] LAST
-  setpgid         setpgid pid pgrpid
-  sleep           sleep seconds[.fraction]
-  stat            stat [-lL] [-A aname] file
-  strftime        strftime format [seconds]
-  strptime        strptime [-f format] date-time
-  sync            sync [file ...]
-  tee             tee [-ai] [file ...]
-  template        template
-  true            true
-  tty             tty [-s]
-  uname           uname [-amnrsv]
-  unlink          unlink name
-  whoami          whoami
+  accept          Accept a network connection on a specified port.  accept [-b address] [-t timeout] [-v varname] [-r addrvar ] port
+  asort           Sort arrays in-place.  asort [-nr] array ...  or  asort [-nr] -i dest source
+  basename        Return non-directory portion of pathname.  basename string [suffix]
+  cat             Display files.  cat [-] [file ...]
+  chmod           Change file mode bits.  chmod [-R] mode file [file...]
+  csv             Read comma-separated fields from a string.  csv [-a ARRAY] string
+  cut             Extract selected fields from each line of a file.  cut [-a ARRAY] [-b LIST] [-c LIST] [-f LIST] [-d CHAR] [-sn] [file ...]
+  dirname         Display directory portion of pathname.  dirname string
+  dsv             Read delimiter-separated fields from STRING.  dsv [-a ARRAYNAME] [-d DELIMS] [-Sgp] string
+  enable_mypid    Enable $MYPID.  enable_mypid N
+  false           Exit unsuccessfully.  false
+  fdflags         Display and modify file descriptor flags.  fdflags [-v] [-s flags_string] [fd ...]
+  finfo           Display information about file attributes.  finfo [-acdgiflmnopsuACGMPU] file [file...]
+  fltexpr         Evaluate floating-point arithmetic expression.  fltexpr [-p] expression
+  getconf         Display values of system limits and options.  getconf -[ah] [file] or getconf [-v spec] sysvar or getconf [-v spec] pathvar pathname
+  head            Display lines from beginning of file.  head [-n num] [file ...]
+  hello           Sample builtin.  hello
+  id              Display information about user.  id [user]  id -G [-n] [user]  id -g [-nr] [user]  id -u [-nr] [user]
+  kv              Read key-value pairs into an associative array.  kv [-A ARRAYNAME] [-s SEPARATORS] [-d RS]
+  lcut            Extract selected fields from a string.  lcut [-a ARRAY] [-b LIST] [-c LIST] [-f LIST] [-d CHAR] [-sn] line
+  ln              Link files.  ln [-fhns] file1 [file2] OR ln [-fhns] file ... directory
+  logname         Display user login name.  logname
+  mkdir           Create directories.  mkdir [-p] [-m mode] directory [directory ...]
+  mkfifo          Create FIFOs (named pipes).  mkfifo [-m mode] fifo_name [fifo_name ...]
+  mktemp          Make unique temporary file name  mktemp [-d] [-q] [-t prefix] [-u] [-v varname] [template] ...
+  echo            Display arguments.  echo [args]
+  pathchk         Check pathnames for validity.  pathchk [-p] pathname ...
+  print           Display arguments.  print [-Rnprs] [-u unit] [-f format] [arguments]
+  printenv        Display environment.  printenv [varname]
+  push            Create child shell.  push
+  realpath        Display pathname in canonical form.  realpath [-a varname] [-cqsv] pathname [pathname...]
+  rm              Remove files.  rm [-rf] file ...
+  rmdir           Remove directory.  rmdir directory ...
+  seq             Print numbers from FIRST to LAST, in steps of INCREMENT.  seq [-f format] [-s separator] [-w] [FIRST [INCR]] LAST
+  setpgid         invoke the setpgid(2) system call  setpgid pid pgrpid
+  sleep           Suspend execution for specified period.  sleep seconds[.fraction]
+  stat            Load an associative array with file status information.  stat [-lL] [-A aname] file
+  strftime        Display formatted time.  strftime format [seconds]
+  strptime        Convert a date-time string to seconds since the epoch.  strptime [-f format] date-time
+  sync            Sync disks or specified files.  sync [file ...]
+  tee             Duplicate standard output.  tee [-ai] [file ...]
+  template        Short description.  template
+  true            Exit successfully.  true
+  tty             Display terminal name.  tty [-s]
+  uname           Display system information.  uname [-amnrsv]
+  unlink          Remove a directory entry.  unlink name
+  whoami          Print user name  whoami
+```
+
+#### `L_builtin ext accept`
+
+```
+L_builtin ext accept: usage: accept [-b address] [-t timeout] [-v varname] [-r addrvar ] port
+
+Accept a network connection on a specified port.
+This builtin allows a bash script to act as a TCP/IP server.
+
+Options, if supplied, have the following meanings:
+    -b address    use ADDRESS as the IP address to listen on; the
+                  default is INADDR_ANY
+    -t timeout    wait TIMEOUT seconds for a connection. TIMEOUT may
+                  be a decimal number including a fractional portion
+    -v varname    store the numeric file descriptor of the connected
+                  socket into VARNAME. The default VARNAME is ACCEPT_FD
+    -r rhost      store the IP address of the remote host into the shell
+                  variable RHOST, in dotted-decimal notation
+
+If successful, the shell variable ACCEPT_FD, or the variable named by the
+-v option, will be set to the fd of the connected socket, suitable for
+use as 'read -u$ACCEPT_FD'. RHOST, if supplied, will hold the IP address
+of the remote client. The return status is 0.
+
+On failure, the return status is 1 and ACCEPT_FD (or VARNAME) and RHOST,
+if supplied, will be unset.
+
+The server socket fd will be closed before accept returns.
 ```
 
 #### `L_builtin ext asort`
@@ -1321,55 +1323,12 @@ false if an error occurs or VAR is invalid or readonly.
 #### `L_builtin ext echo`
 
 ```
-/home/kamil/myprojects/L_builtin/build/bash/system/bash: line 2: L_builtin ext: unknown subcommand `echo'
-L_builtin ext: usage: L_builtin ext [-h] <subcommand> [args ...]
-Available subcommands:
-  asort           asort [-nr] array ...  or  asort [-nr] -i dest source
-  basename        basename string [suffix]
-  cat             cat [-] [file ...]
-  chmod           chmod [-R] mode file [file...]
-  csv             csv [-a ARRAY] string
-  cut             cut [-a ARRAY] [-b LIST] [-c LIST] [-f LIST] [-d CHAR] [-sn] [file ...]
-  dirname         dirname string
-  dsv             dsv [-a ARRAYNAME] [-d DELIMS] [-Sgp] string
-  enable_mypid    enable_mypid N
-  false           false
-  fdflags         fdflags [-v] [-s flags_string] [fd ...]
-  finfo           finfo [-acdgiflmnopsuACGMPU] file [file...]
-  fltexpr         fltexpr [-p] expression
-  getconf         getconf -[ah] [file] or getconf [-v spec] sysvar or getconf [-v spec] pathvar pathname
-  head            head [-n num] [file ...]
-  hello           hello
-  id              id [user]  id -G [-n] [user]  id -g [-nr] [user]  id -u [-nr] [user]
-  kv              kv [-A ARRAYNAME] [-s SEPARATORS] [-d RS]
-  lcut            lcut [-a ARRAY] [-b LIST] [-c LIST] [-f LIST] [-d CHAR] [-sn] line
-  ln              ln [-fhns] file1 [file2] OR ln [-fhns] file ... directory
-  logname         logname
-  mkdir           mkdir [-p] [-m mode] directory [directory ...]
-  mkfifo          mkfifo [-m mode] fifo_name [fifo_name ...]
-  mktemp          mktemp [-d] [-q] [-t prefix] [-u] [-v varname] [template] ...
-  echo            echo [args]
-  pathchk         pathchk [-p] pathname ...
-  print           print [-Rnprs] [-u unit] [-f format] [arguments]
-  printenv        printenv [varname]
-  push            push
-  realpath        realpath [-a varname] [-cqsv] pathname [pathname...]
-  rm              rm [-rf] file ...
-  rmdir           rmdir directory ...
-  seq             seq [-f format] [-s separator] [-w] [FIRST [INCR]] LAST
-  setpgid         setpgid pid pgrpid
-  sleep           sleep seconds[.fraction]
-  stat            stat [-lL] [-A aname] file
-  strftime        strftime format [seconds]
-  strptime        strptime [-f format] date-time
-  sync            sync [file ...]
-  tee             tee [-ai] [file ...]
-  template        template
-  true            true
-  tty             tty [-s]
-  uname           uname [-amnrsv]
-  unlink          unlink name
-  whoami          whoami
+L_builtin ext echo: usage: echo [args]
+
+Display arguments.
+
+Print the arguments to the standard output separated
+by space characters and terminated with a newline.
 ```
 
 #### `L_builtin ext pathchk`
@@ -2866,15 +2825,9 @@ Examples:
 
 ## License
 
-
-
 This project is licensed under the GNU General Public License v3.0 - see [LICENSE](LICENSE) for details.
 
-
-
 ## Self promotion
-
-
 
 [mkdocstrings-sh](https://github.com/kamilcuk/mkdocstrings-sh), [L_lib](https://github.com/Kamilcuk/L_lib), [L_bash_profile](https://github.com/Kamilcuk/L_bash_profile).
 
