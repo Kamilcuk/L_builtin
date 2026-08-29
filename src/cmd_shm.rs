@@ -45,8 +45,9 @@ use cmdargs_derive::CmdArgs;
 
 use crate::bash_api::{
     array_insert, array_remove, arrayind_t, assoc_remove, find_variable, is_valid_var_name,
-    l_array_cell, l_array_max_index, l_assoc_cell, l_assoc_insert, l_assoc_p,
-    l_init_dynamic_array_var, l_init_dynamic_assoc_var, l_unbind_variable, variable, ArrayIterator,
+    l_array_cell, l_array_max_index, l_array_p, l_assoc_cell, l_assoc_insert, l_assoc_p,
+    l_init_dynamic_array_var, l_init_dynamic_assoc_var, l_prepare_assoc_array,
+    l_prepare_indexed_array, l_unbind_variable, l_value_cell, variable, ArrayIterator,
     AssocIterator, WordListIterCpnt, EXECUTION_FAILURE, EX_USAGE, SHELL_VAR, WORD_LIST,
 };
 use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
@@ -362,6 +363,10 @@ struct ShmBindArgs {
     /// Create an associative array instead of an indexed array.
     #[flag('A')]
     assoc: bool,
+    /// Preserve the variable's current bash value: seed it into the database
+    /// after binding so the existing contents survive the bind.
+    #[flag('p')]
+    preserve: bool,
     /// Bash variable names to bind (one or more).
     #[rest]
     vars: Vec<BashVar>,
@@ -512,12 +517,50 @@ impl ShmClearArgs {
     }
 }
 
-/// `L_builtin shm bind [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME...`
+/// Snapshot the current bash value of `name` (before it is rebound as a dynamic
+/// shm variable) so it can be seeded into the shared database. Returns `None` if
+/// the variable does not exist. Preserves indexed-array elements, associative-array
+/// pairs, or a scalar as a single element at index 0.
+unsafe fn capture_current_value(name: *mut c_char) -> Option<VarData> {
+    let shellvar = find_variable(name);
+    if shellvar.is_null() {
+        return None;
+    }
+    if l_assoc_p(shellvar) != 0 {
+        let mut m: HashMap<CString, CString> = HashMap::new();
+        let hash = l_assoc_cell(shellvar as *mut SHELL_VAR);
+        for (k, v) in AssocIterator::new(hash) {
+            m.insert(k.to_owned(), v.to_owned());
+        }
+        Some(VarData::Assoc(m))
+    } else if l_array_p(shellvar) != 0 {
+        let mut m: HashMap<i64, CString> = HashMap::new();
+        let arr = l_array_cell(shellvar as *mut SHELL_VAR);
+        for (idx, val) in ArrayIterator::new(arr) {
+            m.insert(idx, val.to_owned());
+        }
+        Some(VarData::Array(m))
+    } else {
+        let val = l_value_cell(shellvar as *mut SHELL_VAR);
+        let cs = if val.is_null() {
+            CString::new("").unwrap()
+        } else {
+            CString::from(CStr::from_ptr(val))
+        };
+        let mut m: HashMap<i64, CString> = HashMap::new();
+        m.insert(0, cs);
+        Some(VarData::Array(m))
+    }
+}
+
+/// `L_builtin shm bind [-p] [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME...`
 ///
 /// Bind bash variable(s) VAR_NAME (indexed, or associative with `-A`) to a shared
 /// database. The database is selected by `-s` (POSIX shared memory), `-n`
 /// (anonymous in-memory mapping) or `-F` (a regular file); with none of them the
-/// default `DEFAULT` in-memory database is used.
+/// default `DEFAULT` in-memory database is used. With `-p`, the variable's current
+/// bash value is preserved: it is seeded into the database as the variable's entry,
+/// so its existing contents survive the bind instead of being reset to empty.
 unsafe fn shm_bind_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SHM_BIND_CMD.enter();
     let args = ShmBindArgs::parse(list)?;
@@ -545,10 +588,13 @@ unsafe fn shm_bind_subcommand(list: *mut WORD_LIST) -> CmdResult {
     }
     for var in &args.vars {
         let cname = CStr::from_ptr(var.as_ptr());
-        // Preserve any existing db data for this variable: the getter will read
-        // it and override any stale local bash value. If the db entry has a
-        // mismatched type (e.g. was an assoc but is now requested as indexed),
-        // the getter's `as_array()`/`as_assoc()` guard skips it harmlessly.
+        // Capture the variable's current value before the binding re-creates the
+        // bash variable as a dynamic one (which would otherwise discard it).
+        let preserved = if args.preserve {
+            capture_current_value(var.as_ptr() as *mut c_char)
+        } else {
+            None
+        };
         REGISTRY.with(|r| r.borrow_mut().insert(cname.to_owned(), db.clone()));
         let result = if args.assoc {
             l_init_dynamic_assoc_var(
@@ -565,6 +611,14 @@ unsafe fn shm_bind_subcommand(list: *mut WORD_LIST) -> CmdResult {
         };
         if result.is_null() {
             return Err(l_builtin_error!(b": failed to bind variable ", var.as_ptr()));
+        }
+        // Seed the preserved value into the database so the getter reflects it.
+        if let Some(data) = preserved {
+            let name = cname.to_owned();
+            db.with_write(|repr| {
+                repr.vars.insert(name, data);
+            })
+            .map_err(|e| l_builtin_error!(e))?;
         }
     }
     Ok(())
@@ -637,11 +691,53 @@ unsafe fn shm_rm_subcommand(list: *mut WORD_LIST) -> CmdResult {
     Ok(())
 }
 
+/// Snapshot the current shared-database value of `name` (if it is bound) so it
+/// can be preserved across an unbind. Returns `None` when the variable is not
+/// bound to any database.
+fn snapshot_var(name: &CStr) -> Option<VarData> {
+    REGISTRY.with(|r| {
+        r.borrow()
+            .get(name)
+            .and_then(|db| db.read().ok().and_then(|repr| repr.vars.get(name).cloned()))
+    })
+}
+
+/// Recreate `name` as a plain (non-dynamic) bash variable holding `data`, after
+/// its dynamic binding has been removed. The array/assoc cell is populated from
+/// `data`; no getter/setter is attached, so the variable reverts to a normal
+/// (static) variable that simply retains the value it had while shared.
+unsafe fn restore_plain_variable(name: *const c_char, data: VarData) {
+    match data {
+        VarData::Array(m) => {
+            let arr = l_prepare_indexed_array(name);
+            if !arr.is_null() {
+                for (idx, val) in m {
+                    array_insert(arr, idx, val.as_ptr() as *mut c_char);
+                }
+            }
+        }
+        VarData::Assoc(m) => {
+            let hash = l_prepare_assoc_array(name);
+            if !hash.is_null() {
+                for (k, val) in m {
+                    l_assoc_insert(
+                        hash,
+                        k.as_ptr() as *const c_char,
+                        val.as_ptr() as *const c_char,
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// `L_builtin shm unbind VAR_NAME [VAR_NAME...]`
 ///
 /// Unbind the named variable(s) from this shell: drop the registry entry and
-/// unbind the bash variable. This does NOT remove the variable's data from the
-/// shared database; another process may still read it.
+/// detach the shared database. Unlike a plain `unset`, the variable's current
+/// value is preserved -- it is snapshotted from the shared database and left in a
+/// plain (non-dynamic) bash variable, so the data survives the unbind. The
+/// database entry itself is left untouched; another process may still read it.
 unsafe fn shm_unbind_subcommand(list: *mut WORD_LIST) -> CmdResult {
     SHM_UNBIND_CMD.enter();
     let args = ShmUnbindArgs::parse(list)?;
@@ -653,8 +749,15 @@ unsafe fn shm_unbind_subcommand(list: *mut WORD_LIST) -> CmdResult {
     for c in args.vars {
         let v = c.as_ptr() as *const c_char;
         let cname = CStr::from_ptr(v);
+        // Snapshot the current value before dropping the binding.
+        let snapshot = snapshot_var(cname);
         REGISTRY.with(|r| r.borrow_mut().remove(cname));
+        // Remove the dynamic variable entirely; it is recreated below with the
+        // preserved value when one was captured.
         l_unbind_variable(v);
+        if let Some(data) = snapshot {
+            restore_plain_variable(v, data);
+        }
     }
     Ok(())
 }
@@ -823,7 +926,7 @@ unsafe fn shm_ls_subcommand(list: *mut WORD_LIST) -> CmdResult {
 
 const SHM_CMD: CmdDesc = CmdDesc::new(
     c"shm",
-    c"bind [-A] [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME | rm [-s NAME | -n NAME | -M NAME | -F PATH] | unbind VAR_NAME... | drop VAR_NAME | clear [-s NAME | -n NAME | -M NAME | -F PATH] | info [-s NAME | -n NAME | -M NAME | -F PATH] | ls [-s NAME | -n NAME | -M NAME | -F PATH] | sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME",
+    c"bind [-p] [-A] [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME | rm [-s NAME | -n NAME | -M NAME | -F PATH] | unbind VAR_NAME... | drop VAR_NAME | clear [-s NAME | -n NAME | -M NAME | -F PATH] | info [-s NAME | -n NAME | -M NAME | -F PATH] | ls [-s NAME | -n NAME | -M NAME | -F PATH] | sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME",
     c"\
 Shared-memory variables backed by a rkyv database.
 
@@ -837,11 +940,13 @@ Each backing is referenced by a single, consistent selector:
   (none)    the default in-memory mapping named DEFAULT (same as -n DEFAULT).
 
 Subcommands:
-  bind [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME
+  bind [-p] [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME
                             Bind bash variable VAR_NAME (indexed, or associative
                             with -A) to a shared database and store its value.
                             -s/-n/-M/-F selects the backing (see above); none uses
-                            DEFAULT. The value is stored under VAR_NAME.
+                            DEFAULT. The value is stored under VAR_NAME. With -p,
+                            the variable's current bash value is preserved (seeded
+                            into the database) instead of being reset to empty.
   rm [-s NAME | -n NAME | -M NAME | -F PATH]
                             Destroy the whole database: unbind every variable bound
                             to it and unlink/drop its backing object/file (-s/-F).
@@ -890,7 +995,7 @@ const SHM_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
 
 const SHM_BIND_CMD: CmdDesc = CmdDesc::new(
     c"bind",
-    c"bind [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME",
+    c"bind [-p] [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME",
     c"\
 Bind bash variable VAR_NAME (indexed, or associative with -A) to a shared
 database.
@@ -914,6 +1019,11 @@ that maps the same database, e.g. a background job started with & (for -s/-F/-n)
 With -A, create an associative array (key-value pairs with string keys) instead
 of an indexed array (integer indices). NAME (for -s/-n/-M) must be a valid shell
 variable name; -F takes a path; the SIZE in -M NAME:SIZE must be >= 100 bytes.
+
+With -p, preserve the variable's current bash value: after the binding is created
+the existing contents of VAR_NAME are seeded into the shared database, so they are
+not lost (by default binding resets the variable to empty). This is equivalent to
+binding and then assigning the old value back, but done atomically in one step.
 
 Examples:
   L_builtin shm bind v
@@ -956,16 +1066,19 @@ const SHM_UNBIND_CMD: CmdDesc = CmdDesc::new(
     c"unbind",
     c"unbind VAR_NAME [VAR_NAME...]",
     c"\
-Unbind the named variable(s) from this shell: drop the registry entry and unbind
-the bash variable. This does NOT remove the variable's data from the shared
-database; another process that has the variable bound may still read it.
+Unbind the named variable(s) from this shell: drop the registry entry and detach
+the shared database. Unlike a plain unset, the variable's current value is
+preserved: it is snapshotted from the shared database and left in a plain (non-
+dynamic) bash variable, so the data survives the unbind. The database entry
+itself is left untouched; another process that has the variable bound may still
+read it.
 
 The store is found via each variable's existing binding; no backing flags are
 needed.
 
 Examples:
-  L_builtin shm unbind v         # stop sharing 'v' in this shell
-  L_builtin shm unbind v w       # unbind 'v' and 'w'
+  L_builtin shm unbind v         # stop sharing 'v' but keep its value locally
+  L_builtin shm unbind v w       # unbind 'v' and 'w', keeping their values
 ",
 );
 

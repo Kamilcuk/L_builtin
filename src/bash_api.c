@@ -271,3 +271,24 @@ ARRAY *l_prepare_indexed_array(const char *name)
   return a;
 }
 
+/* Prepare NAME as an associative array suitable for a builtin to populate:
+ * mirrors l_prepare_indexed_array for associative arrays. A new name becomes a
+ * fresh assoc; an existing variable (including a function-local one) is converted
+ * in place via convert_var_to_assoc; att_invisible is cleared, the assoc
+ * attribute is set, and the table is flushed. Returns the (flushed) HASH_TABLE
+ * to insert into, or NULL on failure. */
+HASH_TABLE *l_prepare_assoc_array(const char *name)
+{
+  SHELL_VAR *v = find_variable(name);
+  if (v == NULL)
+    v = make_new_assoc_variable((char *)name);
+  else if (assoc_p(v) == 0)
+    v = convert_var_to_assoc(v);
+  if (v == NULL)
+    return NULL;
+  VSETATTR(v, att_assoc);
+  HASH_TABLE *h = assoc_cell(v);
+  assoc_flush(h);
+  return h;
+}
+

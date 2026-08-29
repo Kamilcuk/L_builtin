@@ -112,6 +112,12 @@ int l_unbind_variable(const char *name);
  * any existing elements. Returns the flushed ARRAY to insert into, or NULL. */
 ARRAY *l_prepare_indexed_array(const char *name);
 
+/* Prepare NAME as an associative array for a builtin to populate: convert an
+ * existing variable in place (or create a fresh one), set the assoc attribute,
+ * and flush any existing entries. Returns the flushed HASH_TABLE to insert into,
+ * or NULL. */
+HASH_TABLE *l_prepare_assoc_array(const char *name);
+
 /* ------------------------------------------------------------------------- */
 
 /*
