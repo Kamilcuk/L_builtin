@@ -123,6 +123,12 @@ test-all:
 test-all-all: bash-version-resolved
 	$(foreach I,$(BASH_RESOLVED_ALL_VERSIONS),$(MAKE) BASH=$(I) _test$(NL))
 
+# Test .so file build by the last run vs all bash versions.
+test-cur-vs-all: build
+	$(foreach I,$(BASH_RESOLVED_ALL_VERSIONS),$(MAKE) BASH=$(I) _test-cur-vs-all$(NL))
+_test-cur-vs-all: bash-build
+	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh ./L_builtin.so $(ARGS) $(TESTARGS)
+
 build-all:
 	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) build$(NL))
 

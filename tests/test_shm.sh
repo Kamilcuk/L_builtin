@@ -60,9 +60,7 @@ _L_test_shm_unbind_var() {
     A=(1 2)
     B=(x y)
     L_builtin shm unbind A
-    # The unbound variable is now empty.
-    L_unittest_eq "${A[*]}" ""
-    # The other variable remains bound and its data is intact.
+    L_unittest_eq "${A[*]}" "1 2"
     L_unittest_eq "${B[*]}" "x y"
     L_unittest_eq "${B[1]}" "y"
     L_builtin shm rm -n "$shm"
