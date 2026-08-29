@@ -81,27 +81,15 @@ pub unsafe fn pipe_subcommand(list: *mut WORD_LIST) -> CmdResult {
     // off to bash array -- clear the guard's fds but keep the high dups alive.
     fds.0[0] = -1;
     fds.0[1] = -1;
-    // Check if variable exists and is an array
-    let mut var = unsafe { crate::bash_api::find_variable(args.array_name.as_ptr()) };
-    if !var.is_null() {
-        let is_array = unsafe { crate::bash_api::l_array_p(var) };
-        if is_array == 0 {
-            l_builtin_error!(b"not an indexed array", args.array_name.as_ptr());
-            return Err(EXECUTION_FAILURE);
-        }
-    }
 
-    // Create array variable if it doesn't exist
-    if var.is_null() {
-        var = unsafe { crate::bash_api::make_new_array_variable(args.array_name.as_ptr()) };
-        if var.is_null() {
-            l_builtin_error!(b"cannot create array variable", args.array_name.as_ptr());
-            return Err(EXECUTION_FAILURE);
-        }
+    // Prepare the target as an indexed array: auto-converts a scalar/associative
+    // variable in place and clears the att_invisible flag that `local` sets on
+    // unset locals, so the values we write persist.
+    let array = unsafe { crate::bash_api::l_prepare_indexed_array(args.array_name.as_ptr()) };
+    if array.is_null() {
+        l_builtin_error!(b"cannot create array variable", args.array_name.as_ptr());
+        return Err(EXECUTION_FAILURE);
     }
-
-    let array = unsafe { crate::bash_api::l_array_cell(var) };
-    unsafe { crate::bash_api::array_flush(array) };
 
     // Insert read fd (index 0)
     unsafe { crate::bash_api::array_insert(array, 0, read_fd.to_intstr().as_ptr().cast_mut()) };

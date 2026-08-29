@@ -21,8 +21,7 @@ use std::os::raw::c_int;
 use cmdargs_derive::CmdArgs;
 
 use crate::bash_api::{
-    array_flush, array_insert, arrayind_t, find_variable, l_array_cell, l_array_p,
-    make_new_array_variable, EXECUTION_FAILURE, SHELL_VAR, WORD_LIST,
+    array_insert, arrayind_t, l_prepare_indexed_array, EXECUTION_FAILURE, WORD_LIST,
 };
 use crate::cmdargs::{BashVar, Duration};
 use crate::l_builtin_error;
@@ -92,30 +91,15 @@ const EPOLL_MAX_EVENTS: c_int = 256;
 
 /// Populate a sparse indexed bash array `var` with `(fd, event-tokens)` pairs.
 /// The fd is the array index, so `var[FD]` yields the event string for that fd.
-/// Existing indexed arrays are flushed first; a non-array variable is an error.
+/// Existing indexed arrays are flushed first. A scalar or associative variable is
+/// automatically converted into an indexed array (and the att_invisible flag that
+/// `local` sets on unset locals is cleared) so no prior `local -a` is needed.
 unsafe fn populate_ready_array(var: &BashVar, ready: &[(c_int, String)]) -> CmdResult {
     let name = var.as_ptr();
-    let v = find_variable(name);
-    if !v.is_null() && l_array_p(v as *mut SHELL_VAR) == 0 {
-        return Err(l_builtin_error!(
-            b"epoll wait: ",
-            name,
-            ": not an indexed array"
-        ));
-    }
-    let v = if v.is_null() {
-        make_new_array_variable(name)
-    } else {
-        v
-    };
-    if v.is_null() {
+    let a = l_prepare_indexed_array(name);
+    if a.is_null() {
         return Err(l_builtin_error!(b"epoll wait: cannot create array ", name));
     }
-    let a = l_array_cell(v as *mut SHELL_VAR);
-    if a.is_null() {
-        return Err(l_builtin_error!(b"epoll wait: cannot access array ", name));
-    }
-    array_flush(a);
     for (fd, ev) in ready {
         let mut buf = ev.as_bytes().to_vec();
         buf.push(0);

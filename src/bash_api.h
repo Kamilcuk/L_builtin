@@ -106,6 +106,12 @@ SHELL_VAR *l_init_dynamic_assoc_var(
 /* Unbind (remove) a shell variable by name; returns 1 if it existed. */
 int l_unbind_variable(const char *name);
 
+/* Prepare NAME as an indexed array for a builtin to populate: convert a
+ * scalar/associative variable in place (or create a fresh one), clear the
+ * att_invisible flag that make_local_variable sets on unset locals, and flush
+ * any existing elements. Returns the flushed ARRAY to insert into, or NULL. */
+ARRAY *l_prepare_indexed_array(const char *name);
+
 /* ------------------------------------------------------------------------- */
 
 /*

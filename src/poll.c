@@ -178,23 +178,16 @@ static int poll_internal(WORD_LIST *list, int is_ppoll)
     builtin_error("poll: %s", strerror(errno));
 
   if (ret_var) {
-    SHELL_VAR *v = find_variable(ret_var);
-    if (v && !array_p(v)) {
-      builtin_error("%s: not an indexed array", ret_var);
-      if (pfds)
-        l_xfree(pfds);
-      return (EXECUTION_FAILURE);
-    }
-    if (!v)
-      v = make_new_array_variable(ret_var);
-    if (!v) {
+    /* Prepare the target variable as an indexed array (auto-converting a
+     * scalar/associative one in place, and clearing the att_invisible flag that
+     * make_local_variable sets on unset locals so the values we write persist). */
+    ARRAY *a = l_prepare_indexed_array(ret_var);
+    if (a == NULL) {
       builtin_error("%s: cannot create array", ret_var);
       if (pfds)
         l_xfree(pfds);
       return (EXECUTION_FAILURE);
     }
-    ARRAY *a = array_cell(v);
-    array_flush(a);
 
     if (ret > 0) {
       for (int i = 0; i < nfds; i++) {
