@@ -5,7 +5,36 @@
 all: test
 .PHONY: all
 
+###############################################################################
+
 include Makefile.bash
+
+bash-clean:
+	$(MAKE) -C $(BASH_SOURCE_DIR) clean
+	rm -rf $(BASH_PREFIX)
+
+bash-distclean:
+	rm -rf $(BASH_SOURCE_DIR) $(BASH_PREFIX)
+
+bash-version: bash-build
+	$(BASH_EXE) --version
+
+.PHONY: bash-clean bash-distclean bash-version
+
+# Hardcoded version list
+BASH_VERSIONS := 4.0 4.2 4.3 4.4 5.0 5.1 5.2 5.3
+
+.PHONY: bash-build-all
+bash-build-all:
+	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) bash-build$(NL))
+
+.PHONY: bash-trim-delete-all
+bash-trim-delete-all:
+	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) bash-trim-delete$(NL))
+
+.PHONY: bash-install-all
+bash-install-all:
+	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) $(BASH_PREFIX)/bin/bash$(NL))
 
 ###############################################################################
 # ---- L_builtin targets ----
@@ -95,22 +124,6 @@ readme: build
 ###############################################################################
 # For all bash versions
 
-# Hardcoded version list
-BASH_VERSIONS := 4.0 4.1 4.2 4.3 4.4 5.0 5.1 5.2 5.3
-
-.PHONY: bash-build-all
-bash-build-all:
-	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) bash-build$(NL))
-
-.PHONY: bash-trim-delete-all
-bash-trim-delete-all:
-	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) bash-trim-delete$(NL))
-
-.PHONY: bash-install-all
-bash-install-all:
-	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) $(BASH_PREFIX)/bin/bash$(NL))
-
-
 .PHONY: _test tes-tall test-all-all build-all
 
 # Run test, but also run bash exe version, so I see what failed.
@@ -120,13 +133,11 @@ _test:
 test-all:
 	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) _test$(NL))
 
-test-all-all: bash-version-resolved
-	$(foreach I,$(BASH_RESOLVED_ALL_VERSIONS),$(MAKE) BASH=$(I) _test$(NL))
-
 # Test .so file build by the last run vs all bash versions.
-test-cur-vs-all: build
-	$(foreach I,$(BASH_RESOLVED_ALL_VERSIONS),$(MAKE) BASH=$(I) _test-cur-vs-all$(NL))
-_test-cur-vs-all: bash-build
+test-vs-all: build
+	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) test-vs$(NL))
+
+test-vs: bash-build
 	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh ./L_builtin.so $(ARGS) $(TESTARGS)
 
 build-all:

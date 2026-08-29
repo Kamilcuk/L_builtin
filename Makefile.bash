@@ -68,8 +68,10 @@ $(BASH_SOURCE_DIR)/config.status: $(BASH_SOURCE_DIR)/configure
 BASH_EXE=$(BASH_SOURCE_DIR)/bash
 
 # bash binary depends on Makefile
+# Try building twice - sometimes bash needs to kick dependency properly.
 $(BASH_EXE): $(BASH_SOURCE_DIR)/config.status
-	make -C $(BASH_SOURCE_DIR) -j$$(nproc) LOCAL_CFLAGS="$$BASH_CFLAGS"
+	make -C $(BASH_SOURCE_DIR) -j$$(nproc) LOCAL_CFLAGS="$$BASH_CFLAGS" || \
+		make -C $(BASH_SOURCE_DIR) -j$$(nproc) LOCAL_CFLAGS="$$BASH_CFLAGS"
 
 # install target depends on bash binary
 bash-install: $(BASH_PREFIX)/bin/bash
@@ -77,13 +79,6 @@ $(BASH_PREFIX)/bin/bash: $(BASH_SOURCE_DIR)/bash
 	make -C $(BASH_SOURCE_DIR) install
 
 bash-build: $(BASH_EXE)
-
-bash-distclean:
-	rm -rf $(BASH_SOURCE_DIR) $(BASH_PREFIX)
-
-bash-clean:
-	$(MAKE) -C $(BASH_SOURCE_DIR) clean
-	rm -rf $(BASH_PREFIX)
 
 BASH_TRIM = find $(BASH_SOURCE_DIR) -type f \
 	! -name '*.[hc]' \
@@ -99,7 +94,7 @@ bash-trim-print: ; $(BASH_TRIM) -print ; $(BASH_TRIM) -exec du -ch {} + | tail -
 
 bash-trim-delete: ; $(BASH_TRIM) -print -delete
 
-.PHONY: bash-build bash-distclean bash-clean bash-trim-print bash-trim-delete
+.PHONY: bash-build bash-trim-print bash-trim-delete
 
 ###############################################################################
 

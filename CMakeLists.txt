@@ -293,6 +293,8 @@ set_target_properties(bash_loadables PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 target_compile_options(bash_loadables PRIVATE
+    -ffunction-sections
+    -fdata-sections
     -Wno-discarded-qualifiers
     -Wno-parentheses
     -Wno-unused-variable
@@ -326,6 +328,12 @@ set_target_properties(L_builtin_module PROPERTIES
     SUFFIX ".so"
     OUTPUT_NAME "L_builtin"
 )
+# Emit one section per function/data and garbage-collect unreferenced ones at
+# link time. Safe here: the version script keeps only L_builtin_struct as a
+# dynamic export (bash dlsym()s it), and every other needed symbol is
+# reachable internally (Rust<->C cross-references, bash_loadables_gen[]).
+target_compile_options(L_builtin_module PRIVATE -ffunction-sections -fdata-sections)
+target_link_options(L_builtin_module PRIVATE -Wl,--gc-sections)
 find_package(Threads REQUIRED)
 target_link_libraries(L_builtin_module PRIVATE
     bash
