@@ -18,7 +18,7 @@ use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
     c"signalfd",
-    c"[-n] [-b] [-v FD_VAR] [SIGNAL...]",
+    c"[-n] [-b] [-C] [-v FD_VAR] [SIGNAL...]",
     c"\
 Create a signalfd(2) and store its file descriptor in FD_VAR (or print it if
 -v is omitted). The fd becomes readable whenever one of the listed SIGNALs is
@@ -31,6 +31,7 @@ Options:
   -n     SFD_NONBLOCK
   -b     Also block (sigprocmask) the listed signals so they are consumed
          by reads from the fd instead of running their default action
+  -C     Do not set SFD_CLOEXEC (it is set by default)
   -v     Store the resulting fd in the variable FD_VAR
 
 Exit Status:
@@ -81,6 +82,8 @@ struct SignalfdArgs {
     nonblock: bool,
     #[flag('b')]
     block: bool,
+    #[flag('C')]
+    nocloexec: bool,
     #[opt('v')]
     fd_var: Option<BashVar>,
     #[rest]
@@ -130,7 +133,7 @@ pub unsafe fn signalfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
         }
     }
 
-    let mut flags = libc::SFD_CLOEXEC;
+    let mut flags = 0;
     if args.nonblock {
         flags |= libc::SFD_NONBLOCK;
     }
@@ -142,7 +145,7 @@ pub unsafe fn signalfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
             std::io::Error::last_os_error()
         ));
     }
-    let fd = ensure_high_fd(fd).map_err(|e| l_builtin_error!(b"signalfd: fd dup failed: ", e))?;
+    let fd = ensure_high_fd(fd, !args.nocloexec).map_err(|e| l_builtin_error!(b"signalfd: fd dup failed: ", e))?;
     match args.fd_var {
         Some(v) => {
             if let Err(e) = v.set_int(fd as i64) {

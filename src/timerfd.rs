@@ -108,7 +108,7 @@ pub unsafe fn timerfd_create_subcommand(list: *mut WORD_LIST) -> CmdResult {
         return Err(EXECUTION_FAILURE);
     }
 
-    let fd_int = ensure_high_fd(fd).map_err(|e| {
+    let fd_int = ensure_high_fd(fd, true).map_err(|e| {
         l_builtin_error!(b"timerfd_create: fd dup failed: ", e);
         EXECUTION_FAILURE
     })?;

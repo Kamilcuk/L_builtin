@@ -111,6 +111,8 @@ unsafe fn populate_ready_array(var: &BashVar, ready: &[(c_int, String)]) -> CmdR
 /// `L_builtin epoll create FD_VAR`
 #[derive(CmdArgs)]
 struct EpollCreateArgs {
+    #[flag('C')]
+    nocloexec: bool,
     /// Shell variable receiving the epoll file descriptor.
     #[positional]
     fd_var: BashVar,
@@ -119,14 +121,14 @@ struct EpollCreateArgs {
 pub unsafe fn epoll_create_subcommand(list: *mut WORD_LIST) -> CmdResult {
     EPOLL_CREATE_CMD.enter();
     let args = EpollCreateArgs::parse(list)?;
-    let fd = unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) };
+    let fd = unsafe { libc::epoll_create1(0) };
     if fd < 0 {
         return Err(l_builtin_error!(
             b"epoll create: ",
             std::io::Error::last_os_error()
         ));
     }
-    let fd_int = ensure_high_fd(fd).map_err(|e| {
+    let fd_int = ensure_high_fd(fd, !args.nocloexec).map_err(|e| {
         l_builtin_error!(b"epoll create: fd dup failed: ", e);
         EXECUTION_FAILURE
     })?;
@@ -211,16 +213,16 @@ pub unsafe fn epoll_del_subcommand(list: *mut WORD_LIST) -> CmdResult {
 
 const EPOLL_CMD: CmdDesc = CmdDesc::new(
     c"epoll",
-     c"create FD_VAR | add EPOLLFD FD [r|w|p|t] | mod EPOLLFD FD [r|w|p|t] | del EPOLLFD FD | wait [-t SECS] [-v ARR] EPOLLFD",
-    c"\
+     c"create [-C] FD_VAR | add EPOLLFD FD [r|w|p|t] | mod EPOLLFD FD [r|w|p|t] | del EPOLLFD FD | wait [-t SECS] [-v ARR] EPOLLFD",
+     c"\
 Scalable I/O event notification via epoll(7), the Linux-specific readiness
 mechanism that scales O(1) per ready fd (unlike poll/ppoll, which scan the full
 fd set). The fds it produces compose with the rest of the fd subcommands
 (send/recv/accept/close, timerfd, eventfd, signalfd).
 
 Subcommands:
-  create FD_VAR             Create an epoll instance and store its fd in FD_VAR.
-                              The fd is close-on-exec.
+  create [-C] FD_VAR        Create an epoll instance and store its fd in FD_VAR.
+                              The fd is close-on-exec by default; -C clears it.
   add EPOLLFD FD [events]   Register FD on EPOLLFD (EPOLL_CTL_ADD). EVENTS defaults
                              to r; see EVENTS tokens below.
   mod EPOLLFD FD [events]   Change FD's event mask on EPOLLFD (EPOLL_CTL_MOD).
@@ -261,15 +263,17 @@ Examples:
 
 const EPOLL_CREATE_CMD: CmdDesc = CmdDesc::new(
     c"create",
-    c"create FD_VAR",
+    c"create [-C] FD_VAR",
     c"\
 Create an epoll instance (epoll_create1(2)) and store its file descriptor in
-the shell variable FD_VAR. The fd is close-on-exec (EPOLL_CLOEXEC). The fd
-becomes readable (POLLIN) when any watched fd is ready, so it can be polled
-together with other fds (see poll/ppoll).
+the shell variable FD_VAR. The fd is close-on-exec by default; -C clears it so
+the fd is inherited by child processes. The fd becomes readable (POLLIN) when
+any watched fd is ready, so it can be polled together with other fds (see
+poll/ppoll).
 
 Examples:
    L_builtin epoll create ep
+   L_builtin epoll create -C ep
 ",
 );
 

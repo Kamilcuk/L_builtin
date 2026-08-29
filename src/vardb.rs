@@ -478,7 +478,7 @@ fn open_flock_fd(path: &DbPath) -> io::Result<File> {
                 .truncate(false)
                 .open(p)?;
             let fd = file.into_raw_fd();
-            unsafe { Ok(File::from_raw_fd(ensure_high_fd(fd)?)) }
+            unsafe { Ok(File::from_raw_fd(ensure_high_fd(fd, true)?)) }
         }
         DbPath::Shm(n) => shm_open_obj(n),
         _ => unreachable!("flock backing is only -s/-F; got {path:?}"),
@@ -518,7 +518,7 @@ fn memfd_create_fd(name: &CStr) -> io::Result<File> {
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
-    let new_fd = ensure_high_fd(fd as RawFd)?;
+    let new_fd = ensure_high_fd(fd as RawFd, true)?;
     unsafe { Ok(File::from_raw_fd(new_fd)) }
 }
 
@@ -534,7 +534,7 @@ fn shm_open_obj(name: &CStr) -> io::Result<File> {
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
-    let new_fd = ensure_high_fd(fd as RawFd)?;
+    let new_fd = ensure_high_fd(fd as RawFd, true)?;
     unsafe { Ok(File::from_raw_fd(new_fd)) }
 }
 

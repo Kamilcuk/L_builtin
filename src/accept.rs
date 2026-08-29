@@ -16,11 +16,14 @@ use std::os::raw::{c_char, c_int};
 
 const CMD: CmdDesc = CmdDesc::new(
     c"accept",
-    c"CLIENTFD_VAR ADDR_VAR LISTENFD",
+    c"[-C] [-t MS] CLIENTFD_VAR ADDR_VAR LISTENFD",
     c"\
 Accept an incoming connection on the listening socket file descriptor LISTENFD.
 The new socket file descriptor for the client is stored in CLIENTFD_VAR.
 The client's address (IP:PORT) is stored in ADDR_VAR.
+
+By default the accepted fd is close-on-exec. With -C the close-on-exec flag is
+cleared so the fd is inherited by child processes (e.g. a forked handler).
 
 Exit Status:
 Returns success unless accept fails or variable binding fails.
@@ -45,6 +48,8 @@ Examples:
 struct AcceptArgs {
     #[opt('t')]
     timeout_ms: Option<i32>,
+    #[flag('C')]
+    clear_cloexec: bool,
     #[positional]
     clientfd_var: BashVar,
     #[positional]
@@ -109,7 +114,7 @@ pub unsafe fn accept_subcommand(list: *mut WORD_LIST) -> CmdResult {
             std::io::Error::last_os_error()
         ));
     }
-    let clientfd = ensure_high_fd(clientfd).map_err(|e| {
+    let clientfd = ensure_high_fd(clientfd, !args.clear_cloexec).map_err(|e| {
         l_builtin_error!(b": accept: fd dup failed: ", e);
         EXECUTION_FAILURE
     })?;

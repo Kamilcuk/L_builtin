@@ -36,7 +36,6 @@ struct EventfdCreateArgs {
     /// EFD_SEMAPHORE (read returns 1 instead of the counter).
     #[flag('s')]
     semaphore: bool,
-    /// Do *not* set EFD_CLOEXEC (it is set by default).
     #[flag('C')]
     nocloexec: bool,
     /// Shell variable receiving the file descriptor.
@@ -57,9 +56,6 @@ pub unsafe fn eventfd_create_subcommand(list: *mut WORD_LIST) -> CmdResult {
     if args.semaphore {
         flags |= libc::EFD_SEMAPHORE;
     }
-    if !args.nocloexec {
-        flags |= libc::EFD_CLOEXEC;
-    }
     let fd = unsafe { libc::eventfd(args.initval, flags) };
     if fd < 0 {
         return Err(l_builtin_error!(
@@ -67,7 +63,7 @@ pub unsafe fn eventfd_create_subcommand(list: *mut WORD_LIST) -> CmdResult {
             std::io::Error::last_os_error()
         ));
     }
-    let fd_int = ensure_high_fd(fd).map_err(|e| {
+    let fd_int = ensure_high_fd(fd, !args.nocloexec).map_err(|e| {
         l_builtin_error!(b"eventfd: fd dup failed: ", e);
         EXECUTION_FAILURE
     })?;

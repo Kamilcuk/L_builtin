@@ -18,13 +18,15 @@ use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
     c"memfd",
-    c"VAR [NAME]",
+    c"[-C] VAR [NAME]",
     c"\
 Create an anonymous memory-backed file (memfd_create(2)) and store its file
 descriptor in the shell variable VAR. The fd is a regular file-like object
 living in RAM; its name appears in /proc/self/fd. NAME, if given, names the
-memfd (otherwise a default name is used). The memfd is created with
-MFD_CLOEXEC | MFD_NOEXEC_SEAL.
+memfd (otherwise a default name is used).
+
+The fd is close-on-exec by default; -C clears it so the fd is inherited by
+child processes.
 
 Exit Status:
   Returns success unless memfd_create fails or the variable cannot be bound.
@@ -41,6 +43,8 @@ Examples:
 
 #[derive(CmdArgs)]
 struct MemfdArgs {
+    #[flag('C')]
+    nocloexec: bool,
     /// Shell variable to bind the memfd fd to.
     #[positional]
     var: BashVar,
@@ -55,13 +59,13 @@ struct MemfdArgs {
 pub unsafe fn memfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
     CMD.enter();
     let args = MemfdArgs::parse(list)?;
-    let flags: libc::c_uint = libc::MFD_CLOEXEC | libc::MFD_NOEXEC_SEAL;
+    let flags: libc::c_uint = libc::MFD_NOEXEC_SEAL;
     let fd = unsafe { libc::memfd_create(args.name, flags) };
     if fd < 0 {
         l_builtin_error!(b"memfd_create: ", std::io::Error::last_os_error());
         return Err(EXECUTION_FAILURE);
     }
-    let fd_int = ensure_high_fd(fd).map_err(|e| {
+    let fd_int = ensure_high_fd(fd, !args.nocloexec).map_err(|e| {
         l_builtin_error!(b"memfd_create: fd dup failed: ", e);
         EXECUTION_FAILURE
     })?;

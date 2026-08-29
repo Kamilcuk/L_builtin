@@ -17,7 +17,7 @@ use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
     c"listen",
-    c"[-p PORT_VAR] LISTENFD_VAR [IP] [PORT]",
+    c"[-C] [-p PORT_VAR] LISTENFD_VAR [IP] [PORT]",
     c"\
 Create a new socket, bind it to IP and PORT, listen for incoming
 connections, and store the resulting socket file descriptor in the
@@ -28,6 +28,9 @@ If PORT is omitted, it defaults to 0 (ephemeral port allocation).
 
 If -p PORT_VAR is provided, the actual bound port (useful when passing 0
 for ephemeral port allocation) is stored in PORT_VAR.
+
+The fd is close-on-exec by default; -C clears it so the fd is inherited by
+child processes.
 
 Exit Status:
 Returns success unless socket/bind/listen fails or variable binding fails.
@@ -44,6 +47,8 @@ struct ListenArgs {
     /// Store the actual bound port into shell variable PORT_VAR.
     #[opt('p')]
     port_var: Option<BashVar>,
+    #[flag('C')]
+    nocloexec: bool,
     /// Variable to store the resulting listening socket fd in.
     #[positional]
     listenfd_var: BashVar,
@@ -78,6 +83,9 @@ pub unsafe fn listen_subcommand(list: *mut WORD_LIST) -> CmdResult {
             b"-p PORT_VAR option is required when port is 0"
         ));
     }
+    // std::net::TcpListener::bind sets SO_REUSEADDR on Unix automatically, so a
+    // fixed port can be re-bound (e.g. re-running a test) even while prior
+    // connections sit in TIME_WAIT.
     let listener = retry_eintr!(std::net::TcpListener::bind((args.ip, args.port)))
         .map_err(|e| l_builtin_error!(b"bind failed: ", e))?;
     // If -p PORT_VAR is provided, get the actual bound port
@@ -87,7 +95,7 @@ pub unsafe fn listen_subcommand(list: *mut WORD_LIST) -> CmdResult {
     }
     let raw_fd = listener.as_raw_fd();
     let high_fd =
-        ensure_high_fd(raw_fd).map_err(|e| l_builtin_error!(b"listen: fd dup failed: ", e))?;
+        ensure_high_fd(raw_fd, !args.nocloexec).map_err(|e| l_builtin_error!(b"listen: fd dup failed: ", e))?;
     args.listenfd_var.set_int(high_fd)?;
     // Prevent TcpListener::drop from closing the original fd (already duplicated/closed by ensure_high_fd)
     std::mem::forget(listener);

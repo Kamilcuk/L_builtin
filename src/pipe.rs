@@ -69,11 +69,11 @@ pub unsafe fn pipe_subcommand(list: *mut WORD_LIST) -> CmdResult {
         return Err(EXECUTION_FAILURE);
     }
     // Ensure fds are >= L_FD_MIN to avoid clobbering fds 0/1/2 in forked children.
-    let read_fd = ensure_high_fd(fds.0[0]).map_err(|e| {
+    let read_fd = ensure_high_fd(fds.0[0], true).map_err(|e| {
         l_builtin_error!(b"pipe: fd dup failed: ", e);
         EXECUTION_FAILURE
     })?;
-    let write_fd = ensure_high_fd(fds.0[1]).map_err(|e| {
+    let write_fd = ensure_high_fd(fds.0[1], true).map_err(|e| {
         l_builtin_error!(b"pipe: fd dup failed: ", e);
         EXECUTION_FAILURE
     })?;
