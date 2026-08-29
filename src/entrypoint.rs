@@ -81,6 +81,7 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("barrier", crate::cmd_barrier::barrier_subcommand),
     ("mutex", crate::cmd_mutex::mutex_subcommand),
     ("semaphore", crate::cmd_semaphore::semaphore_subcommand),
+    ("replace", crate::cmd_replace::replace_subcommand),
     #[cfg(not(feature = "bash_lt_4_3"))]
     ("capture", l_capture_subcommand),
     #[cfg(feature = "dev")]

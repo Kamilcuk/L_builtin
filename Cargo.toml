@@ -38,6 +38,7 @@ uu_rm = { git = "https://github.com/uutils/coreutils", package = "uu_rm", rev = 
 uu_tee = { git = "https://github.com/uutils/coreutils", package = "uu_tee", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
 uu_sleep = { git = "https://github.com/uutils/coreutils", package = "uu_sleep", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
 rkyv = "0.8"
+regex = "1.11"
 parse_duration = "2.1"
 cmdargs-derive = { path = "cmdargs-derive" }
 
