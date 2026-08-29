@@ -84,8 +84,8 @@ _L_test_epoll_poll_interop() {
     L_builtin poll -t 0.2 -v results "$ep:r"
     L_unittest_eq "${#results[@]}" "1"
     L_unittest_eq "${results[$ep]}" "r"
-    eval "exec ${p[0]}<&-; exec ${p[1]}>&-"
     L_builtin epoll del "$ep" "${p[0]}"
+    eval "exec ${p[0]}<&-; exec ${p[1]}>&-"
     L_builtin close "$ep"
 }
 

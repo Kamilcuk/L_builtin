@@ -204,7 +204,9 @@ pub unsafe fn epoll_del_subcommand(list: *mut WORD_LIST) -> CmdResult {
     } < 0
     {
         return Err(l_builtin_error!(
-            b"epoll del: ",
+            b"epoll del fd ",
+            args.fd,
+            b": ",
             std::io::Error::last_os_error()
         ));
     }
