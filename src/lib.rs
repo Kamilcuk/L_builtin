@@ -19,6 +19,7 @@ pub(crate) mod cmd_fcntl;
 pub(crate) mod cmd_lua;
 pub(crate) mod cmd_mutex;
 pub(crate) mod cmd_replace;
+pub(crate) mod cmd_sedvar;
 pub(crate) mod cmd_semaphore;
 pub(crate) mod cmd_shm;
 pub(crate) mod cmdargs;
