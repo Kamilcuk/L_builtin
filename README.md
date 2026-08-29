@@ -117,6 +117,8 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
     - [L_builtin poll](#l_builtin-poll)
     - [L_builtin ppoll](#l_builtin-ppoll)
     - [L_builtin recv](#l_builtin-recv)
+    - [L_builtin replace](#l_builtin-replace)
+    - [L_builtin sedvar](#l_builtin-sedvar)
     - [L_builtin semaphore](#l_builtin-semaphore)
       - [L_builtin semaphore create](#l_builtin-semaphore-create)
       - [L_builtin semaphore open](#l_builtin-semaphore-open)
@@ -502,11 +504,14 @@ $output_var"
 ### `L_builtin accept`
 
 ```
-L_builtin accept: usage: CLIENTFD_VAR ADDR_VAR LISTENFD
+L_builtin accept: usage: [-C] [-t MS] CLIENTFD_VAR ADDR_VAR LISTENFD
 
 Accept an incoming connection on the listening socket file descriptor LISTENFD.
 The new socket file descriptor for the client is stored in CLIENTFD_VAR.
 The client's address (IP:PORT) is stored in ADDR_VAR.
+
+By default the accepted fd is close-on-exec. With -C the close-on-exec flag is
+cleared so the fd is inherited by child processes (e.g. a forked handler).
 
 Exit Status:
 Returns success unless accept fails or variable binding fails.
@@ -706,7 +711,7 @@ Examples:
 ### `L_builtin epoll`
 
 ```
-L_builtin epoll: usage: create FD_VAR | add EPOLLFD FD [r|w|p|t] | mod EPOLLFD FD [r|w|p|t] | del EPOLLFD FD | wait [-t SECS] [-v ARR] EPOLLFD
+L_builtin epoll: usage: create [-C] FD_VAR | add EPOLLFD FD [r|w|p|t] | mod EPOLLFD FD [r|w|p|t] | del EPOLLFD FD | wait [-t SECS] [-v ARR] EPOLLFD
 
 Scalable I/O event notification via epoll(7), the Linux-specific readiness
 mechanism that scales O(1) per ready fd (unlike poll/ppoll, which scan the full
@@ -714,8 +719,8 @@ fd set). The fds it produces compose with the rest of the fd subcommands
 (send/recv/accept/close, timerfd, eventfd, signalfd).
 
 Subcommands:
-  create FD_VAR             Create an epoll instance and store its fd in FD_VAR.
-                              The fd is close-on-exec.
+  create [-C] FD_VAR        Create an epoll instance and store its fd in FD_VAR.
+                              The fd is close-on-exec by default; -C clears it.
   add EPOLLFD FD [events]   Register FD on EPOLLFD (EPOLL_CTL_ADD). EVENTS defaults
                              to r; see EVENTS tokens below.
   mod EPOLLFD FD [events]   Change FD's event mask on EPOLLFD (EPOLL_CTL_MOD).
@@ -756,15 +761,17 @@ Examples:
 #### `L_builtin epoll create`
 
 ```
-L_builtin epoll create: usage: create FD_VAR
+L_builtin epoll create: usage: create [-C] FD_VAR
 
 Create an epoll instance (epoll_create1(2)) and store its file descriptor in
-the shell variable FD_VAR. The fd is close-on-exec (EPOLL_CLOEXEC). The fd
-becomes readable (POLLIN) when any watched fd is ready, so it can be polled
-together with other fds (see poll/ppoll).
+the shell variable FD_VAR. The fd is close-on-exec by default; -C clears it so
+the fd is inherited by child processes. The fd becomes readable (POLLIN) when
+any watched fd is ready, so it can be polled together with other fds (see
+poll/ppoll).
 
 Examples:
    L_builtin epoll create ep
+   L_builtin epoll create -C ep
 ```
 
 #### `L_builtin epoll add`
@@ -1769,7 +1776,7 @@ Examples:
 ### `L_builtin listen`
 
 ```
-L_builtin listen: usage: [-p PORT_VAR] LISTENFD_VAR [IP] [PORT]
+L_builtin listen: usage: [-C] [-p PORT_VAR] LISTENFD_VAR [IP] [PORT]
 
 Create a new socket, bind it to IP and PORT, listen for incoming
 connections, and store the resulting socket file descriptor in the
@@ -1780,6 +1787,9 @@ If PORT is omitted, it defaults to 0 (ephemeral port allocation).
 
 If -p PORT_VAR is provided, the actual bound port (useful when passing 0
 for ephemeral port allocation) is stored in PORT_VAR.
+
+The fd is close-on-exec by default; -C clears it so the fd is inherited by
+child processes.
 
 Exit Status:
 Returns success unless socket/bind/listen fails or variable binding fails.
@@ -1897,13 +1907,15 @@ Examples:
 ### `L_builtin memfd`
 
 ```
-L_builtin memfd: usage: VAR [NAME]
+L_builtin memfd: usage: [-C] VAR [NAME]
 
 Create an anonymous memory-backed file (memfd_create(2)) and store its file
 descriptor in the shell variable VAR. The fd is a regular file-like object
 living in RAM; its name appears in /proc/self/fd. NAME, if given, names the
-memfd (otherwise a default name is used). The memfd is created with
-MFD_CLOEXEC | MFD_NOEXEC_SEAL.
+memfd (otherwise a default name is used).
+
+The fd is close-on-exec by default; -C clears it so the fd is inherited by
+child processes.
 
 Exit Status:
   Returns success unless memfd_create fails or the variable cannot be bound.
@@ -2172,6 +2184,52 @@ Exit Status:
 Returns success unless recv fails or variable binding fails.
 ```
 
+### `L_builtin replace`
+
+```
+L_builtin replace: usage: replace VAR PATTERN REPLACEMENT
+
+Apply a regular-expression substitution to the values of the bash variable VAR,
+replacing every match of PATTERN with REPLACEMENT. PATTERN is a Rust `regex`
+pattern (https://docs.rs/regex); REPLACEMENT may reference capture groups via
+$1, ${name}, and an unescaped $ is a literal (use $$ for a literal dollar sign).
+
+For a scalar VAR the whole value is transformed; for an indexed or associative
+array every element value is transformed in place. The substitution runs in byte
+mode (regex::bytes), so values that are not valid UTF-8 are handled correctly.
+Replacement is global: every match within each value is replaced.
+
+Examples:
+  v='foobar'; L_builtin replace v 'o' '0'   # v becomes 'f00bar'
+  arr=( foo bar ); L_builtin replace arr 'a' '@'
+```
+
+### `L_builtin sedvar`
+
+```
+L_builtin sedvar: usage: sedvar VAR SCRIPT
+
+Run a sed script SCRIPT (a GNU-compatible sed program, see `sed-rs`) over the
+bash variable VAR, in place, without spawning a subprocess.
+
+For an indexed array, every element is streamed into SCRIPT as a separate record
+(records are NUL-delimited, like `sed -z`), and the script's printed records
+become the new array elements. This means an element value containing a newline
+stays a single element, and the script's addressing (1, $, 2,3, /re/) applies to
+array elements. For an associative array, each value is transformed independently
+(its key is preserved). For a scalar, the value is one record: if the script
+prints exactly one record the variable stays scalar, otherwise it becomes an
+array.
+
+The transformation runs in memory on the variable's current values; the result
+is assigned back into VAR.
+
+Examples:
+  arr=( foo bar ); L_builtin sedvar arr 's/a/@/'
+  L_builtin sedvar arr '/bar/d'      # drop the element matching 'bar'
+  v=hello; L_builtin sedvar v 's/hello/world/'
+```
+
 ### `L_builtin semaphore`
 
 ```
@@ -2414,7 +2472,7 @@ Exit Status:
 ### `L_builtin shm`
 
 ```
-L_builtin shm: usage: bind [-A] [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME | rm [-s NAME | -n NAME | -M NAME | -F PATH] | unbind VAR_NAME... | drop VAR_NAME | clear [-s NAME | -n NAME | -M NAME | -F PATH] | info [-s NAME | -n NAME | -M NAME | -F PATH] | ls [-s NAME | -n NAME | -M NAME | -F PATH] | sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME
+L_builtin shm: usage: bind [-p] [-A] [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME | rm [-s NAME | -n NAME | -M NAME | -F PATH] | unbind VAR_NAME... | drop VAR_NAME | clear [-s NAME | -n NAME | -M NAME | -F PATH] | info [-s NAME | -n NAME | -M NAME | -F PATH] | ls [-s NAME | -n NAME | -M NAME | -F PATH] | sync [-s NAME | -n NAME | -M NAME | -F PATH] VAR_NAME
 
 Shared-memory variables backed by a rkyv database.
 
@@ -2428,11 +2486,13 @@ Each backing is referenced by a single, consistent selector:
   (none)    the default in-memory mapping named DEFAULT (same as -n DEFAULT).
 
 Subcommands:
-  bind [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME
+  bind [-p] [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME
                             Bind bash variable VAR_NAME (indexed, or associative
                             with -A) to a shared database and store its value.
                             -s/-n/-M/-F selects the backing (see above); none uses
-                            DEFAULT. The value is stored under VAR_NAME.
+                            DEFAULT. The value is stored under VAR_NAME. With -p,
+                            the variable's current bash value is preserved (seeded
+                            into the database) instead of being reset to empty.
   rm [-s NAME | -n NAME | -M NAME | -F PATH]
                             Destroy the whole database: unbind every variable bound
                             to it and unlink/drop its backing object/file (-s/-F).
@@ -2470,7 +2530,7 @@ every assignment and is visible to every process that maps the same database
 #### `L_builtin shm bind`
 
 ```
-L_builtin shm bind: usage: bind [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME
+L_builtin shm bind: usage: bind [-p] [-A] [-s NAME | -n NAME | -M NAME:SIZE | -F PATH] VAR_NAME
 
 Bind bash variable VAR_NAME (indexed, or associative with -A) to a shared
 database.
@@ -2494,6 +2554,11 @@ that maps the same database, e.g. a background job started with & (for -s/-F/-n)
 With -A, create an associative array (key-value pairs with string keys) instead
 of an indexed array (integer indices). NAME (for -s/-n/-M) must be a valid shell
 variable name; -F takes a path; the SIZE in -M NAME:SIZE must be >= 100 bytes.
+
+With -p, preserve the variable's current bash value: after the binding is created
+the existing contents of VAR_NAME are seeded into the shared database, so they are
+not lost (by default binding resets the variable to empty). This is equivalent to
+binding and then assigning the old value back, but done atomically in one step.
 
 Examples:
   L_builtin shm bind v
@@ -2536,16 +2601,19 @@ Examples:
 ```
 L_builtin shm unbind: usage: unbind VAR_NAME [VAR_NAME...]
 
-Unbind the named variable(s) from this shell: drop the registry entry and unbind
-the bash variable. This does NOT remove the variable's data from the shared
-database; another process that has the variable bound may still read it.
+Unbind the named variable(s) from this shell: drop the registry entry and detach
+the shared database. Unlike a plain unset, the variable's current value is
+preserved: it is snapshotted from the shared database and left in a plain (non-
+dynamic) bash variable, so the data survives the unbind. The database entry
+itself is left untouched; another process that has the variable bound may still
+read it.
 
 The store is found via each variable's existing binding; no backing flags are
 needed.
 
 Examples:
-  L_builtin shm unbind v         # stop sharing 'v' in this shell
-  L_builtin shm unbind v w       # unbind 'v' and 'w'
+  L_builtin shm unbind v         # stop sharing 'v' but keep its value locally
+  L_builtin shm unbind v w       # unbind 'v' and 'w', keeping their values
 ```
 
 #### `L_builtin shm drop`
@@ -2664,7 +2732,7 @@ Examples:
 ### `L_builtin signalfd`
 
 ```
-L_builtin signalfd: usage: [-n] [-b] [-v FD_VAR] [SIGNAL...]
+L_builtin signalfd: usage: [-n] [-b] [-C] [-v FD_VAR] [SIGNAL...]
 
 Create a signalfd(2) and store its file descriptor in FD_VAR (or print it if
 -v is omitted). The fd becomes readable whenever one of the listed SIGNALs is
@@ -2677,6 +2745,7 @@ Options:
   -n     SFD_NONBLOCK
   -b     Also block (sigprocmask) the listed signals so they are consumed
          by reads from the fd instead of running their default action
+  -C     Do not set SFD_CLOEXEC (it is set by default)
   -v     Store the resulting fd in the variable FD_VAR
 
 Exit Status:

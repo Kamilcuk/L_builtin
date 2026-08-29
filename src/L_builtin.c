@@ -34,6 +34,8 @@ const char *const L_builtin_doc[] = {
   "  ppoll      Wait for FDs and unblock signals atomically",
 #endif
   "  recv       Receive bytes from a socket",
+  "  replace    In-place regex substitution on a bash variable",
+  "  sedvar     Run a sed script over a bash variable, in place",
   "  semaphore  Process-shared counting semaphore",
   "  send       Send bytes over a socket",
   "  shutdown   Semi-close a network socket",
