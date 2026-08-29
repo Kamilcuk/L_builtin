@@ -36,7 +36,7 @@ dispatched as `L_builtin <subcommand> ...` and loaded via `enable -f`.
   test names, not a substring filter). To run a single test, start a bash with
   the builtin enabled, `source tests/test_shm.sh` + `source build/L_lib.sh -s`,
   then call the `_L_test_*` function directly.
-- The test harness `L_lib.sh` (pinned v2.0.2) is **auto-downloaded** to
+- The test harness `L_lib.sh` (pinned v2.0.4) is **auto-downloaded** to
   `build/L_lib.sh` on first `make test` (needs network). It provides
   `L_unittest_*`, `L_with_process_into`, etc.
 - Each `L_` harness function documents itself: run `L_lib.sh L_<func> -h`

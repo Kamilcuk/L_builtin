@@ -36,7 +36,7 @@ L_lib_pull() {
 	fi
 	mkdir -vp "$1"
 	local cachef="$1"/L_lib.sh
-  local version=${2:-2.0.2}
+  local version=${2:-2.0.4}
 	local url="https://github.com/Kamilcuk/L_lib/releases/download/v$version/L_lib.sh"
 	if [[ -z "${L_LIB_VERSION:-}" ]]; then
 		if [[ -s "$cachef" ]]; then

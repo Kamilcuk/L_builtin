@@ -27,8 +27,9 @@ BASH_BARE_REPO = $(BUILD_DIR)/bash.git
 $(BASH_BARE_REPO)/HEAD:
 	[ -e $@ ] || git clone --branch master --single-branch --bare https://git.savannah.gnu.org/git/bash.git $(BASH_BARE_REPO)
 
-# Resolved version file (depends on BASH spec)
-BASH_RESOLVED_FILE := $(BUILD_DIR)/bash-resolved.mk
+# Resolved version file (depends on BASH spec). Named per-version so switching
+# BASH=... invalidates the cached resolution instead of reusing a stale one.
+BASH_RESOLVED_FILE := $(BUILD_DIR)/bash-resolved-$(BASH).mk
 
 # Generate resolved version file
 bash-resolve: $(BASH_RESOLVED_FILE)
