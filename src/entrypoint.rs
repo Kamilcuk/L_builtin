@@ -34,6 +34,7 @@ extern "C" {
     static L_BUILTIN_DOC: [*const c_char; 0];
 }
 
+
 macro_rules! c_wrap {
     ($f:expr) => {
         |list| {
@@ -87,6 +88,7 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("capture", l_capture_subcommand),
     #[cfg(feature = "dev")]
     ("unittest", crate::unittest::l_unittest_subcommand),
+    ("version", crate::cmd_version::version_subcommand),
 ];
 
 const fn extract_first<const N: usize>(a: &[(&'static str, SubcommandFn)]) -> [&'static str; N] {
