@@ -193,7 +193,7 @@ unsafe fn l_bind_variable_check(name: *const c_char, value: *const c_char) -> Cm
         if !var.is_null() && l_readonly_p(var) != 0 {
             return Err(crate::l_builtin_error!(name, ": readonly variable"));
         }
-        if crate::bash_api::bind_variable(name, value, 0).is_null() {
+        if crate::bash_api::bind_variable(name, value.cast_mut(), 0).is_null() {
             return Err(crate::l_builtin_error!("failed to set variable: ", name));
         }
     }

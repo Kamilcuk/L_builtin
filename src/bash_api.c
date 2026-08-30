@@ -260,7 +260,7 @@ ARRAY *l_prepare_indexed_array(const char *name)
 {
   SHELL_VAR *v = find_variable(name);
   if (v == NULL)
-    v = make_new_array_variable(name);
+    v = make_new_array_variable((void *)name);
   else if (array_p(v) == 0)
     v = convert_var_to_array(v);
   if (v == NULL)
@@ -291,4 +291,3 @@ HASH_TABLE *l_prepare_assoc_array(const char *name)
   assoc_flush(h);
   return h;
 }
-

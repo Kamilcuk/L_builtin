@@ -272,7 +272,7 @@ unsafe fn set_array_from_table(
         // (unbind + create would drop a `local` and make a shadowed global).
         convert_var_to_array(var)
     } else {
-        make_new_array_variable(name)
+        make_new_array_variable(name.cast_mut())
     };
     if var.is_null() {
         return Err(mlua::Error::RuntimeError(
@@ -311,7 +311,7 @@ unsafe fn set_assoc_from_table(
             "variable exists but is not associative".to_string(),
         ));
     } else {
-        make_new_assoc_variable(name)
+        make_new_assoc_variable(name.cast_mut())
     };
     if var.is_null() {
         return Err(mlua::Error::RuntimeError(
@@ -432,7 +432,7 @@ fn set_bash_from_lua_in(
                 }
             }
             other => {
-                let result = bind_variable(name, scalar_to_bytes(&other)?.as_ptr(), 0);
+                let result = bind_variable(name, scalar_to_bytes(&other)?.as_ptr().cast_mut(), 0);
                 Ok(Value::Boolean(!result.is_null()))
             }
         }
@@ -540,9 +540,12 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
         lua.create_function(|lua, s: mlua::String| unsafe {
             let s = s.as_bytes_with_nul();
             let table = lua.create_table()?;
-            for (idx, word) in WordListOwned(expand_string(s.as_ptr().cast(), 0))
-                .into_iter()
-                .enumerate()
+            for (idx, word) in WordListOwned(expand_string(
+                s.as_ptr().cast_mut() as *mut ::std::os::raw::c_char,
+                0,
+            ))
+            .into_iter()
+            .enumerate()
             {
                 table.set(idx + 1, lua.create_string(word.as_bytes())?)?;
             }

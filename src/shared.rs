@@ -23,7 +23,7 @@ pub(crate) unsafe fn bind_variable_check(
     value: *const c_char,
     flags: c_int,
 ) -> c_int {
-    if bind_variable(var, value, flags).is_null() {
+    if bind_variable(var, value.cast_mut(), flags).is_null() {
         EXECUTION_FAILURE
     } else {
         EXECUTION_SUCCESS
