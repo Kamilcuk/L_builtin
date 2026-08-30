@@ -2,10 +2,8 @@
 
 use crate::bash_api::{build_version, dist_version, patch_level, release_status, WORD_LIST};
 use crate::bprintln;
-use crate::cmdargs::WordListIterCpnt;
 use cmdargs_derive::CmdArgs;
 use crate::subcmd::{CmdDesc, CmdResult};
-use std::ffi::CStr;
 
 /// Generated version info (from CMake)
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/generated_rust/version.rs"));
