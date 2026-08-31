@@ -20,8 +20,8 @@ clean:
 
 VERSIONS = 5.2 5.3
 build-all:
-	$(foreach I, $(VERSIONS), $(MAKE) -C .. BASH=$(I) RELEASE=1 build$(NL))
-	$(MAKE) all L_DISPATCHER_SO_FILES="$$(for I in $(VERSIONS); do $(MAKE) -s -C .. BASH=$$I RELEASE=1 build-output; done | paste -sd';')"
+	$(foreach I, $(VERSIONS), $(MAKE) -C .. BASH=$(I) RELEASE=1 build-embedded$(NL))
+	$(MAKE) all L_DISPATCHER_SO_FILES="$$(for I in $(VERSIONS); do $(MAKE) -s -C .. BASH=$$I RELEASE=1 build-embedded-output; done | paste -sd';')"
 	ls -lh $(B)/L_builtin.so
 
 test-all:

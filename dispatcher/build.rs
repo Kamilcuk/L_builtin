@@ -5,6 +5,21 @@ use std::path::PathBuf;
 use tar::Builder;
 use zstd::stream::Encoder;
 
+fn int_to_human(bytes: u64) -> String {
+    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{} {}", bytes, UNITS[unit])
+    } else {
+        format!("{:.2} {}", value, UNITS[unit])
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-env-changed=L_DISPATCHER_SO_FILES");
 
@@ -13,9 +28,10 @@ fn main() {
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // Build a tar archive in memory. Each .so is objcopy'd first to localize
-    // L_builtin_struct, then added as a tar entry named by the bash version.
+    // Build a tar archive in memory. Each .so is added as a tar entry named
+    // by the bash version.
     let mut tar_buf: Vec<u8> = Vec::new();
+    let mut so_entries: Vec<(String, u64)> = Vec::new();
     {
         let mut tar_builder = Builder::new(&mut tar_buf);
 
@@ -37,21 +53,10 @@ fn main() {
                     panic!("Could not extract version from path: {}", path.display())
                 });
 
-            // Run objcopy to localize L_builtin_struct in the .so.
-            let objcopy_path = out_dir.join(format!("{}.objcopy", path.file_name().unwrap().to_str().unwrap()));
-            let status = std::process::Command::new("objcopy")
-                .arg("--localize-symbol=L_builtin_struct")
-                .arg(&path)
-                .arg(&objcopy_path)
-                .status()
-                .unwrap_or_else(|e| panic!("Failed to run objcopy: {}", e));
+            let data = fs::read(&path)
+                .unwrap_or_else(|e| panic!("Failed to read .so: {}", e));
 
-            if !status.success() {
-                panic!("objcopy failed for {}", path.display());
-            }
-
-            let data = fs::read(&objcopy_path)
-                .unwrap_or_else(|e| panic!("Failed to read objcopy'd .so: {}", e));
+            so_entries.push((path.display().to_string(), data.len() as u64));
 
             // Append to tar with the version string as the entry name.
             tar_builder
@@ -98,9 +103,37 @@ fn main() {
 
     println!("cargo:rustc-env=EMBEDDED_TAR_ZST_PATH={}", zstd_path.display());
     println!(
-        "cargo:warning=Embedded tar.zst: {} bytes (tar: {} bytes)",
-        zstd_buf.len(),
-        tar_buf.len()
+        "cargo:warning=Embedded tar.zst: {} (tar: {})",
+        int_to_human(zstd_buf.len() as u64),
+        int_to_human(tar_buf.len() as u64)
     );
+
+    // Write a size report artifact for inspection.
+    let report_path = out_dir.join("embedded_sizes_report.txt");
+    let mut report = String::new();
+    report.push_str("L_builtin dispatcher embedded archive size report\n");
+    report.push_str("=================================================\n\n");
+    report.push_str("Used .so files:\n");
+    for (path, size) in &so_entries {
+        report.push_str(&format!("  {}  ({} bytes / {})\n", path, size, int_to_human(*size)));
+    }
+    report.push_str(&format!(
+        "\nUncompressed tar archive size: {} bytes ({})\n",
+        tar_buf.len(),
+        int_to_human(tar_buf.len() as u64)
+    ));
+    report.push_str(&format!(
+        "Compressed tar archive size: {} bytes ({})\n",
+        zstd_buf.len(),
+        int_to_human(zstd_buf.len() as u64)
+    ));
+    report.push_str(&format!(
+        "Compression ratio: {:.2}%\n",
+        (zstd_buf.len() as f64 / tar_buf.len() as f64) * 100.0
+    ));
+    fs::write(&report_path, &report)
+        .unwrap_or_else(|e| panic!("Failed to write size report: {}", e));
+    println!("cargo:warning=Size report written to {}", report_path.display());
+
     println!("cargo:rerun-if-env-changed=L_DISPATCHER_SO_FILES");
 }

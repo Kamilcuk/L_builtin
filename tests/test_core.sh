@@ -13,11 +13,10 @@ _L_test_core_capture_var() {
 
 _L_test_core_capture_var_multiline() {
     if (( L_BASH_VERSION < 0x40300 )); then L_unittest_skip "No capture under bash <4.3 "; return; fi
-    local out expected
-    printf -v expected 'Cargo.toml'
+    local out
     ( cd "${_L_TEST_ROOT:-.}" || exit
-      L_builtin -v out core ls Cargo.toml
-      L_unittest_eq "$out" "Cargo.toml"
+      L_builtin -v out core ls README.md
+      L_unittest_eq "$out" "README.md"
     )
 }
 

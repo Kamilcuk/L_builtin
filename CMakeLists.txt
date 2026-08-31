@@ -311,6 +311,8 @@ target_include_directories(bash_loadables INTERFACE "${CMAKE_CURRENT_BINARY_DIR}
 # file name is kept as "L_builtin" so bash dlsym()s L_builtin_struct unchanged.
 # Only the C glue sources remain in C; lseek/pipe/net/etc. are implemented in
 # Rust (see l_builtin/src/*.rs).
+
+# Regular version for direct bash use - exports L_builtin_struct
 add_library(L_builtin_module MODULE
     ./l_builtin/c/L_builtin.c
     ./l_builtin/c/poll.c
@@ -347,6 +349,9 @@ add_dependencies(L_builtin_module ${L_BUILTIN_RS_TARGETS})
 # else so no symbol in this module can collide/interpose with bash's
 # -rdynamic exports or other loadables.
 set(VERSION_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/L_builtin.map)
+if(L_BUILTIN_EMBEDDED)
+    set(VERSION_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/L_builtin_embedded.map)
+endif()
 target_link_options(L_builtin_module PRIVATE -Wl,--version-script=${VERSION_SCRIPT})
 set_target_properties(L_builtin_module PROPERTIES LINK_DEPENDS ${VERSION_SCRIPT})
 

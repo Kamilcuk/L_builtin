@@ -148,7 +148,7 @@ fn load_and_decompress_embedded_so(version: &str) -> Option<*mut c_void> {
 }
 
 fn get_embedded_builtin(handle: *mut c_void) -> Option<&'static Builtin> {
-    let symbol = std::ffi::CString::new("L_builtin_struct_embedded").ok()?;
+    let symbol = std::ffi::CString::new("L_builtin_impl").ok()?;
     let ptr = unsafe { dlsym(handle, symbol.as_ptr()) };
     if ptr.is_null() {
         return None;
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut c_void) -> c_int {
         None => {
             let err = CStr::from_ptr(dlerror());
             eprintln!(
-                "L_builtin: no L_builtin_struct_embedded symbol: {}",
+                "L_builtin: no L_builtin_impl symbol: {}",
                 err.to_string_lossy()
             );
             return 1;

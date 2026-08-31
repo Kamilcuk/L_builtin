@@ -66,7 +66,7 @@ struct builtin L_builtin_struct = {
   0
 };
 
-struct builtin L_builtin_struct_embedded = {
+struct builtin L_builtin_impl = {
   "L_builtin",
   l_entrypoint,
   BUILTIN_ENABLED,

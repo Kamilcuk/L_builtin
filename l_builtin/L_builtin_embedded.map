@@ -1,0 +1,12 @@
+/* Version script for L_builtin.so (embedded version for dispatcher)
+ *
+ * This version script exports only L_builtin_impl and hides
+ * L_builtin_struct to prevent symbol conflicts when multiple versions
+ * are loaded by the dispatcher.
+ */
+{
+   global:
+     L_builtin_impl;
+   local:
+     *;
+};
