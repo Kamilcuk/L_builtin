@@ -358,6 +358,7 @@ target_compile_options(bash_loadables PRIVATE
     -Wno-implicit-fallthrough
     -Wno-format-security
     -Wno-unused-but-set-variable
+    -Wno-implicit-function-declaration
     -w
 )
 target_link_libraries(bash_loadables PRIVATE bash)

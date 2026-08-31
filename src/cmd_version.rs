@@ -2,11 +2,14 @@
 
 use crate::bash_api::{build_version, dist_version, patch_level, release_status, WORD_LIST};
 use crate::bprintln;
-use cmdargs_derive::CmdArgs;
 use crate::subcmd::{CmdDesc, CmdResult};
+use cmdargs_derive::CmdArgs;
 
-/// Generated version info (from CMake)
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/generated_rust/version.rs"));
+// Generated version info (from CMake)
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/generated_rust/version.rs"
+));
 
 const VERSION_CMD: CmdDesc = CmdDesc::new(
     c"version",
@@ -32,13 +35,20 @@ struct VersionArgs {
 pub unsafe fn version_subcommand(list: *mut WORD_LIST) -> CmdResult {
     VERSION_CMD.enter();
     let _args = VersionArgs::parse(list)?;
-
     bprintln!(b"L_builtin version: ", L_BUILTIN_VERSION);
     bprintln!(b"L_builtin commit:  ", L_BUILTIN_COMMIT);
     bprintln!(b"Bash version (compile-time): ", BASH_VERSION);
     bprintln!(b"Bash commit (compile-time):  ", BASH_COMMIT);
-
-    bprintln!(b"Bash version (runtime):      ", dist_version, b".", patch_level, b"(", build_version, b")-", release_status);
-
+    bprintln!(
+        b"Bash version (runtime):      ",
+        unsafe { dist_version },
+        b".",
+        unsafe { patch_level },
+        b"(",
+        unsafe { build_version },
+        b")-",
+        unsafe { release_status }
+    );
     Ok(())
 }
+

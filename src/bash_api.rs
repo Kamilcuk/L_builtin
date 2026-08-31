@@ -36,7 +36,7 @@ pub type Builtin = builtin;
 
 /// this_command_name as rust slice
 pub fn this_cmd_name() -> &'static [u8] {
-    let ptr = unsafe { std::ptr::addr_of!(this_command_name).read() };
+    let ptr = unsafe { this_command_name };
     // debug_assert!(!ptr.is_null(), "this_command_name should never be NULL");
     if ptr.is_null() {
         c"".to_bytes()
