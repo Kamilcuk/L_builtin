@@ -19,43 +19,11 @@ if(NOT IS_DIRECTORY "${BASH_SOURCE}")
 endif()
 
 # Determine bash version from BASH_SOURCE/version.h
-file(READ "${BASH_SOURCE}/version.h" VERSION_H_CONTENT)
-string(REGEX REPLACE ".*version ([0-9]+)[.]([0-9]+)[.]([0-9]+).*" "\\1" BASH_VERSION "${VERSION_H_CONTENT}")
-math(EXPR L_BASH_VERSION "(${CMAKE_MATCH_1} * 10000) + (${CMAKE_MATCH_2} * 100) + ${CMAKE_MATCH_3}")
+include(cmake/BashVersion.cmake)
+parse_bash_version("${BASH_SOURCE}")
 
-if(L_BASH_VERSION LESS 10000 OR L_BASH_VERSION GREATER 100000)
-    message(FATAL_ERROR "Invalid bash version: ${L_BASH_VERSION} (expected 10000-100000, e.g., 501000 for 5.1)")
-endif()
-message(STATUS "Determined Bash version: ${L_BASH_VERSION}, using headers: ${BASH_SOURCE}")
-
-###############################################################################
-
-# Auto-initialize git submodules if not already initialized
-function(ensure_submodule submodule_name submodule_file)
-    set(submodule_path "${CMAKE_CURRENT_SOURCE_DIR}/${submodule_name}/${submodule_file}")
-    if(NOT EXISTS "${submodule_path}")
-        message(STATUS "File not found: ${submodule_path}. Initializing submodule: git submodule update --init ${submodule_name}")
-        execute_process(
-            COMMAND git submodule update --init "${submodule_name}"
-            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-            RESULT_VARIABLE result
-        )
-        if(result)
-            message(FATAL_ERROR "Failed to initialize submodule: ${submodule_name}")
-        endif()
-    endif()
-endfunction()
-
-ensure_submodule(
-    "third_party/corrosion"
-    "CMakeLists.txt"
-)
-ensure_submodule(
-    "third_party/boost_preprocessor"
-    "CMakeLists.txt"
-)
-
-add_subdirectory(third_party/corrosion)
+# Initialize git submodules and set up dependencies
+include(cmake/Submodules.cmake)
 
 ###############################################################################
 
@@ -96,13 +64,13 @@ if(NOT L_BINDGEN_EXECUTABLE)
     message(FATAL_ERROR "bindgen not found. Install it with: cargo install bindgen-cli")
 endif()
 
-set(L_GENERATED_RUST_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_rust")
+set(L_GENERATED_RUST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/generated_rust")
 set(L_GENERATED_RUST_BINDINGS "${L_GENERATED_RUST_DIR}/bash_api_gen.rs")
 add_custom_command(
     OUTPUT "${L_GENERATED_RUST_BINDINGS}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${L_GENERATED_RUST_DIR}"
     COMMAND "${L_BINDGEN_EXECUTABLE}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/bash_api.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/c/bash_api.h"
         --output "${L_GENERATED_RUST_BINDINGS}"
         --allowlist-function "l_.*"
         --allowlist-function "find_variable"
@@ -170,9 +138,9 @@ add_custom_command(
         "-I${BASH_SOURCE}/include"
         "-I${BASH_SOURCE}/builtins"
         "-I${BASH_SOURCE}/lib"
-    DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/bash_api.h"
-        "${L_BINDGEN_EXECUTABLE}"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/c/bash_api.h"
+            "${L_BINDGEN_EXECUTABLE}"
     VERBATIM
     COMMENT "Generating Rust bindings: ${L_GENERATED_RUST_DIR}/bash_api_gen.rs"
 )
@@ -190,33 +158,10 @@ endfunction()
 
 # Generate version info for the version subcommand
 function(generate_version_info gen_file l_builtin_source bash_source)
-    # Get L_builtin git commit
-    execute_process(
-        COMMAND git -C "${l_builtin_source}" rev-parse --short HEAD
-        OUTPUT_VARIABLE L_BUILTIN_COMMIT
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-    if(NOT L_BUILTIN_COMMIT)
-        set(L_BUILTIN_COMMIT "unknown")
-    endif()
-    # Get L_builtin version from Cargo.toml
-    file(READ "${l_builtin_source}/Cargo.toml" CARGO_CONTENT)
-    string(REGEX MATCH "version = \"([^\"]+)\"" _ ${CARGO_CONTENT})
-    set(L_BUILTIN_VERSION ${CMAKE_MATCH_1})
-    if(NOT L_BUILTIN_VERSION)
-        set(L_BUILTIN_VERSION "0.0.0")
-    endif()
-    # Get bash git commit
-    execute_process(
-        COMMAND git -C "${bash_source}" rev-parse --short HEAD
-        OUTPUT_VARIABLE BASH_COMMIT
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-    if(NOT BASH_COMMIT)
-        set(BASH_COMMIT "unknown")
-    endif()
+    # Use shared functions to extract metadata
+    get_git_commit("${l_builtin_source}" L_BUILTIN_COMMIT)
+    get_cargo_version("${l_builtin_source}/l_builtin/Cargo.toml" L_BUILTIN_VERSION)
+    get_git_commit("${bash_source}" BASH_COMMIT)
     # Bash version already computed as L_BASH_VERSION
     # Convert to human readable: 50116 -> 5.1.16
     math(EXPR BASH_MAJOR "${L_BASH_VERSION} / 10000")
@@ -239,19 +184,12 @@ generate_version_info("${L_GENERATED_RUST_DIR}/version.rs" "${CMAKE_CURRENT_SOUR
 
 # Define the Rust crate for Corrosion
 corrosion_import_crate(
-    MANIFEST_PATH ${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml
+    MANIFEST_PATH ${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/Cargo.toml
     IMPORTED_CRATES L_BUILTIN_RS_TARGETS
     FEATURES ${L_BUILTIN_RS_FEATURES}
 )
 add_custom_target(l_generated_rust DEPENDS "${L_GENERATED_RUST_BINDINGS}")
 add_dependencies(_cargo-build_l_builtin l_generated_rust)
-
-###############################################################################
-
-add_library(boost_preprocessor INTERFACE)
-target_include_directories(boost_preprocessor INTERFACE
-    "${CMAKE_CURRENT_SOURCE_DIR}/boost_preprocessor/include"
-)
 
 ###############################################################################
 
@@ -372,14 +310,14 @@ target_include_directories(bash_loadables INTERFACE "${CMAKE_CURRENT_BINARY_DIR}
 # creates an interface target named `L_builtin` for the Rust crate. The output
 # file name is kept as "L_builtin" so bash dlsym()s L_builtin_struct unchanged.
 # Only the C glue sources remain in C; lseek/pipe/net/etc. are implemented in
-# Rust (see src/*.rs).
+# Rust (see l_builtin/src/*.rs).
 add_library(L_builtin_module MODULE
-    ./src/L_builtin.c
-    ./src/poll.c
-    ./src/sig.c
-    ./src/bash_api.c
-    ./src/cmd_ext.c
-    ./src/cmd_fcntl.c
+    ./l_builtin/c/L_builtin.c
+    ./l_builtin/c/poll.c
+    ./l_builtin/c/sig.c
+    ./l_builtin/c/bash_api.c
+    ./l_builtin/c/cmd_ext.c
+    ./l_builtin/c/cmd_fcntl.c
 )
 set_target_properties(L_builtin_module PROPERTIES
     PREFIX ""
@@ -408,7 +346,7 @@ add_dependencies(L_builtin_module ${L_BUILTIN_RS_TARGETS})
 # Export only L_builtin_struct (the symbol bash dlsym()s); hide everything
 # else so no symbol in this module can collide/interpose with bash's
 # -rdynamic exports or other loadables.
-set(VERSION_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/src/L_builtin.map)
+set(VERSION_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/L_builtin.map)
 target_link_options(L_builtin_module PRIVATE -Wl,--version-script=${VERSION_SCRIPT})
 set_target_properties(L_builtin_module PROPERTIES LINK_DEPENDS ${VERSION_SCRIPT})
 

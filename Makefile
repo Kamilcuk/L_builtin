@@ -46,7 +46,7 @@ L_DEV ?= 1
 CMAKE_FLAGS = -D L_DEV=$(L_DEV) -D CMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 CMAKE_EXTRA_FLAGS ?=
 BUILD = $(BUILD_DIR)/$(CMAKE_BUILD_TYPE)/$(BASH)
-$(BUILD)/L_builtin.so: $(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt Cargo.toml Cargo.lock
+$(BUILD)/L_builtin.so: $(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt l_builtin/Cargo.toml l_builtin/Cargo.lock
 	cmake -S . -B $(BUILD) -D BASH_SOURCE=$(BASH_SOURCE_DIR) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS)
 	cmake --build $(BUILD) -j $$(nproc)
 build: $(BUILD)/L_builtin.so

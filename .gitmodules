@@ -4,6 +4,3 @@
 [submodule "third_party/corrosion"]
 	path = third_party/corrosion
 	url = https://github.com/corrosion-rs/corrosion.git
-[submodule "third_party/zstd"]
-	path = third_party/zstd
-	url = https://github.com/facebook/zstd.git

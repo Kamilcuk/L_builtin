@@ -41,7 +41,7 @@ rkyv = "0.8"
 regex = "1.11"
 sed-rs = "2.0.0"
 parse_duration = "2.1"
-cmdargs-derive = { path = "cmdargs-derive" }
+cmdargs-derive = { path = "../cmdargs-derive" }
 
 [dev-dependencies]
 tempfile = "3.15"
