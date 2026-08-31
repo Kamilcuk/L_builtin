@@ -8,12 +8,11 @@
 #include <unistd.h>
 #include <zstd.h>
 #include <errno.h>
+#include <stdarg.h>
 
 /* ------------------------------------------------------------------------- */
+
 extern char *dist_version;
-extern int patch_level;
-extern int build_version;
-extern char *release_status;
 struct word_list;
 struct builtin {
   const char *name;
@@ -24,15 +23,23 @@ struct builtin {
   char *handle;
 };
 #define BUILTIN_ENABLED 1
+
 /* ------------------------------------------------------------------------- */
 
-struct embedded_so {
-  const char *version;
-  const unsigned char *start;
-  const unsigned char *end;
-};
-
-#include "dispatcher_version_table_data.h"
+static int write_eintr(int fd, const char *data, size_t len)
+{
+  size_t pos = 0;
+  while (pos < len) {
+    ssize_t n = write(fd, data + pos, len - pos);
+    if (n < 0) {
+      if (errno == EINTR)
+        continue;
+      return -1;
+    }
+    pos += (size_t)n;
+  }
+  return 0;
+}
 
 static size_t zstd_decompress_to_fd(const char *start, size_t size, int fd)
 {
@@ -65,16 +72,10 @@ static size_t zstd_decompress_to_fd(const char *start, size_t size, int fd)
       ZSTD_freeDStream(ds);
       return ret;
     }
-    for (size_t pos = 0; pos < out.pos;) {
-      ssize_t n = write(fd, out_buf + pos, out.pos - pos);
-      if (n < 0) {
-        if (errno == EINTR)
-          continue;
-        fprintf(stderr, "L_builtin: write: %s\n", strerror(errno));
-        ZSTD_freeDStream(ds);
-        return ZSTD_error_dstBuffer_null;
-      }
-      pos += (size_t)n;
+    if (write_eintr(fd, out_buf, out.pos)) {
+      fprintf(stderr, "L_builtin: write: %s\n", strerror(errno));
+      ZSTD_freeDStream(ds);
+      return ZSTD_error_dstBuffer_null;
     }
     if (ret == 0) {
       if (in.pos == in.size)
@@ -96,25 +97,51 @@ static size_t zstd_decompress_to_fd(const char *start, size_t size, int fd)
   return 0;
 }
 
+static int sh(const char *fmt, ...)
+{
+  va_list va;
+  va_start(va, fmt);
+  char buf[128];
+  int ret = vsnprintf(buf, sizeof(buf), fmt, va);
+  if (ret < 0 || ret >= (int)sizeof(buf)) {
+    fprintf(stderr, "%s: Could not run command: %s!\n", __FILE__, fmt);
+    return -1;
+  }
+  va_end(va);
+  fprintf(stderr, "+ %s\n", buf);
+  return system(buf);
+}
+
+/* ------------------------------------------------------------------------- */
+
+struct embedded_so {
+  const char *version;
+  const unsigned char *start;
+  size_t size;
+};
+
 #define LEN(x) sizeof(x) / sizeof(*x)
+
+#include "dispatcher_version_table_data.h"
 
 static void *load_and_decompress_embedded_so(const char *version)
 {
   for (int i = 0; i < LEN(embedded_sos); i++) {
-    if (strcmp(embedded_sos[i].version, version) == 0) {
-      const unsigned char *compressed_start = embedded_sos[i].start;
-      const unsigned char *compressed_end = embedded_sos[i].end;
-      size_t compressed_size = compressed_end - compressed_start;
-      int fd = memfd_create("L_builtin_embedded", MFD_CLOEXEC);
+    const struct embedded_so *const e = &embedded_sos[i];
+    if (strcmp(e->version, version) == 0) {
+      int fd = memfd_create("L_builtin_embedded", 0); // MFD_CLOEXEC);
       if (fd < 0) {
         perror("L_builtin: memfd_create");
         return NULL;
       }
-      if (zstd_decompress_to_fd(compressed_start, compressed_size, fd) != 0) {
+      if (zstd_decompress_to_fd(e->start, e->size, fd) != 0) {
         return NULL;
       }
       char path[64];
       snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+      sh("nm -D -g --defined-only /proc/self/fd/3 | grep L_builtin_struct");
+      sh("readelf -Ws /proc/self/fd/3 | grep L_builtin_struct");
+      sh("readelf -Ws --dyn-syms /proc/self/fd/3 | grep L_builtin_struct");
       void *h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
       if (!h) {
         fprintf(stderr, "L_builtin: dlopen(%s) failed: %s\n", version, dlerror());
@@ -126,39 +153,55 @@ static void *load_and_decompress_embedded_so(const char *version)
   return NULL;
 }
 
-static const char *get_runtime_bash_version(void)
+struct version {
+  int major;
+  int minor;
+};
+
+static struct version version_from_string(const char *s)
 {
-  static char version[16];
-  int major = 0, minor = 0;
-  if (dist_version) {
-    major = atoi(dist_version);
-  }
-  minor = patch_level / 100;
-  snprintf(version, sizeof(version), "%d.%d", major, minor);
-  return version;
+  const struct version err = {-1, -1};
+  struct version v = {0, 0};
+  if (!s)
+    return err;
+  while (*s >= '0' && *s <= '9')
+    v.major = v.major * 10 + (*s++ - '0');
+  if (*s++ != '.')
+    return err;
+  while (*s >= '0' && *s <= '9')
+    v.minor = v.minor * 10 + (*s++ - '0');
+  return v;
 }
+
+struct builtin L_builtin_struct;
 
 static int l_entrypoint(struct word_list *list)
 {
-  static void *handle = NULL;
+  struct version v = version_from_string(dist_version);
+  char version[16];
+  snprintf(version, sizeof(version), "%d.%d", v.major, v.minor);
+  void *handle = load_and_decompress_embedded_so(version);
   if (!handle) {
-    const char *version = get_runtime_bash_version();
-    handle = load_and_decompress_embedded_so(version);
-    if (!handle) {
-      fprintf(stderr, "L_builtin: no module for bash %s\n", version);
-      return 1;
-    }
-  }
-  int (*ep)(struct word_list *) = dlsym(handle, "l_entrypoint");
-  if (!ep) {
-    fprintf(stderr, "L_builtin: no l_entrypoint in module\n");
+    fprintf(stderr, "L_builtin: no module for bash %s\n", version);
     return 1;
   }
-  return ep(list);
+  char symbol[64];
+  snprintf(symbol, sizeof(symbol), "L_builtin_struct_embedded", v.major, v.minor);
+  const struct builtin *b = dlsym(handle, symbol);
+  if (!b) {
+    fprintf(stderr, "L_builtin: no %s symbol in module version %s\n", symbol, version);
+    return 1;
+  }
+  fprintf(stderr, "LONGDOC: %s %s\n", L_builtin_struct.long_doc[0], b->long_doc[0]);
+  // Overwrite the structure with the actual imported data.
+  L_builtin_struct.short_doc = b->short_doc;
+  L_builtin_struct.long_doc = b->long_doc;
+  L_builtin_struct.function = b->function;
+  return b->function(list);
 }
 
 static const char *const l_builtin_doc[] = {
-  "L_builtin multi-version dispatcher (zstd compressed).",
+  "L_builtin multi-version dispatcher.",
   "",
   "L_builtin <subcommand> [options] [args]",
   "",

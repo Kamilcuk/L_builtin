@@ -1,8 +1,20 @@
 cmake_minimum_required(VERSION 3.14)
 project(L_builtin_dispatcher C)
 
+function(write_if_changed file content)
+    if(EXISTS "${file}")
+        file(READ "${file}" _old_content)
+    else()
+        set(_old_content "")
+    endif()
+    if(NOT _old_content STREQUAL "${content}")
+        file(WRITE "${file}" "${content}")
+    endif()
+endfunction()
+
+###############################################################################
+
 option(L_DISPATCHER_SO_FILES "" "List of pre-built .so files for the dispatcher, e.g., /path/to/L_builtin-5.1.so;/path/to/L_builtin-5.2.so")
-file(GLOB L_DISPATCHER_SO_FILES "${L_DISPATCHER_SO_FILES}")
 if(NOT L_DISPATCHER_SO_FILES)
     message(FATAL_ERROR "L_DISPATCHER_SO_FILES must be set to a list of .so files")
 endif()
@@ -20,70 +32,97 @@ add_subdirectory(
     EXCLUDE_FROM_ALL
 )
 
-set(DISPATCHER_OBJS)
-set(DISPATCHER_VERSIONS)
-foreach(VER_SO IN LISTS L_DISPATCHER_SO_FILES)
-    get_filename_component(VER_SO_NAME "${VER_SO}" NAME)
-    if(VER_SO_NAME MATCHES "^L_builtin-(.+)\\.so$")
+function(version_to_symbol input output)
+    string(REPLACE "-" "_" _result "${input}")
+    string(REPLACE "." "_" _result "${_result}")
+    set(${output} "${_result}" PARENT_SCOPE)
+endfunction()
+
+set(DISPATCHER_DEFINES)
+set(DISPATCHER_ELEMENTS)
+set(SO_XXD_FILES)
+make_directory("${CMAKE_CURRENT_BINARY_DIR}/compressed")
+make_directory("${CMAKE_CURRENT_BINARY_DIR}/generated")
+foreach(INPUT_SO IN LISTS L_DISPATCHER_SO_FILES)
+    set(rgx "/([0-9]+[.][0-9]+)/")
+    if(INPUT_SO MATCHES "${rgx}")
         set(VER_STRING "${CMAKE_MATCH_1}")
     else()
-        message(FATAL_ERROR "Unexpected .so file name: ${VER_SO_NAME}. Expected format: L_builtin-<version>.so")
+        message(FATAL_ERROR "Unexpected .so: ${INPUT_SO} has to match ${rgx}")
     endif()
-    file(SIZE "${VER_SO}" UNCOMPRESSED_SIZE)
-    string(REPLACE "-" "_" VER_STRING_UNDERSCORE ${VER_STRING})
-    string(REPLACE "." "_" VER_STRING_UNDERSCORE ${VER_STRING_UNDERSCORE})
-    set(OBJCOPY_INPUT_BASE "L_builtin_${VER_STRING_UNDERSCORE}_so_zstd")
-    set(VER_SO_LOCAL_NOEXT "${CMAKE_CURRENT_BINARY_DIR}/${OBJCOPY_INPUT_BASE}")
-    set(VER_OBJ_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${OBJCOPY_INPUT_BASE}.o")
-    set(cmd $<TARGET_FILE:zstd> -f -19 "${VER_SO}" -o "${VER_SO_LOCAL_NOEXT}")
-    add_custom_command(
-        OUTPUT ${VER_SO_LOCAL_NOEXT}
-        COMMAND ${cmd}
-        DEPENDS "${VER_SO}" $<TARGET_FILE:zstd>
-        COMMENT "${cmd}"
+    version_to_symbol("${VER_STRING}" VER_STRING_UNDERSCORE)
+
+    set(SO_NAME "L_builtin_${VER_STRING_UNDERSCORE}.so")
+    set(SO_RENAMED "${CMAKE_CURRENT_BINARY_DIR}/compressed/${SO_NAME}")
+    set(cmd
+       objcopy --localize-symbol=L_builtin_struct  
+        "${INPUT_SO}" "${SO_RENAMED}"  &&
+        readelf -Ws "${SO_RENAMED}" | grep L_builtin_struct &&
+        readelf --dyn-syms "${SO_RENAMED}" | grep L_builtin_struct
     )
-    set(cmd ${CMAKE_OBJCOPY} -I binary -O elf64-x86-64 -B i386:x86-64
-                --prefix-symbols=_binary_
-                ${VER_SO_LOCAL_NOEXT}
-                ${VER_OBJ_OUTPUT})
     add_custom_command(
-        OUTPUT ${VER_OBJ_OUTPUT}
+        OUTPUT "${SO_RENAMED}"
         COMMAND ${cmd}
-        DEPENDS ${VER_SO_LOCAL_NOEXT}
+        DEPENDS "${INPUT_SO}"
         COMMENT "${cmd}"
+        VERBATIM
     )
-    list(APPEND DISPATCHER_OBJS ${VER_OBJ_OUTPUT})
-    list(APPEND DISPATCHER_VERSIONS ${VER_STRING_UNDERSCORE})
+
+    set(SO_ZST "${CMAKE_CURRENT_BINARY_DIR}/compressed/${SO_NAME}.zst")
+    set(cmd $<TARGET_FILE:zstd> -f -19 "${SO_RENAMED}" -o "${SO_ZST}")
+    add_custom_command(
+        OUTPUT "${SO_ZST}"
+        COMMAND ${cmd}
+        DEPENDS "${SO_RENAMED}"
+        COMMENT "${cmd}"
+        VERBATIM
+    )
+
+    set(SO_XXD "${CMAKE_CURRENT_BINARY_DIR}/generated/${SO_NAME}.zst.h")
+    set(cmd xxd -i < "${SO_ZST}" > "${SO_XXD}")
+    add_custom_command(
+        OUTPUT "${SO_XXD}"
+        COMMAND ${cmd}
+        DEPENDS "${SO_ZST}"
+        COMMENT "${cmd}"
+        VERBATIM
+    )
+    if("${SO_XXD}" IN_LIST SO_XXD_FILES)
+        message(FATAL_ERROR "Duplicate so version file found with version ${VER_STRING}: ${INPUT_SO} IN_LIST ${SO_XXD_FILES}")
+    endif()
+    list(APPEND SO_XXD_FILES "${SO_XXD}" "${SO_ZST}")
+
+    set(NAME "l_builtin_${VER_STRING_UNDERSCORE}")
+    string(APPEND DISPATCHER_DEFINES "static const unsigned char ${NAME}[] = {\n")
+    string(APPEND DISPATCHER_DEFINES "#include \"${SO_NAME}.zst.h\"\n")
+    string(APPEND DISPATCHER_DEFINES "};\n")
+    string(APPEND DISPATCHER_ELEMENTS " { \"${VER_STRING}\", ${NAME}, sizeof(${NAME}) },\n")
 endforeach()
 
-list(SORT DISPATCHER_VERSIONS)
 
-# Generate the version table data.
-set(DISPATCHER_VERSION_TABLE_DATA_H "${CMAKE_CURRENT_BINARY_DIR}/dispatcher_version_table_data.h")
-file(WRITE "${DISPATCHER_VERSION_TABLE_DATA_H}" "")
-foreach(VER IN LISTS DISPATCHER_VERSIONS)
-    set(SYM _binary_L_builtin_${VER}_so_zstd)
-    file(APPEND "${DISPATCHER_VERSION_TABLE_DATA_H}" "extern const unsigned char ${SYM}_start, ${SYM}_end;\n")
-endforeach()
-file(APPEND "${DISPATCHER_VERSION_TABLE_DATA_H}" "static struct embedded_so embedded_sos[] = {\n")
-foreach(VER IN LISTS DISPATCHER_VERSIONS)
-    set(SYM _binary_L_builtin_${VER}_so_zstd)
-    file(APPEND "${DISPATCHER_VERSION_TABLE_DATA_H}" " { \"${VER_STRING}\", &${SYM}_start, &${SYM}_end },\n")
-endforeach()
-file(APPEND "${DISPATCHER_VERSION_TABLE_DATA_H}" "};\n")
+string(APPEND DISPATCHER_DEFINES "static const struct embedded_so embedded_sos[] = {\n")
+string(APPEND DISPATCHER_DEFINES "${DISPATCHER_ELEMENTS}")
+string(APPEND DISPATCHER_DEFINES "};\n")
 
-add_library(L_builtin_dispatcher MODULE
-    dispatcher.c
-    ${DISPATCHER_OBJS}
+write_if_changed(
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/dispatcher_version_table_data.h"
+    "${DISPATCHER_DEFINES}"
 )
+
+add_library(L_builtin_dispatcher MODULE dispatcher.c)
 set_target_properties(L_builtin_dispatcher PROPERTIES
     PREFIX "" SUFFIX ".so" OUTPUT_NAME "L_builtin"
 )
-target_include_directories(L_builtin_dispatcher PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(L_builtin_dispatcher PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
+)
 target_link_libraries(L_builtin_dispatcher PRIVATE
     libzstd_static
     ${CMAKE_DL_LIBS}
 )
+
+add_custom_target(so_xxd_files DEPENDS ${SO_XXD_FILES})
+add_dependencies(L_builtin_dispatcher so_xxd_files)
 
 if(L_DEV)
     add_custom_command(TARGET L_builtin_dispatcher POST_BUILD

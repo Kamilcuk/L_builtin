@@ -50,6 +50,8 @@ $(BUILD)/L_builtin.so: $(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.tx
 	cmake -S . -B $(BUILD) -D BASH_SOURCE=$(BASH_SOURCE_DIR) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS)
 	cmake --build $(BUILD) -j $$(nproc)
 build: $(BUILD)/L_builtin.so
+build-output:
+	@readlink -f $(BUILD)/L_builtin.so
 TESTARGS ?= -Pn
 test: build
 	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh $(BUILD)/L_builtin.so $(ARGS) $(TESTARGS)

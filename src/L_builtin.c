@@ -65,3 +65,12 @@ struct builtin L_builtin_struct = {
   "L_builtin <subcommand> [options] [args]",
   0
 };
+
+struct builtin L_builtin_struct_embedded = {
+  "L_builtin",
+  l_entrypoint,
+  BUILTIN_ENABLED,
+  (void *)L_builtin_doc,
+  "L_builtin <subcommand> [options] [args]",
+  0
+};

@@ -9,7 +9,12 @@ b() { L_builtin "$@"; }
 if hash L_lib.sh; then
   . L_lib.sh -s -n
 fi
-f="$(dirname "$(readlink -f "$0")")"/L_builtin.so
+if [[ -f "$1" ]]; then
+  f=$1
+  shift
+else
+  f="$(dirname "$(readlink -f "$0")")"/L_builtin.so
+fi
 setx enable -f "$f" L_builtin
 if (( $# == 1 )); then
   setx eval "$*"

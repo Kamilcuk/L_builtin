@@ -96,93 +96,97 @@ if(NOT L_BINDGEN_EXECUTABLE)
     message(FATAL_ERROR "bindgen not found. Install it with: cargo install bindgen-cli")
 endif()
 
-set(L_GENERATED_RUST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated_rust")
-function(generate_bash_bindings gen_file bash_source)
-    file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/generated_rust")
-    execute_process(
-        COMMAND "${L_BINDGEN_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/bash_api.h"
-            --output "${gen_file}"
-            --allowlist-function l_.*
-            # Bash entry points Rust calls directly (same allowlist as the
-            # former build.rs), not covered by the l_.* prefix.
-            --allowlist-function find_variable
-            --allowlist-function bind_variable
-            --allowlist-function legal_identifier
-            --allowlist-function find_function
-            --allowlist-function make_new_array_variable
-            --allowlist-function convert_var_to_array
-            --allowlist-function make_new_assoc_variable
-            --allowlist-function array_flush
-            --allowlist-function array_insert
-            --allowlist-function array_remove
-            --allowlist-function assoc_flush
-            --allowlist-function assoc_remove
-            --allowlist-function assoc_keys_to_word_list
-            --allowlist-function assoc_reference
-            --allowlist-function make_word
-            --allowlist-function make_word_list
-            --allowlist-function execute_shell_function
-            --allowlist-function dispose_words
-            --allowlist-function expand_string_to_string
-            --allowlist-function expand_string
-            --allowlist-function builtin_usage
-            --allowlist-function internal_getopt
-            --allowlist-function reset_internal_getopt
-            --allowlist-function get_name_for_error
-            --allowlist-function executing_line_number
-            --allowlist-function builtin_error
-            --allowlist-var this_command_name
-            --allowlist-var current_builtin
-            --allowlist-var list_optarg
-            --allowlist-var loptend
-            --allowlist-var GETOPT_HELP
-            --allowlist-var interactive_shell
-            --allowlist-var ARRAY
-            --allowlist-var l_open_flags
-            --allowlist-var l_fd_flags
-            --allowlist-type l_flag_entry_t
-            --allowlist-var EX_USAGE
-            --allowlist-var EX_RETRYFAIL
-            --allowlist-var EX_NOTFOUND
-            --allowlist-var EXECUTION_SUCCESS
-            --allowlist-var EXECUTION_FAILURE
-            --allowlist-var att_assoc
-            --allowlist-var build_version
-            --allowlist-var patch_level
-            --allowlist-var dist_version
-            --allowlist-var release_status
-            # --fit-macro-constant-types
-            --default-macro-constant-type signed
-            --allowlist-type builtin
-            --opaque-type SHELL_VAR
-            --opaque-type ARRAY
-            --opaque-type ARRAY_ELEMENT
-            --opaque-type HASH_TABLE
-            --
-            -DHAVE_CONFIG_H
-            -DHAVE_PPOLL=1
-            "-DL_BASH_VERSION=${L_BASH_VERSION}"
-            -DSHELL
-            -D_GNU_SOURCE=1
-            -std=gnu99
-            "-I${bash_source}"
-            "-I${bash_source}/include"
-            "-I${bash_source}/builtins"
-            "-I${bash_source}/lib"
-        RESULT_VARIABLE l_bindgen_result
-        OUTPUT_VARIABLE l_bindgen_stdout
-        ERROR_VARIABLE l_bindgen_stderr
-    )
-    if(NOT l_bindgen_result EQUAL 0)
-        message(FATAL_ERROR
-            "bindgen failed for src/bash_api.h (result ${l_bindgen_result})\n"
-            "stdout: ${l_bindgen_stdout}\nstderr: ${l_bindgen_stderr}")
+set(L_GENERATED_RUST_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_rust")
+set(L_GENERATED_RUST_BINDINGS "${L_GENERATED_RUST_DIR}/bash_api_gen.rs")
+add_custom_command(
+    OUTPUT "${L_GENERATED_RUST_BINDINGS}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${L_GENERATED_RUST_DIR}"
+    COMMAND "${L_BINDGEN_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/bash_api.h"
+        --output "${L_GENERATED_RUST_BINDINGS}"
+        --allowlist-function "l_.*"
+        --allowlist-function "find_variable"
+        --allowlist-function "bind_variable"
+        --allowlist-function "legal_identifier"
+        --allowlist-function "find_function"
+        --allowlist-function "make_new_array_variable"
+        --allowlist-function "convert_var_to_array"
+        --allowlist-function "make_new_assoc_variable"
+        --allowlist-function "array_flush"
+        --allowlist-function "array_insert"
+        --allowlist-function "array_remove"
+        --allowlist-function "assoc_flush"
+        --allowlist-function "assoc_remove"
+        --allowlist-function "assoc_keys_to_word_list"
+        --allowlist-function "assoc_reference"
+        --allowlist-function "make_word"
+        --allowlist-function "make_word_list"
+        --allowlist-function "execute_shell_function"
+        --allowlist-function "dispose_words"
+        --allowlist-function "expand_string_to_string"
+        --allowlist-function "expand_string"
+        --allowlist-function "builtin_usage"
+        --allowlist-function "internal_getopt"
+        --allowlist-function "reset_internal_getopt"
+        --allowlist-function "get_name_for_error"
+        --allowlist-function "executing_line_number"
+        --allowlist-function "builtin_error"
+        --allowlist-var "this_command_name"
+        --allowlist-var "current_builtin"
+        --allowlist-var "list_optarg"
+        --allowlist-var "loptend"
+        --allowlist-var "GETOPT_HELP"
+        --allowlist-var "interactive_shell"
+        --allowlist-var "ARRAY"
+        --allowlist-var "l_open_flags"
+        --allowlist-var "l_fd_flags"
+        --allowlist-var "EX_USAGE"
+        --allowlist-var "EX_RETRYFAIL"
+        --allowlist-var "EX_NOTFOUND"
+        --allowlist-var "EXECUTION_SUCCESS"
+        --allowlist-var "EXECUTION_FAILURE"
+        --allowlist-var "att_assoc"
+        --allowlist-var "build_version"
+        --allowlist-var "patch_level"
+        --allowlist-var "dist_version"
+        --allowlist-var "release_status"
+        --allowlist-type "l_flag_entry_t"
+        --allowlist-type "builtin"
+        --opaque-type "SHELL_VAR"
+        --opaque-type "ARRAY"
+        --opaque-type "ARRAY_ELEMENT"
+        --opaque-type "HASH_TABLE"
+        --opaque-type "ARRAY_ELEMENT"
+        --opaque-type "HASH_TABLE"
+        --default-macro-constant-type "signed"
+        --
+        -DHAVE_CONFIG_H
+        -DHAVE_PPOLL=1
+        "-DL_BASH_VERSION=${L_BASH_VERSION}"
+        -DSHELL
+        -D_GNU_SOURCE=1
+        -std=gnu99
+        "-I${BASH_SOURCE}"
+        "-I${BASH_SOURCE}/include"
+        "-I${BASH_SOURCE}/builtins"
+        "-I${BASH_SOURCE}/lib"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/bash_api.h"
+        "${L_BINDGEN_EXECUTABLE}"
+    VERBATIM
+    COMMENT "Generating Rust bindings: ${L_GENERATED_RUST_DIR}/bash_api_gen.rs"
+)
+
+function(write_if_changed file content)
+    if(EXISTS "${file}")
+        file(READ "${file}" _old_content)
+    else()
+        set(_old_content "")
+    endif()
+    if(NOT _old_content STREQUAL "${content}")
+        file(WRITE "${file}" "${content}")
     endif()
 endfunction()
-
-generate_bash_bindings("${L_GENERATED_RUST_DIR}/bash_api_gen.rs" "${BASH_SOURCE}")
-message(STATUS "Generated Rust bindings: ${L_GENERATED_RUST_DIR}/bash_api_gen.rs")
 
 # Generate version info for the version subcommand
 function(generate_version_info gen_file l_builtin_source bash_source)
@@ -196,7 +200,6 @@ function(generate_version_info gen_file l_builtin_source bash_source)
     if(NOT L_BUILTIN_COMMIT)
         set(L_BUILTIN_COMMIT "unknown")
     endif()
-
     # Get L_builtin version from Cargo.toml
     file(READ "${l_builtin_source}/Cargo.toml" CARGO_CONTENT)
     string(REGEX MATCH "version = \"([^\"]+)\"" _ ${CARGO_CONTENT})
@@ -204,7 +207,6 @@ function(generate_version_info gen_file l_builtin_source bash_source)
     if(NOT L_BUILTIN_VERSION)
         set(L_BUILTIN_VERSION "0.0.0")
     endif()
-
     # Get bash git commit
     execute_process(
         COMMAND git -C "${bash_source}" rev-parse --short HEAD
@@ -215,15 +217,13 @@ function(generate_version_info gen_file l_builtin_source bash_source)
     if(NOT BASH_COMMIT)
         set(BASH_COMMIT "unknown")
     endif()
-
     # Bash version already computed as L_BASH_VERSION
     # Convert to human readable: 50116 -> 5.1.16
     math(EXPR BASH_MAJOR "${L_BASH_VERSION} / 10000")
     math(EXPR BASH_MINOR "(${L_BASH_VERSION} % 10000) / 100")
     math(EXPR BASH_PATCH "${L_BASH_VERSION} % 100")
     set(BASH_VERSION_STR "${BASH_MAJOR}.${BASH_MINOR}.${BASH_PATCH}")
-
-    file(WRITE "${gen_file}" "
+    write_if_changed("${gen_file}" "
 // Auto-generated by CMake. Do not edit.
 pub const L_BUILTIN_VERSION: &str = \"${L_BUILTIN_VERSION}\";
 pub const L_BUILTIN_COMMIT: &str = \"${L_BUILTIN_COMMIT}\";
@@ -243,6 +243,8 @@ corrosion_import_crate(
     IMPORTED_CRATES L_BUILTIN_RS_TARGETS
     FEATURES ${L_BUILTIN_RS_FEATURES}
 )
+add_custom_target(l_generated_rust DEPENDS "${L_GENERATED_RUST_BINDINGS}")
+add_dependencies(_cargo-build_l_builtin l_generated_rust)
 
 ###############################################################################
 
