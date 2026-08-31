@@ -1,0 +1,23 @@
+[package]
+name = "L_builtin"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Multi-version bash loadable builtin dispatcher"
+
+[lib]
+name = "L_builtin"
+crate-type = ["cdylib"]
+
+[dependencies]
+libc = "0.2"
+tar = "0.4"
+zstd = "0.13"
+
+[build-dependencies]
+tar = "0.4"
+zstd = "0.13"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1

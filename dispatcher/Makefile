@@ -6,17 +6,24 @@ define NL
 endef
 B = ../build/dispatcher
 
-all:
-	cmake -S . -B $(B) -DL_DISPATCHER_SO_FILES="${L_DISPATCHER_SO_FILES}"
-	cmake --build $(B) --target all
+.PHONY: build all clean test-all
+
+all: build
+
+build:
+	L_DISPATCHER_SO_FILES="${L_DISPATCHER_SO_FILES}" cargo build --release
+	@mkdir -p $(B)
+	cp target/release/libL_builtin.so $(B)/L_builtin.so
 
 clean:
-	rm -rf $(B)
+	rm -rf $(B) target
 
-VERSIONS = 5.0 5.1 5.2 5.3
-all-versions:
+VERSIONS = 5.2 5.3
+build-all:
 	$(foreach I, $(VERSIONS), $(MAKE) -C .. BASH=$(I) RELEASE=1 build$(NL))
-	find ../build/Debug ../build/Release -type f -name L_builtin.so | \
-  	sed -n 's@.*/\([0-9]\+[.][0-9]\+\)/.*@& $(B)/L_builtin-\1.so@p' | \
-  	xargs -t -n 2 cmake -E copy_if_different
-	$(MAKE) all L_DISPATCHER_SO_FILES="$(B)/L_builtin-*.so"
+	$(MAKE) all L_DISPATCHER_SO_FILES="$$(for I in $(VERSIONS); do $(MAKE) -s -C .. BASH=$$I RELEASE=1 build-output; done | paste -sd';')"
+	ls -lh $(B)/L_builtin.so
+
+test-all:
+	ln -svf $(abspath $(B)/L_builtin.so) ../L_builtin.so
+	$(foreach I, $(VERSIONS),$(MAKE) -C .. BASH=$(I) test-vs$(NL))
