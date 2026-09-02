@@ -1,5 +1,8 @@
 # Makefile
 
+noop=
+space = $(noop) $(noop)
+
 ###############################################################################
 # ---- Default targets ----
 all: test
@@ -22,7 +25,7 @@ bash-version: bash-build
 .PHONY: bash-clean bash-distclean bash-version
 
 # Hardcoded version list
-BASH_VERSIONS := 4.0 4.2 4.3 4.4 5.0 5.1 5.2 5.3
+BASH_VERSIONS := 5.3 5.2 5.1 5.0
 
 .PHONY: bash-build-all
 bash-build-all:
@@ -48,34 +51,19 @@ CMAKE_EXTRA_FLAGS ?=
 
 # Regular build: for direct bash use
 BUILD = $(BUILD_DIR)/$(CMAKE_BUILD_TYPE)/$(BASH)
-$(BUILD)/L_builtin.so: $(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt l_builtin/Cargo.toml l_builtin/Cargo.lock
+$(BUILD)/L_builtin.so: \
+	$(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt l_builtin/Cargo.toml l_builtin/Cargo.lock
 	cmake -S . -B $(BUILD) -D BASH_SOURCE=$(BASH_SOURCE_DIR) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS)
-	cmake --build $(BUILD) -j $$(nproc)
+	cmake --build $(BUILD) -j $$(nproc) --target L_builtin_module
 
 # Embedded build: for dispatcher use
 # Builds L_builtin.so in _embedded subdir, then copies to L_builtin_embedded.so in main build dir
-$(BUILD)_embedded:
-	mkdir -p $@
-$(BUILD)/L_builtin_embedded.so: $(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt l_builtin/Cargo.toml l_builtin/Cargo.lock | $(BUILD)_embedded
-	cmake -S . -B $(BUILD)_embedded -D BASH_SOURCE=$(BASH_SOURCE_DIR) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS) -D L_BUILTIN_EMBEDDED=1
-	cmake --build $(BUILD)_embedded -j $$(nproc)
-	cp $(BUILD)_embedded/L_builtin.so $(BUILD)/L_builtin_embedded.so
+$(BUILD)/L_builtin_embedded.so: \
+	$(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt l_builtin/Cargo.toml l_builtin/Cargo.lock
+	cmake -S . -B $(BUILD) -D BASH_SOURCE=$(BASH_SOURCE_DIR) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS)
+	cmake --build $(BUILD) -j $$(nproc) --target L_builtin_embedded
 
-build: $(BUILD)/L_builtin.so
-
-# Build both regular and embedded versions
-build-all: $(BUILD)/L_builtin.so $(BUILD)/L_builtin_embedded.so
-
-
-# For release builds
-release-build:
-	$(MAKE) CMAKE_BUILD_TYPE=Release build
-	$(MAKE) CMAKE_BUILD_TYPE=Release build-embedded
-
-build-embedded: $(BUILD)/L_builtin_embedded.so
-
-release-test:
-	$(MAKE) CMAKE_BUILD_TYPE=Release test
+build: $(BUILD)/L_builtin_embedded.so $(BUILD)/L_builtin.so
 
 TESTARGS ?= -Pn
 test: build
@@ -92,6 +80,9 @@ release-build:
 
 build-embedded: $(BUILD)/L_builtin_embedded.so
 
+build-embedded-output:
+	@echo $(BUILD)/L_builtin_embedded.so
+
 release-test:
 	$(MAKE) CMAKE_BUILD_TYPE=Release test
 .PHONY: build test release-build release-test
@@ -100,16 +91,16 @@ release-test:
 # --- Additional targets ---
 
 rustchecks:
-	cargo fmt --all -- --check
-	cargo clippy --all-targets --all-features -- -D warnings
-	cargo test --all-features
+	cd l_builtin && cargo fmt --all -- --check
+	cd l_builtin && cargo clippy --all-targets --all-features -- -D warnings
+	cd l_builtin && cargo test --all-features
 
 format:
-	clang-format -i src/*.c src/*.h dispatcher/*.c
-	cargo fix --lib -p l_builtin --allow-dirty
+	git ls-files '*.c' '*.h' | xargs clang-format -i
+	cd l_builtin && cargo fix --lib --allow-dirty
 
 check-format:
-	clang-format --dry-run --Werror src/*.c src/*.h dispatcher/*.c
+	git ls-files '*.c' '*.h' | xargs clang-format --dry-run --Werror
 
 check-compile-commands:
 	@[ -f $(BUILD)/compile_commands.json ] || { echo "Error: $(BUILD)/compile_commands.json not found. Run make first.";  exit 1 }
@@ -138,6 +129,28 @@ gdb: build
 
 readme: build
 	uv run --with markdown-it-py scripts/gen_readme.py --so $(BUILD)/L_builtin.so --bash $(BASH_EXE)
+
+###############################################################################
+# ---- Dispatcher targets ----
+
+.PHONY: dispatcher-build dispatcher-build-all dispatcher-test-all
+
+L_DISPATCHER_SO_FILES = $(foreach BASH,$(BASH_VERSIONS),../$(BUILD_DIR)/$(CMAKE_BUILD_TYPE)/$(BASH)/L_builtin_embedded.so)
+L_D_SO = build/dispatcher/target/release/libL_builtin_dispatcher.so
+dispatcher-build:
+	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) build-embedded$(NL))
+	@echo "L_DISPATCHER_SO_FILES='$(L_DISPATCHER_SO_FILES)'"
+	cd dispatcher && env \
+		L_DISPATCHER_SO_FILES="$(L_DISPATCHER_SO_FILES)" \
+		cargo rustc --release --lib --crate-type=cdylib --target-dir ../build/dispatcher/target
+	ls -lah $(L_D_SO)
+	ln -vfs $(L_D_SO) ./L_builtin.so
+dispatcher-test: dispatcher-build
+	./once.sh $(L_D_SO) 'L_builtin -h'
+	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) L_BUILTIN_SO=$(L_D_SO) test-vs$(NL))
+dispatcher-clean:
+	cd dispatcher && cargo clean --target-dir ../build/dispatcher/target
+
 .PHONY: all build release test check rust-checks format check-format tidy cppcheck clean sh readme
 
 ###############################################################################
@@ -156,8 +169,9 @@ test-all:
 test-vs-all: build
 	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) test-vs$(NL))
 
+L_BUILTIN_SO = ./L_builtin.so
 test-vs: bash-build
-	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh ./L_builtin.so $(ARGS) $(TESTARGS)
+	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh $(L_BUILTIN_SO) $(ARGS) $(TESTARGS)
 
 build-all:
 	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) build$(NL))

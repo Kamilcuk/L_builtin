@@ -75,6 +75,7 @@ fn version_from_string(s: &CStr) -> Option<&str> {
     Some(&str[..major_dot + 1 + minor_end])
 }
 
+#[allow(dead_code)]
 fn sh(cmd: &str) {
     eprintln!("+ {}", cmd);
     if let Ok(cstr) = std::ffi::CString::new(cmd) {
@@ -85,9 +86,7 @@ fn sh(cmd: &str) {
 fn write_all_fd(fd: c_int, data: &[u8]) -> std::io::Result<()> {
     let mut pos = 0;
     while pos < data.len() {
-        let ret = unsafe {
-            write(fd, data[pos..].as_ptr() as *const c_void, data.len() - pos)
-        };
+        let ret = unsafe { write(fd, data[pos..].as_ptr() as *const c_void, data.len() - pos) };
         if ret < 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -101,43 +100,42 @@ fn load_and_decompress_embedded_so(version: &str) -> Option<*mut c_void> {
         .map_err(|e| eprintln!("L_builtin: zstd decode error: {}", e))
         .ok()?;
 
-    let mut archive = Archive::new(decoder);
-    let mut so_data: Option<Vec<u8>> = None;
-
-    for entry in archive.entries().ok()? {
-        let mut entry = entry.ok()?;
-        let path = entry.path().ok()?;
-        let entry_name = path.file_name()?.to_str()?;
-        if entry_name == version {
-            let mut data = Vec::new();
-            Read::read_to_end(&mut entry, &mut data).ok()?;
-            so_data = Some(data);
-            break;
+    let so_data = {
+        let mut archive = Archive::new(decoder);
+        let mut so_data: Option<Vec<u8>> = None;
+        for entry in archive.entries().ok()? {
+            let mut entry = entry.ok()?;
+            let path = entry.path().ok()?;
+            let entry_name = path.file_name()?.to_str()?;
+            if entry_name == version {
+                let mut data = Vec::new();
+                Read::read_to_end(&mut entry, &mut data).ok()?;
+                so_data = Some(data);
+                break;
+            }
         }
-    }
-
-    drop(archive);
-    let so_data = so_data?;
+        so_data
+    }?;
 
     let fd = unsafe { memfd_create(c"L_builtin_embedded".as_ptr(), libc::MFD_CLOEXEC) };
     if fd < 0 {
-        eprintln!("L_builtin: memfd_create: {}", std::io::Error::last_os_error());
+        eprintln!(
+            "L_builtin: memfd_create: {}",
+            std::io::Error::last_os_error()
+        );
         return None;
     }
 
     if write_all_fd(fd, &so_data).is_err() {
-        eprintln!("L_builtin: write to memfd: {}", std::io::Error::last_os_error());
+        eprintln!(
+            "L_builtin: write to memfd: {}",
+            std::io::Error::last_os_error()
+        );
         return None;
     }
 
-    sh(&format!("nm -D -g --defined-only /proc/self/fd/{} | grep L_builtin_struct", fd));
-    sh(&format!("readelf -Ws /proc/self/fd/{} | grep L_builtin_struct", fd));
-    sh(&format!("readelf -Ws --dyn-syms /proc/self/fd/{} | grep L_builtin_struct", fd));
-
-    let fd_path = format!("/proc/self/fd/{}", fd);
-    let path_c = std::ffi::CString::new(fd_path.clone()).ok()?;
-
-    let handle = unsafe { dlopen(path_c.as_ptr(), RTLD_NOW | RTLD_LOCAL) };
+    let fd_path = format!("/proc/self/fd/{}\0", fd);
+    let handle = unsafe { dlopen(fd_path.as_ptr().cast(), RTLD_NOW | RTLD_LOCAL) };
     if handle.is_null() {
         let err = unsafe { CStr::from_ptr(dlerror()) };
         eprintln!("L_builtin: dlopen({}): {}", fd_path, err.to_string_lossy());
@@ -148,8 +146,7 @@ fn load_and_decompress_embedded_so(version: &str) -> Option<*mut c_void> {
 }
 
 fn get_embedded_builtin(handle: *mut c_void) -> Option<&'static Builtin> {
-    let symbol = std::ffi::CString::new("L_builtin_impl").ok()?;
-    let ptr = unsafe { dlsym(handle, symbol.as_ptr()) };
+    let ptr = unsafe { dlsym(handle, c"L_builtin_impl".as_ptr()) };
     if ptr.is_null() {
         return None;
     }

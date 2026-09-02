@@ -49,6 +49,13 @@ pub unsafe fn version_subcommand(list: *mut WORD_LIST) -> CmdResult {
         b")-",
         unsafe { release_status }
     );
+    // Check array implementation of the running bash
+    let alt = unsafe { crate::bash_api::l_array_impl_is_alt() };
+    match alt {
+        1 => bprintln!(b"Bash array implementation: ALT (dense)"),
+        0 => bprintln!(b"Bash array implementation: non-ALT (sparse linked list)"),
+        _ => bprintln!(b"Bash array implementation: unknown (error)"),
+    };
     Ok(())
 }
 

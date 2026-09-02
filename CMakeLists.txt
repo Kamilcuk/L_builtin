@@ -306,34 +306,31 @@ target_include_directories(bash_loadables INTERFACE "${CMAKE_CURRENT_BINARY_DIR}
 
 ###############################################################################
 
-# The C MODULE target is named L_builtin_module because Corrosion already
+# The C MODULE target is named L_builtin_object because Corrosion already
 # creates an interface target named `L_builtin` for the Rust crate. The output
 # file name is kept as "L_builtin" so bash dlsym()s L_builtin_struct unchanged.
 # Only the C glue sources remain in C; lseek/pipe/net/etc. are implemented in
 # Rust (see l_builtin/src/*.rs).
 
 # Regular version for direct bash use - exports L_builtin_struct
-add_library(L_builtin_module MODULE
+add_library(L_builtin_object OBJECT
     ./l_builtin/c/L_builtin.c
     ./l_builtin/c/poll.c
     ./l_builtin/c/sig.c
     ./l_builtin/c/bash_api.c
     ./l_builtin/c/cmd_ext.c
     ./l_builtin/c/cmd_fcntl.c
-)
-set_target_properties(L_builtin_module PROPERTIES
-    PREFIX ""
-    SUFFIX ".so"
-    OUTPUT_NAME "L_builtin"
+    $<TARGET_OBJECTS:bash_loadables>
 )
 # Emit one section per function/data and garbage-collect unreferenced ones at
 # link time. Safe here: the version script keeps only L_builtin_struct as a
 # dynamic export (bash dlsym()s it), and every other needed symbol is
 # reachable internally (Rust<->C cross-references, bash_loadables_gen[]).
-target_compile_options(L_builtin_module PRIVATE -ffunction-sections -fdata-sections)
-target_link_options(L_builtin_module PRIVATE -Wl,--gc-sections)
+target_compile_options(L_builtin_object PUBLIC -ffunction-sections -fdata-sections)
+target_link_options(L_builtin_object PUBLIC -Wl,--gc-sections)
+target_include_directories(L_builtin_object PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/generated_c")
 find_package(Threads REQUIRED)
-target_link_libraries(L_builtin_module PRIVATE
+target_link_libraries(L_builtin_object PUBLIC
     bash
     Threads::Threads
     ${CMAKE_DL_LIBS}
@@ -343,28 +340,46 @@ target_link_libraries(L_builtin_module PRIVATE
     bash_loadables
     ${L_BUILTIN_RS_TARGETS}
 )
-add_dependencies(L_builtin_module ${L_BUILTIN_RS_TARGETS})
+add_dependencies(L_builtin_object ${L_BUILTIN_RS_TARGETS})
+set_target_properties(L_builtin_object PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# Export only L_builtin_struct (the symbol bash dlsym()s); hide everything
-# else so no symbol in this module can collide/interpose with bash's
-# -rdynamic exports or other loadables.
+add_library(L_builtin_module MODULE
+    $<TARGET_OBJECTS:L_builtin_object>
+    $<TARGET_OBJECTS:bash_loadables>
+)
+set_target_properties(L_builtin_module PROPERTIES
+    PREFIX ""
+    SUFFIX ".so"
+    OUTPUT_NAME "L_builtin"
+)
+target_link_libraries(L_builtin_module PUBLIC L_builtin_object)
 set(VERSION_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/L_builtin.map)
-if(L_BUILTIN_EMBEDDED)
-    set(VERSION_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/L_builtin_embedded.map)
-endif()
 target_link_options(L_builtin_module PRIVATE -Wl,--version-script=${VERSION_SCRIPT})
 set_target_properties(L_builtin_module PROPERTIES LINK_DEPENDS ${VERSION_SCRIPT})
+
+add_library(L_builtin_embedded MODULE
+    $<TARGET_OBJECTS:L_builtin_object>
+    $<TARGET_OBJECTS:bash_loadables>
+)
+set_target_properties(L_builtin_embedded PROPERTIES
+    PREFIX ""
+    SUFFIX ".so"
+    OUTPUT_NAME "L_builtin_embedded"
+)
+target_link_libraries(L_builtin_embedded PUBLIC L_builtin_object)
+set(VERSION_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/L_builtin_embedded.map)
+target_link_options(L_builtin_embedded PRIVATE -Wl,--version-script=${VERSION_SCRIPT})
+set_target_properties(L_builtin_embedded PROPERTIES LINK_DEPENDS ${VERSION_SCRIPT})
 
 ###############################################################################
 
 if(L_DEV)
-    # Propagate L_DEV to the C compiler so dev-only `#ifdef L_DEV` sections in
-    # the C sources (e.g. the `unittest` help entry) are compiled in.
-    target_compile_definitions(L_builtin_module PRIVATE L_DEV=1)
-    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-        target_compile_options(L_builtin_module PRIVATE -Wall -Wextra -fanalyzer)
-        target_compile_options(bash_loadables PRIVATE -Wall -Wextra)
-    endif()
+# Propagate L_DEV to the C compiler so dev-only `#ifdef L_DEV` sections in
+     # the C sources (e.g. the `unittest` help entry) are compiled in.
+     target_compile_definitions(L_builtin_object PRIVATE L_DEV=1)
+     if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+         target_compile_options(L_builtin_object PRIVATE -Wall -Wextra -fanalyzer)
+     endif()
 
     add_custom_target(symlink_compile_commands ALL
         COMMAND ${CMAKE_COMMAND} -E create_symlink
@@ -377,5 +392,11 @@ if(L_DEV)
             $<TARGET_FILE:L_builtin_module>
             ${CMAKE_CURRENT_SOURCE_DIR}/L_builtin.so
         COMMENT "Creating symlink to L_builtin.so"
+    )
+    add_custom_command(TARGET L_builtin_embedded POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+            $<TARGET_FILE:L_builtin_embedded>
+            ${CMAKE_CURRENT_SOURCE_DIR}/L_builtin.so
+        COMMENT "Creating symlink to L_builtin_embedded.so"
     )
 endif()

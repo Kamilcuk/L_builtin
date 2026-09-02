@@ -22,6 +22,19 @@ char *l_element_value(ARRAY_ELEMENT *ae) { return element_value(ae); }
 long long l_element_index(ARRAY_ELEMENT *ae) { return (long long)element_index(ae); }
 arrayind_t l_array_max_index(ARRAY *a) { return array_max_index(a); }
 
+int l_array_impl_is_alt(void)
+{
+    ARRAY *a = array_create();
+    if (a == 0) return -1;
+
+    /* word[2] at offset 16: non-ALT = non-NULL head pointer; ALT = -1 (first_index) */
+    uintptr_t w2 = *(uintptr_t *)((char *)a + 16);
+
+    int is_alt = (w2 == (uintptr_t)-1);   /* ALT first_index == -1 */
+    array_dispose(a);
+    return is_alt;
+}
+
 int l_readonly_p(SHELL_VAR *var) { return readonly_p(var); }
 int l_invisible_p(SHELL_VAR *var) { return invisible_p(var); }
 int l_array_p(SHELL_VAR *var) { return array_p(var); }

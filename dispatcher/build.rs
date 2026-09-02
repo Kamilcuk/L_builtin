@@ -24,7 +24,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=L_DISPATCHER_SO_FILES");
 
     let so_files = env::var("L_DISPATCHER_SO_FILES")
-        .expect("L_DISPATCHER_SO_FILES must be set to a semicolon-separated list of .so paths");
+        .expect("L_DISPATCHER_SO_FILES must be set to a space-separated list of .so paths");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
@@ -35,26 +35,29 @@ fn main() {
     {
         let mut tar_builder = Builder::new(&mut tar_buf);
 
-        for entry in so_files.split(';') {
+        for entry in so_files.split(' ') {
             let entry = entry.trim();
             if entry.is_empty() {
                 continue;
             }
+            println!("cargo:rerun-if-changed={entry}");
 
             let path = PathBuf::from(entry);
 
-            // Extract the bash version from the parent directory name.
-            // Expected path format: .../build/Release/5.2/L_builtin.so
-            let version = path
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|f| f.to_str())
-                .unwrap_or_else(|| {
+            // Extract the bash version from the path using regex.
+            // Expected path format: .../build/Release/5.2/L_builtin.so or .../build/Debug/5.2/l_builtin_embedded.so
+            let version = {
+                use regex::Regex;
+                let re = Regex::new(r".*/([0-9]+\.[0-9]+)/").unwrap();
+                let path_str = path.display().to_string();
+                if let Some(caps) = re.captures(&path_str) {
+                    caps.get(1).unwrap().as_str().to_string()
+                } else {
                     panic!("Could not extract version from path: {}", path.display())
-                });
+                }
+            };
 
-            let data = fs::read(&path)
-                .unwrap_or_else(|e| panic!("Failed to read .so: {}", e));
+            let data = fs::read(&path).unwrap_or_else(|e| panic!("Failed to read .so: {}", e));
 
             so_entries.push((path.display().to_string(), data.len() as u64));
 
@@ -63,19 +66,23 @@ fn main() {
                 .append_data(
                     &mut {
                         let mut header = tar::Header::new_old();
-                        header.set_path(version).unwrap();
+                        header.set_path(version.clone()).unwrap();
                         header.set_size(data.len() as u64);
                         header.set_mode(0o755);
                         header.set_mtime(0);
                         header.set_mtime(0);
                         header
                     },
-                    version,
+                    &version,
                     &data[..],
                 )
                 .unwrap_or_else(|e| panic!("Failed to append to tar: {}", e));
 
-            println!("cargo:warning=  archived {} as tar entry '{}'", path.display(), version);
+            println!(
+                "cargo:warning=  archived {} as tar entry '{}'",
+                path.display(),
+                version
+            );
         }
 
         tar_builder
@@ -101,7 +108,10 @@ fn main() {
     fs::write(&zstd_path, &zstd_buf)
         .unwrap_or_else(|e| panic!("Failed to write embedded.tar.zst: {}", e));
 
-    println!("cargo:rustc-env=EMBEDDED_TAR_ZST_PATH={}", zstd_path.display());
+    println!(
+        "cargo:rustc-env=EMBEDDED_TAR_ZST_PATH={}",
+        zstd_path.display()
+    );
     println!(
         "cargo:warning=Embedded tar.zst: {} (tar: {})",
         int_to_human(zstd_buf.len() as u64),
@@ -115,7 +125,12 @@ fn main() {
     report.push_str("=================================================\n\n");
     report.push_str("Used .so files:\n");
     for (path, size) in &so_entries {
-        report.push_str(&format!("  {}  ({} bytes / {})\n", path, size, int_to_human(*size)));
+        report.push_str(&format!(
+            "  {}  ({} bytes / {})\n",
+            path,
+            size,
+            int_to_human(*size)
+        ));
     }
     report.push_str(&format!(
         "\nUncompressed tar archive size: {} bytes ({})\n",
@@ -133,7 +148,10 @@ fn main() {
     ));
     fs::write(&report_path, &report)
         .unwrap_or_else(|e| panic!("Failed to write size report: {}", e));
-    println!("cargo:warning=Size report written to {}", report_path.display());
+    println!(
+        "cargo:warning=Size report written to {}",
+        report_path.display()
+    );
 
     println!("cargo:rerun-if-env-changed=L_DISPATCHER_SO_FILES");
 }
