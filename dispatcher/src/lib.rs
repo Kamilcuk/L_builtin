@@ -1,9 +1,10 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
+use nix::libc::{dlerror, dlopen, dlsym, memfd_create, write, RTLD_LOCAL, RTLD_NOW};
 use std::ffi::CStr;
 use std::io::{Cursor, Read};
-use std::os::raw::{c_char, c_int, c_uint, c_void};
+use std::os::raw::{c_char, c_int, c_void};
 
 use tar::Archive;
 use zstd::stream::Decoder;
@@ -26,15 +27,23 @@ const BUILTIN_ENABLED: c_int = 1;
 struct SyncPtr(*const c_char);
 unsafe impl Sync for SyncPtr {}
 
-static L_BUILTIN_DOC: [SyncPtr; 7] = [
-    SyncPtr(c"L_builtin multi-version dispatcher.".as_ptr()),
-    SyncPtr(c"".as_ptr()),
-    SyncPtr(c"L_builtin <subcommand> [options] [args]".as_ptr()),
-    SyncPtr(c"".as_ptr()),
-    SyncPtr(c"Available subcommands:".as_ptr()),
-    SyncPtr(c"  version      Print build and bash version information".as_ptr()),
-    SyncPtr(core::ptr::null()),
-];
+macro_rules! doc_array {
+    ($($cstr:literal),* $(,)?) => {
+        [
+            $(SyncPtr($cstr.as_ptr())),*,
+            SyncPtr(core::ptr::null()),
+        ]
+    };
+}
+
+static L_BUILTIN_DOC: [SyncPtr; 7] = doc_array!(
+    c"L_builtin multi-version dispatcher.",
+    c"",
+    c"L_builtin <subcommand> [options] [args]",
+    c"",
+    c"Available subcommands:",
+    c"  version      Print build and bash version information",
+);
 
 #[no_mangle]
 pub static mut L_builtin_struct: Builtin = Builtin {
@@ -46,20 +55,9 @@ pub static mut L_builtin_struct: Builtin = Builtin {
     handle: core::ptr::null_mut(),
 };
 
-///////////////////////////////////////////////////////////////////////////////
-
 extern "C" {
     static dist_version: *const c_char;
-
-    fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
-    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
-    fn dlerror() -> *mut c_char;
-    fn memfd_create(name: *const c_char, flags: c_uint) -> c_int;
-    fn write(fd: c_int, buf: *const c_void, count: usize) -> isize;
 }
-
-const RTLD_NOW: c_int = libc::RTLD_NOW;
-const RTLD_LOCAL: c_int = libc::RTLD_LOCAL;
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -150,7 +148,7 @@ fn get_embedded_builtin(handle: *mut c_void) -> Option<&'static Builtin> {
     if ptr.is_null() {
         return None;
     }
-    Some(unsafe { &*(ptr as *const Builtin) })
+    Some(unsafe { &**(ptr as *const *const Builtin) })
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -165,7 +163,6 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut c_void) -> c_int {
             return 1;
         }
     };
-
     let handle = match load_and_decompress_embedded_so(&version) {
         Some(h) => h,
         None => {
@@ -173,7 +170,6 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut c_void) -> c_int {
             return 1;
         }
     };
-
     let b = match get_embedded_builtin(handle) {
         Some(b) => b,
         None => {
@@ -185,10 +181,8 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut c_void) -> c_int {
             return 1;
         }
     };
-
     L_builtin_struct.short_doc = b.short_doc;
     L_builtin_struct.long_doc = b.long_doc;
     L_builtin_struct.function = b.function;
-
     (b.function)(list)
 }

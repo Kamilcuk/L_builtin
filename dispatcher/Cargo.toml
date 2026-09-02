@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 libc = "0.2"
 tar = "0.4"
 zstd = "0.13"
+nix = "0.31"
 
 [build-dependencies]
 tar = "0.4"

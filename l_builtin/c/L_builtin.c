@@ -66,11 +66,4 @@ struct builtin L_builtin_struct = {
   0
 };
 
-struct builtin L_builtin_impl = {
-  "L_builtin",
-  l_entrypoint,
-  BUILTIN_ENABLED,
-  (void *)L_builtin_doc,
-  "L_builtin <subcommand> [options] [args]",
-  0
-};
+const struct builtin *const L_builtin_impl = &L_builtin_struct;

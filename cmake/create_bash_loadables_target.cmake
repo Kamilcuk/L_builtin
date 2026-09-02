@@ -1,28 +1,11 @@
 # Function to create bash loadables target
 # Arguments:
-#   TARGET_NAME: base name for the target (creates ${TARGET_NAME}_loadables)
+#   TARGET_NAME: base name for the target (creates ${TARGET_NAME})
 #   BASH_SOURCE: path to bash source
 #   GENERATED_DIR: directory for generated header
-function(create_bash_loadables_target)
-    set(options)
-    set(one_value_args TARGET_NAME BASH_SOURCE GENERATED_DIR)
-    set(multi_value_args)
-    cmake_parse_arguments(ARG "${options}" "${one_value_args}" "${multi_value_args}" ${ARGN})
-
-    # Verify required arguments
-    foreach(arg TARGET_NAME BASH_SOURCE GENERATED_DIR)
-        if(NOT ARG_${arg})
-            message(FATAL_ERROR "create_bash_loadables_target requires ${arg} argument")
-        endif()
-    endforeach()
-
-    set(target_name "${ARG_TARGET_NAME}")
-    set(bash_source "${ARG_BASH_SOURCE}")
-    set(generated_dir "${ARG_GENERATED_DIR}")
-    set(loadable_sources_var "${ARG_LOADABLE_SOURCES_VAR}")
-
+function(create_bash_loadables_target TARGET_NAME BASH_SOURCE GENERATED_DIR)
     # Gather loadable source files
-    file(GLOB sources CONFIGURE_DEPENDS SORT_BY MODIFY ORDER DESCENDING "${bash_source}/examples/loadables/*.c")
+    file(GLOB sources CONFIGURE_DEPENDS SORT_BY MODIFY ORDER DESCENDING "${BASH_SOURCE}/examples/loadables/*.c")
     set(loadable_names "")
     set(valid_sources "")
     set(excluded_sources "")
@@ -79,17 +62,17 @@ function(create_bash_loadables_target)
     foreach(name ${loadable_names})
         string(APPEND c_content "extern const struct builtin ${name};\n")
     endforeach()
-    string(APPEND c_content "\nstatic const struct builtin *const bash_loadables_gen[] = {\n")
+    string(APPEND c_content "\nstatic const struct builtin *const bash_gen[] = {\n")
     foreach(name ${loadable_names})
         string(APPEND c_content "    &${name},\n")
     endforeach()
     string(APPEND c_content "};\n")
-    file(CONFIGURE OUTPUT "${generated_dir}/bash_loadables_gen.h" CONTENT "${c_content}" @ONLY)
-    add_library(${target_name}_loadables OBJECT ${valid_sources})
-    set_target_properties(${target_name}_loadables PROPERTIES
+    file(CONFIGURE OUTPUT "${GENERATED_DIR}/bash_gen.h" CONTENT "${c_content}" @ONLY)
+    add_library(${TARGET_NAME} OBJECT ${valid_sources})
+    set_target_properties(${TARGET_NAME} PROPERTIES
         POSITION_INDEPENDENT_CODE ON
     )
-    target_compile_options(${target_name}_loadables PRIVATE
+    target_compile_options(${TARGET_NAME} PRIVATE
         -ffunction-sections
         -fdata-sections
         -Wno-discarded-qualifiers
@@ -103,6 +86,5 @@ function(create_bash_loadables_target)
         -Wno-implicit-function-declaration
         -w
     )
-    target_link_libraries(${target_name}_loadables PRIVATE bash)
-    target_include_directories(${target_name}_loadables INTERFACE "${generated_dir}")
+    target_include_directories(${TARGET_NAME} INTERFACE "${GENERATED_DIR}")
 endfunction()

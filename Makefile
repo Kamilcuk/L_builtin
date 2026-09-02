@@ -25,7 +25,7 @@ bash-version: bash-build
 .PHONY: bash-clean bash-distclean bash-version
 
 # Hardcoded version list
-BASH_VERSIONS := 5.3 5.2 5.1 5.0
+BASH_VERSIONS ?= 5.3 5.2 5.1 5.0
 
 .PHONY: bash-build-all
 bash-build-all:
@@ -40,6 +40,19 @@ bash-install-all:
 	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) $(BASH_PREFIX)/bin/bash$(NL))
 
 ###############################################################################
+
+.PHONY: prepare-rust-workspace
+prepare-rust-workspace: $(BUILD_DIR)/.prepare-rust-workspace
+$(BUILD_DIR)/.prepare-rust-workspace: ./l_builtin/Cargo.toml.tmpl
+	@mkdir -vp $(BASH_VERSIONS:%=$(BUILD_DIR)/rust/%/)
+	$(BASH_VERSIONS:%=ln -vsfr ./l_builtin/Cargo.lock $(BUILD_DIR)/rust/%/$(NL))
+	$(BASH_VERSIONS:%=ln -vsfr ./l_builtin/src $(BUILD_DIR)/rust/%/$(NL))
+	$(foreach I,$(BASH_VERSIONS),\
+		VAR=$(I) envsubst <./l_builtin/Cargo.toml.tmpl >$(BUILD_DIR)/rust/$(I)/Cargo.toml\
+	$(NL))
+	touch $(@)
+
+###############################################################################
 # ---- L_builtin targets ----
 # Makefile drives CMake, which drives the Rust crate via Corrosion and the C
 # glue, running bindgen and producing L_builtin.so.
@@ -51,19 +64,15 @@ CMAKE_EXTRA_FLAGS ?=
 
 # Regular build: for direct bash use
 BUILD = $(BUILD_DIR)/$(CMAKE_BUILD_TYPE)/$(BASH)
-$(BUILD)/L_builtin.so: \
-	$(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt l_builtin/Cargo.toml l_builtin/Cargo.lock
+build:
 	cmake -S . -B $(BUILD) -D BASH_SOURCE=$(BASH_SOURCE_DIR) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS)
 	cmake --build $(BUILD) -j $$(nproc) --target L_builtin_module
 
 # Embedded build: for dispatcher use
 # Builds L_builtin.so in _embedded subdir, then copies to L_builtin_embedded.so in main build dir
-$(BUILD)/L_builtin_embedded.so: \
-	$(BASH_SOURCE_DIR)/bash $(wildcard src/*) ./CMakeLists.txt l_builtin/Cargo.toml l_builtin/Cargo.lock
+build-embedded:
 	cmake -S . -B $(BUILD) -D BASH_SOURCE=$(BASH_SOURCE_DIR) $(CMAKE_FLAGS) $(CMAKE_EXTRA_FLAGS)
 	cmake --build $(BUILD) -j $$(nproc) --target L_builtin_embedded
-
-build: $(BUILD)/L_builtin_embedded.so $(BUILD)/L_builtin.so
 
 TESTARGS ?= -Pn
 test: build
@@ -74,18 +83,18 @@ ifeq ($(L_DEV),1)
 	@echo "=== L_builtin unittest (in-process, dev build only) ==="
 	$(BASH_EXE) -c 'enable -f $(BUILD)/L_builtin.so L_builtin; L_builtin unittest'
 endif
+
 release-build:
 	$(MAKE) CMAKE_BUILD_TYPE=Release build
 	$(MAKE) CMAKE_BUILD_TYPE=Release build-embedded
-
-build-embedded: $(BUILD)/L_builtin_embedded.so
 
 build-embedded-output:
 	@echo $(BUILD)/L_builtin_embedded.so
 
 release-test:
 	$(MAKE) CMAKE_BUILD_TYPE=Release test
-.PHONY: build test release-build release-test
+
+.PHONY: build test release-build release-test build-embedded build-embedded-output
 
 ###############################################################################
 # --- Additional targets ---
@@ -135,13 +144,14 @@ readme: build
 
 .PHONY: dispatcher-build dispatcher-build-all dispatcher-test-all
 
-L_DISPATCHER_SO_FILES = $(foreach BASH,$(BASH_VERSIONS),../$(BUILD_DIR)/$(CMAKE_BUILD_TYPE)/$(BASH)/L_builtin_embedded.so)
+L_DISPATCHER_SO_FILES = $(foreach BASH,$(BASH_VERSIONS),./$(BUILD_DIR)/$(CMAKE_BUILD_TYPE)/$(BASH)/L_builtin_embedded.so)
 L_D_SO = build/dispatcher/target/release/libL_builtin_dispatcher.so
 dispatcher-build:
+	@echo "BASH_VERSIONS=$(BASH_VERSIONS)"
 	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) build-embedded$(NL))
-	@echo "L_DISPATCHER_SO_FILES='$(L_DISPATCHER_SO_FILES)'"
+	ls -lah $(L_DISPATCHER_SO_FILES)
 	cd dispatcher && env \
-		L_DISPATCHER_SO_FILES="$(L_DISPATCHER_SO_FILES)" \
+		L_DISPATCHER_SO_FILES="$(L_DISPATCHER_SO_FILES:./%=../%)" \
 		cargo rustc --release --lib --crate-type=cdylib --target-dir ../build/dispatcher/target
 	ls -lah $(L_D_SO)
 	ln -vfs $(L_D_SO) ./L_builtin.so

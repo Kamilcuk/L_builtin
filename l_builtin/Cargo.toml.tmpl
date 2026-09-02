@@ -1,0 +1,62 @@
+[package]
+name = "l_builtin_${VER}"
+version = "0.1.3"
+edition = "2021"
+description = "Bash loadable builtins implemented in Rust"
+license = "MIT"
+repository = "https://github.com/Kamilcuk/l_builtin"
+
+[lib]
+name = "l_builtin_${VER}"
+# staticlib so CMake links Rust + C into a single l_builtin.so and the version
+# script can hide all internal symbols (a cdylib would cross-boundary-reference
+# bash_api.c symbols at runtime, which the version script hides).
+crate-type = ["staticlib"]
+
+[features]
+default = ["ppoll"]
+ppoll = []
+bash_lt_4_3 = []
+dev = []
+
+[dependencies]
+libc = "0.2"
+thiserror = "2.0"
+nix = "0.31"
+# NOTE: no [build-dependencies] and no build.rs - the Rust crate is built by
+# Corrosion under CMake, which runs bindgen (see CMakeLists.txt) and generates
+# the FFI bindings into ${CMAKE_SOURCE_DIR}/generated_rust/bash_api_gen.rs.
+rustix = { version = "1.1", features = ["param", "use-libc-auxv", "time"] }
+mlua = { version = "0.10", features = ["lua51", "vendored"] }
+smallvec = "1.15"
+memmap2 = "0.9"
+uucore = { git = "https://github.com/uutils/coreutils", package = "uucore", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+uu_ls = { git = "https://github.com/uutils/coreutils", package = "uu_ls", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+uu_stat = { git = "https://github.com/uutils/coreutils", package = "uu_stat", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+uu_dirname = { git = "https://github.com/uutils/coreutils", package = "uu_dirname", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+uu_rm = { git = "https://github.com/uutils/coreutils", package = "uu_rm", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+uu_tee = { git = "https://github.com/uutils/coreutils", package = "uu_tee", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+uu_sleep = { git = "https://github.com/uutils/coreutils", package = "uu_sleep", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }
+rkyv = "0.8"
+regex = "1.11"
+sed-rs = "2.0.0"
+parse_duration = "2.1"
+cmdargs-derive = { path = "../../../cmdargs-derive" }
+
+[dev-dependencies]
+tempfile = "3.15"
+pretty_assertions = "1.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[lints.rust]
+dead_code = "allow"
+
+[lints.clippy]
+missing_safety_doc = "allow"
+undocumented_unsafe_blocks = "allow"
+

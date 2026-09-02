@@ -6,10 +6,7 @@ use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
 
 // Generated version info (from CMake)
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/generated_rust/version.rs"
-));
+include!(concat!(env!("GENERATED_RUST"), "/version.rs"));
 
 const VERSION_CMD: CmdDesc = CmdDesc::new(
     c"version",
@@ -58,4 +55,3 @@ pub unsafe fn version_subcommand(list: *mut WORD_LIST) -> CmdResult {
     };
     Ok(())
 }
-

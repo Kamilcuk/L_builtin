@@ -746,9 +746,10 @@ unsafe fn shm_unbind_subcommand(list: *mut WORD_LIST) -> CmdResult {
             b"shm: missing required argument: VARS"
         ));
     }
-    for c in args.vars {
-        let v = c.as_ptr() as *const c_char;
+    for var in args.vars {
+        let v = var.as_ptr() as *const c_char;
         let cname = CStr::from_ptr(v);
+        eprintln!("[DEBUG unbind] var.as_ptr={:p} v={:p} cname={:?}", var.as_ptr() as *const (), v, cname);
         // Snapshot the current value before dropping the binding.
         let snapshot = snapshot_var(cname);
         REGISTRY.with(|r| r.borrow_mut().remove(cname));

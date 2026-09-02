@@ -7,6 +7,10 @@ endif()
 
 project(L_builtin C)
 
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS ON)
+
 ###############################################################################
 
 # Bash source path (for internal headers like stdc.h, flags.h, etc.)
@@ -56,7 +60,7 @@ endif()
 # Generate the Rust FFI bindings and version info via included cmake
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rust_bindings_and_version.cmake)
 generate_rust_bindings_and_version(
-    GENERATED_RUST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/generated_rust"
+    GENERATED_RUST_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_rust"
     BASH_SOURCE "${BASH_SOURCE}"
     TARGET_NAME "L_builtin"
 )
@@ -69,38 +73,22 @@ corrosion_import_crate(
     IMPORTED_CRATES L_BUILTIN_RS_TARGETS
     FEATURES ${L_BUILTIN_RS_FEATURES}
 )
+corrosion_set_env_vars(l_builtin
+    GENERATED_RUST=${CMAKE_CURRENT_BINARY_DIR}/generated_rust
+)
 add_custom_target(l_generated_rust DEPENDS "${L_GENERATED_RUST_BINDINGS}")
 add_dependencies(_cargo-build_l_builtin l_generated_rust)
 
 ###############################################################################
 
-set(CMAKE_C_STANDARD 99)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS ON)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/create_bash_target.cmake)
+create_bash_target(bash "${BASH_SOURCE}")
 
-add_library(bash INTERFACE)
-target_include_directories(bash INTERFACE
-    ${BASH_SOURCE}
-    ${BASH_SOURCE}/include
-    ${BASH_SOURCE}/builtins
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/create_bash_loadables_target.cmake)
+create_bash_loadables_target(bash_loadables "${BASH_SOURCE}"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated_c"
 )
-target_compile_definitions(bash INTERFACE
-    HAVE_CONFIG_H
-    SHELL
-    L_BASH_VERSION=${L_BASH_VERSION}
-    _GNU_SOURCE=1
-    HAVE_PPOLL=$<BOOL:${HAVE_PPOLL}>
-)
-
-###############################################################################
-
-# Generate bash loadables via included cmake
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/bash_loadables.cmake)
-create_bash_loadables_target(
-    TARGET_NAME bash
-    BASH_SOURCE "${BASH_SOURCE}"
-    GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_c"
-)
+target_link_libraries(bash_loadables bash)
 
 ###############################################################################
 
@@ -137,6 +125,10 @@ target_link_libraries(L_builtin_object PUBLIC
     boost_preprocessor
     bash_loadables
     ${L_BUILTIN_RS_TARGETS}
+)
+target_compile_definitions(L_builtin_object PUBLIC
+    L_BASH_VERSION=${L_BASH_VERSION}
+    HAVE_PPOLL=$<BOOL:${HAVE_PPOLL}>
 )
 add_dependencies(L_builtin_object ${L_BUILTIN_RS_TARGETS})
 set_target_properties(L_builtin_object PROPERTIES POSITION_INDEPENDENT_CODE ON)
