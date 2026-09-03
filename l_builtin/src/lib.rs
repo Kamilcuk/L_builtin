@@ -35,6 +35,7 @@ pub(crate) mod io_common;
 pub(crate) mod listen;
 pub(crate) mod lseek;
 pub(crate) mod memfd;
+pub(crate) mod nolock;
 pub(crate) mod pipe;
 pub(crate) mod pthread;
 pub(crate) mod read;

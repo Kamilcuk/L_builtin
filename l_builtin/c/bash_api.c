@@ -24,15 +24,16 @@ arrayind_t l_array_max_index(ARRAY *a) { return array_max_index(a); }
 
 int l_array_impl_is_alt(void)
 {
-    ARRAY *a = array_create();
-    if (a == 0) return -1;
+  ARRAY *a = array_create();
+  if (a == 0)
+    return -1;
 
-    /* word[2] at offset 16: non-ALT = non-NULL head pointer; ALT = -1 (first_index) */
-    uintptr_t w2 = *(uintptr_t *)((char *)a + 16);
+  /* word[2] at offset 16: non-ALT = non-NULL head pointer; ALT = -1 (first_index) */
+  uintptr_t w2 = *(uintptr_t *)((char *)a + 16);
 
-    int is_alt = (w2 == (uintptr_t)-1);   /* ALT first_index == -1 */
-    array_dispose(a);
-    return is_alt;
+  int is_alt = (w2 == (uintptr_t)-1); /* ALT first_index == -1 */
+  array_dispose(a);
+  return is_alt;
 }
 
 int l_readonly_p(SHELL_VAR *var) { return readonly_p(var); }

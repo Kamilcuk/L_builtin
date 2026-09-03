@@ -2,6 +2,7 @@
 #![allow(non_snake_case)]
 
 use nix::libc::{dlerror, dlopen, dlsym, memfd_create, write, RTLD_LOCAL, RTLD_NOW};
+use std::cell::UnsafeCell;
 use std::ffi::CStr;
 use std::io::{Cursor, Read};
 use std::os::raw::{c_char, c_int, c_void};
@@ -153,36 +154,59 @@ fn get_embedded_builtin(handle: *mut c_void) -> Option<&'static Builtin> {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+#[repr(transparent)]
+struct NoLock<T>(UnsafeCell<T>);
+unsafe impl<T> Sync for NoLock<T> {}
+impl<T> NoLock<T> {
+    pub const fn new(value: T) -> Self {
+        Self(UnsafeCell::new(value))
+    }
+}
+impl<T> NoLock<Option<T>> {
+    pub fn get_or_try_init<E, F>(&self, f: F) -> Result<&T, E>
+    where
+        F: FnOnce() -> Result<T, E>,
+    {
+        unsafe {
+            let slot = &mut *self.0.get();
+            if slot.is_none() {
+                *slot = Some(f()?);
+            }
+            Ok(slot.as_ref().unwrap())
+        }
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn l_entrypoint(list: *mut c_void) -> c_int {
-    let dist = CStr::from_ptr(dist_version);
-    let version = match version_from_string(&dist) {
-        Some(v) => v,
-        None => {
-            eprintln!("L_builtin: could not parse dist_version");
-            return 1;
-        }
-    };
-    let handle = match load_and_decompress_embedded_so(&version) {
-        Some(h) => h,
-        None => {
-            eprintln!("L_builtin: no module for bash {}", version);
-            return 1;
-        }
-    };
-    let b = match get_embedded_builtin(handle) {
-        Some(b) => b,
-        None => {
-            let err = CStr::from_ptr(dlerror());
-            eprintln!(
-                "L_builtin: no L_builtin_impl symbol: {}",
-                err.to_string_lossy()
-            );
-            return 1;
-        }
-    };
-    L_builtin_struct.short_doc = b.short_doc;
-    L_builtin_struct.long_doc = b.long_doc;
-    L_builtin_struct.function = b.function;
-    (b.function)(list)
+    l_entrypoint_in(list).unwrap_or(1)
+}
+
+type BuiltinFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+static FUNC: NoLock<Option<BuiltinFn>> = NoLock::new(None);
+
+pub unsafe fn l_entrypoint_in(list: *mut c_void) -> Option<c_int> {
+    let func = FUNC
+        .get_or_try_init(|| -> Result<BuiltinFn, ()> {
+            let dist = CStr::from_ptr(dist_version);
+            let version = version_from_string(&dist).ok_or_else(|| {
+                eprintln!("L_builtin: could not parse dist_version");
+            })?;
+            let handle = load_and_decompress_embedded_so(&version).ok_or_else(|| {
+                eprintln!("L_builtin: no module for bash {}", version);
+            })?;
+            let b = get_embedded_builtin(handle).ok_or_else(|| {
+                let err = CStr::from_ptr(dlerror());
+                eprintln!(
+                    "L_builtin: no L_builtin_impl symbol: {}",
+                    err.to_string_lossy()
+                );
+            })?;
+            L_builtin_struct.short_doc = b.short_doc;
+            L_builtin_struct.long_doc = b.long_doc;
+            L_builtin_struct.function = b.function;
+            Ok(b.function)
+        })
+        .ok()?;
+    Some(func(list))
 }
