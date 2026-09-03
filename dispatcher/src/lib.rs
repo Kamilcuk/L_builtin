@@ -177,6 +177,8 @@ impl<T> NoLock<Option<T>> {
     }
 }
 
+///////////////////////////////////////////////////////////////////////////////
+
 #[no_mangle]
 pub unsafe extern "C" fn l_entrypoint(list: *mut c_void) -> c_int {
     l_entrypoint_in(list).unwrap_or(1)

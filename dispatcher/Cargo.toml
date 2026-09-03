@@ -1,25 +1,22 @@
 [package]
 name = "L_builtin_dispatcher"
-version = "0.1.0"
-edition = "2021"
-publish = false
 description = "Multi-version bash loadable builtin dispatcher"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "L_builtin_dispatcher"
 crate-type = ["cdylib"]
 
 [dependencies]
-libc = "0.2"
-tar = "0.4"
-zstd = "0.13"
-nix = "0.31"
+libc.workspace = true
+tar.workspace = true
+zstd.workspace = true
+nix.workspace = true
 
 [build-dependencies]
-tar = "0.4"
-zstd = "0.13"
-regex = "1.11"
-
-[profile.release]
-panic = "abort"
-codegen-units = 1
+tar.workspace = true
+zstd.workspace = true
+nix.workspace = true

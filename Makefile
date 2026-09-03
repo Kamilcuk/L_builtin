@@ -27,6 +27,8 @@ bash-version: bash-build
 # Hardcoded version list
 BASH_VERSIONS ?= 5.3 5.2 5.1 5.0
 
+BASH_VERSIONS_ := $(subst .,_,$(BASH_VERSIONS))
+
 .PHONY: bash-build-all
 bash-build-all:
 	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) bash-build$(NL))
@@ -41,16 +43,18 @@ bash-install-all:
 
 ###############################################################################
 
+$(BUILD_DIR)/rust/%/Cargo.toml $(BUILD_DIR)/rust/%/Cargo.lock $(BUILD_DIR)/rust/%/src &: \
+		./l_builtin/Cargo.toml.tmpl ./l_builtin/Cargo.lock ./l_builtin/src Makefile
+	@mkdir -p $(dir $@)
+	ln -svfr ./l_builtin/Cargo.lock $(dir $@)Cargo.lock
+	ln -nsvfr ./l_builtin/src $(dir $@)src
+	VERSION=$* envsubst < ./l_builtin/Cargo.toml.tmpl > $(dir $@)Cargo.toml
 .PHONY: prepare-rust-workspace
-prepare-rust-workspace: $(BUILD_DIR)/.prepare-rust-workspace
-$(BUILD_DIR)/.prepare-rust-workspace: ./l_builtin/Cargo.toml.tmpl
-	@mkdir -vp $(BASH_VERSIONS:%=$(BUILD_DIR)/rust/%/)
-	$(BASH_VERSIONS:%=ln -vsfr ./l_builtin/Cargo.lock $(BUILD_DIR)/rust/%/$(NL))
-	$(BASH_VERSIONS:%=ln -vsfr ./l_builtin/src $(BUILD_DIR)/rust/%/$(NL))
-	$(foreach I,$(BASH_VERSIONS),\
-		VAR=$(I) envsubst <./l_builtin/Cargo.toml.tmpl >$(BUILD_DIR)/rust/$(I)/Cargo.toml\
-	$(NL))
-	touch $(@)
+workspace-rust: \
+		$(BASH_VERSIONS_:%=$(BUILD_DIR)/rust/%/Cargo.toml) \
+		$(BASH_VERSIONS_:%=$(BUILD_DIR)/rust/%alt/Cargo.toml)
+workspace-rust-clean:
+	rm -rf $(BUILD_DIR)/rust/*
 
 ###############################################################################
 # ---- L_builtin targets ----
@@ -156,7 +160,7 @@ dispatcher-build:
 	ls -lah $(L_D_SO)
 	ln -vfs $(L_D_SO) ./L_builtin.so
 dispatcher-test: dispatcher-build
-	./once.sh $(L_D_SO) 'L_builtin -h'
+	./once.sh $(L_D_SO) 'L_builtin -h && L_builtin -h'
 	$(foreach I,$(BASH_VERSIONS),$(MAKE) BASH=$(I) L_BUILTIN_SO=$(L_D_SO) test-vs$(NL))
 dispatcher-clean:
 	cd dispatcher && cargo clean --target-dir ../build/dispatcher/target

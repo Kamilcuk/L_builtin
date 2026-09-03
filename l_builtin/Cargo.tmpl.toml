@@ -1,0 +1,48 @@
+[package]
+name = "l_builtin_${VERSION}"
+description = "Bash loadable builtins implemented in Rust"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "L_builtin_${VERSION}"
+crate-type = ["cdylib"]
+
+[features]
+default = ["ppoll"]
+ppoll = []
+bash_lt_4_3 = []
+dev = []
+
+[dependencies]
+libc.workspace = true
+thiserror.workspace = true
+nix.workspace = true
+# NOTE: no [build-dependencies] and no build.rs - the Rust crate is built by
+# Corrosion under CMake, which runs bindgen (see CMakeLists.txt) and generates
+# the FFI bindings into ${CMAKE_SOURCE_DIR}/generated_rust/bash_api_gen.rs.
+rustix.workspace = true
+mlua.workspace = true
+smallvec.workspace = true
+memmap2.workspace = true
+uucore.workspace = true
+uu_ls.workspace = true
+uu_stat.workspace = true
+uu_dirname.workspace = true
+uu_rm.workspace = true
+uu_tee.workspace = true
+uu_sleep.workspace = true
+rkyv.workspace = true
+regex.workspace = true
+sed-rs.workspace = true
+parse_duration.workspace = true
+cmdargs-derive.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+pretty_assertions.workspace = true
+
+[lints]
+workspace = true
