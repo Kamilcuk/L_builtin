@@ -82,7 +82,7 @@ jobs:
           commit_email: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
 
       - name: Upload L_builtin.so artifacts
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ fromJSON(steps.create_release.outputs.release).tag_name }}
           files: /tmp/build-output/**
