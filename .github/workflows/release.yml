@@ -70,7 +70,7 @@ jobs:
 
       - name: Bump version and create release
         id: create_release
-        uses: MeilCli/bump-release-action@v3.0.9
+        uses: MeilCli/bump-release-action@v3.0.10
         with:
           config_path: '.github/bump.yml'
           github_token: ${{ secrets.GITHUB_TOKEN }}
