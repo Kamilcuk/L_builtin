@@ -61,7 +61,7 @@ jobs:
             core.setOutput('run_id', String(run.id));
 
       - name: Download build output
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: L_builtin-artifacts
           path: /tmp/build-output
