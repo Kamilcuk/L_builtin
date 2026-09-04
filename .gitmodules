@@ -4,6 +4,3 @@
 [submodule "third_party/corrosion"]
 	path = third_party/corrosion
 	url = https://github.com/corrosion-rs/corrosion.git
-[submodule "third_party/bash"]
-	path = third_party/bash
-	url = https://git.savannah.gnu.org/git/bash.git

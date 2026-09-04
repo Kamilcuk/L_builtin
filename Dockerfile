@@ -46,8 +46,14 @@ FROM ${BASE_IMAGE}-base as base
 RUN set -x && \
     groupadd -g 1000 build && \
     useradd -m -u 1000 -g build -s /bin/bash build
-WORKDIR /src
-RUN chown build:build /src
+WORKDIR /a/a
+# Make cargo home and cache directories writable by the `build` user so that
+# the `type=cache` mounts at build-time can be populated. Without this, cargo
+# (running as uid 1000) fails with "Permission denied" when trying to create
+# /usr/local/cargo/{registry,git}/db/* on a cold cache.
+RUN mkdir -p /a && \
+    mkdir -p /home/build/.cargo && \
+    chown -R build:build /a /home/build /usr/local/cargo /usr/local/rustup
 USER build:build
 
 ###############################################################################
@@ -71,6 +77,7 @@ COPY --parents \
         CMakeLists.txt \
         Cargo.lock \
         Cargo.toml \
+        README.md \
         cmdargs-derive/ \
         l_builtin/ \
         scripts/ \
@@ -82,18 +89,17 @@ COPY --parents \
 COPY Makefile .
 ARG MAKEARGS=
 ENV MAKEARGS=${MAKEARGS}
-RUN --mount=type=cache,uid=1000,gid=1000,target=/src/build/Debug \
-    --mount=type=cache,uid=1000,gid=1000,target=/src/build/Release \
-    --mount=type=cache,uid=1000,gid=1000,target=/src/build/rust \
+RUN --mount=type=cache,uid=1000,gid=1000,target=/a/a/build/Debug \
+    --mount=type=cache,uid=1000,gid=1000,target=/a/a/build/Release \
+    --mount=type=cache,uid=1000,gid=1000,target=/a/a/build/rust \
     --mount=type=cache,uid=1000,gid=1000,target=/usr/local/cargo/registry \
     --mount=type=cache,uid=1000,gid=1000,target=/usr/local/cargo/git \
     --mount=type=cache,uid=1000,gid=1000,target=/home/build/.cargo/registry \
     --mount=type=cache,uid=1000,gid=1000,target=/home/build/.cargo/git \
-    id && ls -la && \
     make ${MAKEARGS} dockerfile-build
 
-FROM scratch AS output
-COPY --from=test /dest /
+FROM scratch AS build-output
+COPY --from=build /a/a/build/dest /
 
 ###############################################################################
 # test
@@ -102,7 +108,10 @@ FROM build AS test
 COPY --parents tests runtests.sh .
 ARG ARGS=
 ENV ARGS=${ARGS}
-RUN make dockerfile-test
+RUN make ${ARGS} dockerfile-test
+
+FROM scratch AS output
+COPY --from=test /a/a/dest /
 
 ###############################################################################
 # others

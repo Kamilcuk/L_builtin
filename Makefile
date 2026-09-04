@@ -97,9 +97,10 @@ build-embedded:
 	$(cmake_build) L_builtin_embedded_$(BASH_U)
 
 TESTARGS ?= -Pn
+
+runtests = timeout -v -k 2 -- 2m $1 ./runtests.sh $2 $(ARGS) $(TESTARGS)
 test:
-	timeout -v -k 2 20 $(BASH_EXE) \
-		./runtests.sh $(CMAKE_DIR)/L_builtin_standalone_$(BASH_U).so $(ARGS) $(TESTARGS)
+	$(call runtests, $(BASH_EXE), $(CMAKE_DIR)/L_builtin_standalone_$(BASH_U).so)
 ANY_BASH = $(subst .,_,$(firstword $(BASHES)))
 cargo-test:
 	@echo "=== cargo test (Rust unit tests) ==="
@@ -198,7 +199,7 @@ test-vs-all: build
 
 L_BUILTIN_SO = ./L_builtin.so
 test-vs: bash-build
-	timeout -v -k 2 20 $(BASH_EXE) ./runtests.sh $(L_BUILTIN_SO) $(ARGS) $(TESTARGS)
+	$(call runtests, $(BASH_EXE), $(L_BUILTIN_SO))
 once-vs:
 	timeout -v -k 2 20 $(BASH_EXE) ./once.sh $(L_BUILTIN_SO) 'L_builtin -h'
 
@@ -256,21 +257,38 @@ indocker-once:
 	$(call DOCKER_RUNS, bash -c './once.sh "b -h"' )
 indocker-test:
 	$(call DOCKER_RUNS, bash -c './once.sh "b -h"' )
-.PHONY: docker-once docker-bash-versions docker-images
+.PHONY: indocker-once indocker-bash-versions indocker-images
 
 ###############################################################################
 # dockerfile support
+
+DESTDIR = ./build/dest
+install:
+	@mkdir -vp $(DESTDIR)
+	ls -la $(CMAKE_DIR)
+	cp -va $(CMAKE_DIR)/L_builtin_standalone_[0-9]*.so $(DESTDIR)
+	cp -va $(CMAKE_DIR)/libL_builtin_dispatcher.so $(DESTDIR)/L_builtin.so
+	ls -la $(DESTDIR)
 
 docker-build:
 	podman build --target build .
 docker-test:
 	podman build --target test .
+docker-install:
+	podman build --target build-output --output type=local,dest=$(DESTDIR) .
+
+dockerfile-build: CMAKE_EXTRA_FLAGS = -DCARGO_LOCKED=ON
 dockerfile-build:
 	@echo 'BASHES=$(BASHES)'
-	$(foreach BASH,$(BASHES),$(MAKE) BASH=$(BASH) build CMAKE_EXTRA_FLAGS=-DCARGO_LOCKED=ON$(NL))
+	$(foreach BASH,$(BASHES),\
+		$(MAKE) BASH=$(BASH) build CMAKE_EXTRA_FLAGS=$(CMAKE_EXTRA_FLAGS) \
+	$(NL))
 	$(MAKE) dispatcher-build CMAKE_EXTRA_FLAGS=-DCARGO_LOCKED=ON
+	$(MAKE) install
 dockerfile-test:
-	$(foreach BASH,$(BASHES),$(MAKE) BASH=$(BASH) test$(NL))
+	$(foreach BASH, $(BASHES),\
+		$(call runtests, ./build/bash/$(BASH)/bash, $(DESTDIR)/L_builtin.so)$(NL) \
+		$(call runtests, ./build/bash/$(BASH)/bash, $(DESTDIR)/L_builtin_standalone_$(subst .,_,$(BASH)).so)$(NL) \
+	)
 
 ###############################################################################
-
