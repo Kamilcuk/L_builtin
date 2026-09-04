@@ -6,17 +6,10 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  BASHES: "5.3"
-
 jobs:
   build-test-publish:
     name: Build, Test, Publish
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -25,21 +18,11 @@ jobs:
           submodules: true
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-      - name: Log in to Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build, Test, Output
         uses: docker/build-push-action@v7
         with:
           context: .
           target: output
-          push: false
-          build-args: |
-            BASHES=${{ env.BASHES }}
-            MAKEARGS=
           cache-from: type=gha
           cache-to: type=gha,mode=max
           outputs: type=local,dest=/tmp/build-output
@@ -48,4 +31,4 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: L_builtin-artifacts
-          path: /tmp/build-output/**/L_builtin.so
+          path: /tmp/build-output/**

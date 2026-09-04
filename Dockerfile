@@ -65,7 +65,7 @@ RUN set -x && \
     git clone --branch master --single-branch --bare \
         https://git.savannah.gnu.org/git/bash.git build/bash.git
 COPY --parents Makefile.bash scripts/resolve-bash-version.sh .
-ARG BASHES="5.3"  #  "5.2 5.1 5.0 4.4"
+ARG BASHES="5.3 5.2 5.1 5.0 4.4"
 ENV BASHES=${BASHES}
 RUN make -f Makefile.bash bash-dockerfile
 
@@ -111,7 +111,7 @@ ENV ARGS=${ARGS}
 RUN make ${ARGS} dockerfile-test
 
 FROM scratch AS output
-COPY --from=test /a/a/dest /
+COPY --from=test /a/a/build/dest /
 
 ###############################################################################
 # others

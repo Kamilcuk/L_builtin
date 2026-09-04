@@ -16,4 +16,4 @@ categories:
       - ''
 files:
   - file-path: 'Cargo.toml'
-    line: 3
+    line: 12

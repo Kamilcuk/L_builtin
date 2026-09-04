@@ -1,69 +1,88 @@
-# .github/workflows/release.yml:
 name: Release
+
 on:
   workflow_dispatch:
     inputs:
       bump:
         description: 'bump type, major or minor or patch or empty string'
         default: ''
+        type: string
       dry_run:
         description: 'dry run, true or false'
         default: 'false'
+        type: string
       draft:
         description: 'draft, true or false'
         default: 'false'
+        type: string
       pre_release:
         description: 'pre release, true or false'
         default: 'false'
+        type: string
+
 jobs:
   release:
+    name: Release
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
     permissions:
       contents: write
+      actions: read
     steps:
-      - uses: actions/checkout@v7
+      - name: Find CI run for HEAD
+        id: find_ci
+        uses: actions/github-script@v8
         with:
-          fetch-depth: 0
-          submodules: true
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-      - name: Log in to Container Registry
-        uses: docker/login-action@v4
+          script: |
+            const { data: runs } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              head_sha: context.sha,
+              head_branch: 'main',
+              event: 'push',
+              status: 'success',
+              conclusion: 'success',
+            });
+            const run = runs.workflow_runs[0];
+            if (!run) throw new Error('No successful CI run on main for ' + context.sha);
+            if (runs.workflow_runs.length > 1) throw new Error('Multiple CI runs match ' + context.sha + ' on main');
+            if (run.head_sha !== context.sha) throw new Error('CI run SHA mismatch: ' + run.head_sha);
+            if (run.head_branch !== 'main') throw new Error('CI run not on main: ' + run.head_branch);
+            if (run.conclusion !== 'success') throw new Error('CI run not successful: ' + run.conclusion);
+
+            const { data: artifacts } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: run.id,
+            });
+            const artifact = artifacts.artifacts.find(a => a.name === 'L_builtin-artifacts' && !a.expired);
+            if (!artifact) throw new Error('L_builtin-artifacts not found in CI run ' + run.id);
+
+            core.setOutput('run_id', String(run.id));
+
+      - name: Download build output
+        uses: actions/download-artifact@v7
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build, Test, Output
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          target: output
-          push: false
-          build-args: |
-            BASHES=5.3
-            MAKEARGS=
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          outputs: type=local,dest=dist
-      - name: Verify release assets
-        run: ls -la dist/L_builtin-*.so
-      - uses: MeilCli/bump-release-action@v3.0.8
+          name: L_builtin-artifacts
+          path: /tmp/build-output
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.find_ci.outputs.run_id }}
+
+      - name: Bump version and create release
         id: create_release
+        uses: MeilCli/bump-release-action@v3.0.9
         with:
           config_path: '.github/bump.yml'
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          bump: ${{ github.event.inputs.bump }}
-          dry_run: ${{ github.event.inputs.dry_run }}
-          draft: ${{ github.event.inputs.draft }}
-          pre_release: ${{ github.event.inputs.pre_release }}
+          bump: ${{ inputs.bump }}
+          dry_run: ${{ inputs.dry_run }}
+          draft: ${{ inputs.draft }}
+          pre_release: ${{ inputs.pre_release }}
           commit_user: ${{ github.actor }}
           commit_email: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
-      - name: Publish to GitHub Releases
-        uses: softprops/action-gh-release@v3
+
+      - name: Upload L_builtin.so artifacts
+        uses: softprops/action-gh-release@v2
         with:
-          files: dist/L_builtin-*.so
           tag_name: ${{ fromJSON(steps.create_release.outputs.release).tag_name }}
-          append_body: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: /tmp/build-output/**
