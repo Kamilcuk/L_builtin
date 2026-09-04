@@ -34,7 +34,6 @@ extern "C" {
     static L_BUILTIN_DOC: [*const c_char; 0];
 }
 
-
 macro_rules! c_wrap {
     ($f:expr) => {
         |list| {

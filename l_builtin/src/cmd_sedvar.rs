@@ -85,8 +85,7 @@ fn split_records(out: String) -> Vec<CString> {
     if bytes.ends_with(b"\0") {
         recs.pop();
     }
-    recs
-        .into_iter()
+    recs.into_iter()
         .map(|r| CString::new(r).unwrap_or_default())
         .collect()
 }
@@ -145,14 +144,19 @@ pub unsafe fn sedvar_subcommand(list: *mut WORD_LIST) -> CmdResult {
             .map_err(|e| l_builtin_error!(b"sedvar: ", e.to_string()))?;
         let records = split_records(out);
         if !is_array && records.len() <= 1 {
-            args.var.set(records.into_iter().next().unwrap_or_default().as_ptr())?;
+            args.var
+                .set(records.into_iter().next().unwrap_or_default().as_ptr())?;
         } else {
             let arr = l_prepare_indexed_array(name);
             if arr.is_null() {
                 return Err(l_builtin_error!(b"sedvar: failed to prepare array"));
             }
             for (i, rec) in records.into_iter().enumerate() {
-                array_insert(arr, i as arrayind_t, rec.as_ptr() as *mut ::std::os::raw::c_char);
+                array_insert(
+                    arr,
+                    i as arrayind_t,
+                    rec.as_ptr() as *mut ::std::os::raw::c_char,
+                );
             }
         }
     }

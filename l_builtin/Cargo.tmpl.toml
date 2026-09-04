@@ -1,5 +1,5 @@
 [package]
-name = "l_builtin_${VERSION}"
+name = "l_builtin_%VERSION%"
 description = "Bash loadable builtins implemented in Rust"
 version.workspace = true
 authors.workspace = true
@@ -7,8 +7,8 @@ edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "L_builtin_${VERSION}"
-crate-type = ["cdylib"]
+name = "l_builtin_%VERSION%"
+crate-type = ["staticlib"]
 
 [features]
 default = ["ppoll"]

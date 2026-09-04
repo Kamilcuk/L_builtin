@@ -177,11 +177,11 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
                     }
                     None => {
                         let assign = quote! {
-                            self.#ident = ::core::option::Option::Some(match #opt_conv {
-                                ::core::result::Result::Ok(v) => v,
-                                #err_arm
-                            });
-                      };
+                              self.#ident = ::core::option::Option::Some(match #opt_conv {
+                                  ::core::result::Result::Ok(v) => v,
+                                  #err_arm
+                              });
+                        };
                         apply_opt_own.push(quote! {
                             if c == (#ch_lit as c_int) {
                                 #assign
@@ -317,7 +317,7 @@ pub fn derive_cmd_args(input: TokenStream) -> TokenStream {
                         }
                     });
                 }
-        }
+            }
             FieldKind::Flatten => {
                 let child_ident = match ty {
                     syn::Type::Path(p) => p.path.segments.last().unwrap().ident.clone(),

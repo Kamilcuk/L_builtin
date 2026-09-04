@@ -2,7 +2,7 @@
 # This file contains only bash version resolution, cloning, building, and trimming targets
 
 # Version to build (from BASH=5.1 or default to system)
-BASH ?= system
+BASH ?= $(shell bash --version | grep -om1 '[0-9]\+[.][0-9]\+')
 BUILD_DIR ?= build
 SHELL = bash
 
@@ -99,4 +99,8 @@ bash-trim-delete: ; $(BASH_TRIM) -print -delete
 ###############################################################################
 
 .PHONY: bash-dockerfile
-bash-dockerfile: bash-resolve bash-install bash-trim-delete
+bash-dockerfile:
+	$(foreach BASH,$(BASHES), \
+		$(MAKE) -f Makefile.bash BASH=$(BASH) bash-resolve bash-build bash-trim-delete $(NL) \
+		./build/bash/$(BASH)/bash --version $(NL) \
+	)

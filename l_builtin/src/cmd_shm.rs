@@ -426,7 +426,9 @@ impl ShmLocArgs {
         .filter(|&&b| b)
         .count();
         if n > 1 {
-            return Err(l_builtin_usage_error!(b"shm: -s, -n, -M and -F are mutually exclusive"));
+            return Err(l_builtin_usage_error!(
+                b"shm: -s, -n, -M and -F are mutually exclusive"
+            ));
         }
         Ok(())
     }
@@ -441,8 +443,8 @@ impl ShmLocArgs {
             if let Some(sz) = opt_size {
                 if sz < 100 {
                     return Err(l_builtin_usage_error!(
-                    b"shm: -M NAME:SIZE requires SIZE >= 100 bytes"
-                ));
+                        b"shm: -M NAME:SIZE requires SIZE >= 100 bytes"
+                    ));
                 }
             }
             DbPath::Mmap {
@@ -493,9 +495,8 @@ fn parse_mmap_spec(spec: &CStr) -> Result<(CString, Option<u64>), c_int> {
         }
         None => (bytes, None),
     };
-    let name = CString::new(name_bytes).map_err(|_| {
-        l_builtin_usage_error!(b"shm: -M NAME contains a NUL byte")
-    })?;
+    let name = CString::new(name_bytes)
+        .map_err(|_| l_builtin_usage_error!(b"shm: -M NAME contains a NUL byte"))?;
     Ok((name, size_opt))
 }
 
@@ -584,7 +585,9 @@ unsafe fn shm_bind_subcommand(list: *mut WORD_LIST) -> CmdResult {
         },
     };
     if args.vars.is_empty() {
-        return Err(l_builtin_usage_error!(b"shm: missing required argument: VAR_NAME..."));
+        return Err(l_builtin_usage_error!(
+            b"shm: missing required argument: VAR_NAME..."
+        ));
     }
     for var in &args.vars {
         let cname = CStr::from_ptr(var.as_ptr());
@@ -610,7 +613,10 @@ unsafe fn shm_bind_subcommand(list: *mut WORD_LIST) -> CmdResult {
             )
         };
         if result.is_null() {
-            return Err(l_builtin_error!(b": failed to bind variable ", var.as_ptr()));
+            return Err(l_builtin_error!(
+                b": failed to bind variable ",
+                var.as_ptr()
+            ));
         }
         // Seed the preserved value into the database so the getter reflects it.
         if let Some(data) = preserved {
@@ -749,7 +755,12 @@ unsafe fn shm_unbind_subcommand(list: *mut WORD_LIST) -> CmdResult {
     for var in args.vars {
         let v = var.as_ptr() as *const c_char;
         let cname = CStr::from_ptr(v);
-        eprintln!("[DEBUG unbind] var.as_ptr={:p} v={:p} cname={:?}", var.as_ptr() as *const (), v, cname);
+        eprintln!(
+            "[DEBUG unbind] var.as_ptr={:p} v={:p} cname={:?}",
+            var.as_ptr() as *const (),
+            v,
+            cname
+        );
         // Snapshot the current value before dropping the binding.
         let snapshot = snapshot_var(cname);
         REGISTRY.with(|r| r.borrow_mut().remove(cname));
@@ -779,10 +790,8 @@ unsafe fn shm_drop_subcommand(list: *mut WORD_LIST) -> CmdResult {
             // `get_shm` already printed a scoped error.
             None => return Err(EXECUTION_FAILURE),
         };
-        db.with_write(|repr| {
-            repr.vars.remove(cname)
-        })
-        .map_err(|e| l_builtin_error!(e))?;
+        db.with_write(|repr| repr.vars.remove(cname))
+            .map_err(|e| l_builtin_error!(e))?;
         // Drop the local binding (registry entry + bash dynamic var).
         REGISTRY.with(|r| r.borrow_mut().remove(cname));
         unsafe { l_unbind_variable(cname.as_ptr()) };

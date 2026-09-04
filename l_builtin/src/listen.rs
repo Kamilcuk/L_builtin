@@ -94,8 +94,8 @@ pub unsafe fn listen_subcommand(list: *mut WORD_LIST) -> CmdResult {
         port_var.set_int(port_num)?;
     }
     let raw_fd = listener.as_raw_fd();
-    let high_fd =
-        ensure_high_fd(raw_fd, !args.nocloexec).map_err(|e| l_builtin_error!(b"listen: fd dup failed: ", e))?;
+    let high_fd = ensure_high_fd(raw_fd, !args.nocloexec)
+        .map_err(|e| l_builtin_error!(b"listen: fd dup failed: ", e))?;
     args.listenfd_var.set_int(high_fd)?;
     // Prevent TcpListener::drop from closing the original fd (already duplicated/closed by ensure_high_fd)
     std::mem::forget(listener);

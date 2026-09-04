@@ -20,3 +20,4 @@ nix.workspace = true
 tar.workspace = true
 zstd.workspace = true
 nix.workspace = true
+regex.workspace = true

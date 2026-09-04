@@ -145,7 +145,8 @@ pub unsafe fn signalfd_subcommand(list: *mut WORD_LIST) -> CmdResult {
             std::io::Error::last_os_error()
         ));
     }
-    let fd = ensure_high_fd(fd, !args.nocloexec).map_err(|e| l_builtin_error!(b"signalfd: fd dup failed: ", e))?;
+    let fd = ensure_high_fd(fd, !args.nocloexec)
+        .map_err(|e| l_builtin_error!(b"signalfd: fd dup failed: ", e))?;
     match args.fd_var {
         Some(v) => {
             if let Err(e) = v.set_int(fd as i64) {

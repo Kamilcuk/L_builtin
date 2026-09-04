@@ -80,9 +80,8 @@ pub unsafe fn replace_subcommand(list: *mut WORD_LIST) -> CmdResult {
     if shellvar.is_null() {
         return Err(l_builtin_error!(b"replace: variable not found: ", name));
     }
-    let re = regex::bytes::Regex::new(args.pattern).map_err(|e| {
-        l_builtin_usage_error!(b"replace: invalid pattern: ", e.to_string())
-    })?;
+    let re = regex::bytes::Regex::new(args.pattern)
+        .map_err(|e| l_builtin_usage_error!(b"replace: invalid pattern: ", e.to_string()))?;
     let replacement = args.replacement.to_bytes();
 
     if l_assoc_p(shellvar) != 0 {

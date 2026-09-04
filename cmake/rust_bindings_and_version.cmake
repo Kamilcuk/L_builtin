@@ -124,7 +124,7 @@ function(generate_rust_bindings_and_version)
     function(generate_version_info gen_file l_builtin_source bash_source)
         # Use shared functions to extract metadata
         get_git_commit("${l_builtin_source}" L_BUILTIN_COMMIT)
-        get_cargo_version("${l_builtin_source}/l_builtin/Cargo.toml" L_BUILTIN_VERSION)
+        get_cargo_version("${l_builtin_source}/Cargo.toml" L_BUILTIN_VERSION)
         get_git_commit("${bash_source}" BASH_COMMIT)
         # Bash version already computed as L_BASH_VERSION
         # Convert to human readable: 50116 -> 5.1.16

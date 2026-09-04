@@ -4,6 +4,7 @@ members = [
   "./build/rust/*",
   "./cmdargs-derive",
   "llib",
+  "dispatcher",
 ]
 
 [workspace.package]
@@ -23,7 +24,7 @@ libc = "0.2"
 thiserror = "2.0"
 nix = "0.31"
 rustix = { version = "1.1", features = ["param", "use-libc-auxv", "time"] }
-mlua = { version = "0.12.1", features = ["lua51", "vendored"] }
+mlua = { version = "0.10", features = ["lua51", "vendored"] }
 smallvec = "1.15"
 memmap2 = "0.9"
 uucore = { git = "https://github.com/uutils/coreutils", package = "uucore", rev = "f66e155d80df3d82798324726e460675a02c5cd5" }

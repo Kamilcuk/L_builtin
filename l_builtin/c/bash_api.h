@@ -36,6 +36,11 @@
 #include <trap.h>
 #include <bashgetopt.h>
 
+/* from version.c , but missing in headers below 4.4 */
+extern int build_version, patch_level;
+extern char *dist_version, *release_status;
+extern char *this_command_name;
+
 /* -- Simple allocation wrappers ------------------------------------------- */
 
 void *l_xmalloc(size_t s);

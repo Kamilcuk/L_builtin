@@ -1,51 +1,111 @@
-FROM rust:1-slim-bookworm AS base
+# Dockerfile
+
+ARG BASE_IMAGE=ubuntu
+
+###############################################################################
+# base - all packages installed that we need
+
+FROM docker.io/library/ubuntu:22.04 AS ubuntu-base
+ENV DEBIAN_FRONTEND=noninteractive \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:/usr/local/bin:$PATH
 RUN set -x && \
     apt-get update && \
-    apt-get install -y \
-        git make gcc bison yacc libncurses5-dev libreadline-dev \
-        cmake clang clang-format clang-tidy cppcheck \
-        curl wget ca-certificates \
-        autoconf \
-    && \
-    rm -rf /var/lib/apt/lists/* && \
+    apt-get install -y --no-install-recommends \
+    git make gcc bison libncurses5-dev libreadline-dev \
+    clang clang-format clang-tidy cppcheck \
+    curl wget ca-certificates autoconf gnupg ninja-build && \
+    rm -rf /var/lib/apt/lists/*
+RUN set -x && \
+    CMAKE_VERSION="3.28.3" && \
+    wget -q https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz && \
+    tar --no-same-owner -xzf cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz -C /usr/local --strip-components=1 && \
+    rm cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz && \
+    cmake --version && \
+    \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain 1.98.0 && \
+    cargo install bindgen-cli --locked && \
+    cargo --version && \
+    rustc --version
+
+FROM docker.io/library/alpine:latest AS alpine-base
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+RUN set -x && \
+    apk add --no-cache \
+        bash git make gcc musl-dev bison ncurses-dev readline-dev \
+        cmake clang clang-extra-tools cppcheck \
+        curl wget ca-certificates autoconf ninja && \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+        sh -s -- -y --no-modify-path --default-toolchain 1.75.0 && \
     cargo install bindgen-cli --locked
 
-FROM base AS bash-builder
+FROM ${BASE_IMAGE}-base as base
+RUN set -x && \
+    groupadd -g 1000 build && \
+    useradd -m -u 1000 -g build -s /bin/bash build
 WORKDIR /src
+RUN chown build:build /src
+USER build:build
+
+###############################################################################
+# bash-build - bash is compiled
+
+FROM base AS bash-build
 RUN set -x && \
     mkdir -vp build && \
-    git clone --branch master --single-branch --bare https://git.savannah.gnu.org/git/bash.git build/bash.git
+    git clone --branch master --single-branch --bare \
+        https://git.savannah.gnu.org/git/bash.git build/bash.git
 COPY --parents Makefile.bash scripts/resolve-bash-version.sh .
-ARG BASHES="5.3"
+ARG BASHES="5.3"  #  "5.2 5.1 5.0 4.4"
 ENV BASHES=${BASHES}
-RUN set -eux && \
-    for BASH in $BASHES; do \
-        make -f Makefile.bash bash-dockerfile BASH=$BASH && \
-        ./build/bash/$BASH/bash --version || exit; \
-    done
+RUN make -f Makefile.bash bash-dockerfile
 
-FROM bash-builder AS build
-COPY --parents Cargo.toml Cargo.lock Makefile CMakeLists.txt src scripts third_party cmdargs-derive .
+###############################################################################
+# build - our code is build
+
+FROM bash-build AS build
+COPY --parents \
+        CMakeLists.txt \
+        Cargo.lock \
+        Cargo.toml \
+        cmdargs-derive/ \
+        l_builtin/ \
+        scripts/ \
+        third_party/ \
+        llib/ \
+        dispatcher/ \
+        cmake/ \
+        .
+COPY Makefile .
 ARG MAKEARGS=
 ENV MAKEARGS=${MAKEARGS}
-RUN --mount=type=cache,target=/src/build/Debug \
-    --mount=type=cache,target=/src/build/Release \
-    --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    set -eux && \
-    for BASH in $BASHES; do \
-        make dockerfile BASH=$BASH DEST=/dest || exit; \
-    done && \
-    ls -la /dest
+RUN --mount=type=cache,uid=1000,gid=1000,target=/src/build/Debug \
+    --mount=type=cache,uid=1000,gid=1000,target=/src/build/Release \
+    --mount=type=cache,uid=1000,gid=1000,target=/src/build/rust \
+    --mount=type=cache,uid=1000,gid=1000,target=/usr/local/cargo/registry \
+    --mount=type=cache,uid=1000,gid=1000,target=/usr/local/cargo/git \
+    --mount=type=cache,uid=1000,gid=1000,target=/home/build/.cargo/registry \
+    --mount=type=cache,uid=1000,gid=1000,target=/home/build/.cargo/git \
+    id && ls -la && \
+    make ${MAKEARGS} dockerfile-build
+
+FROM scratch AS output
+COPY --from=test /dest /
+
+###############################################################################
+# test
 
 FROM build AS test
 COPY --parents tests runtests.sh .
 ARG ARGS=
 ENV ARGS=${ARGS}
-RUN set -eux && \
-    for BASH in $BASHES; do \
-        timeout -v -k 2 20 ./build/bash/$BASH/bash ./runtests.sh /dest/L_builtin-*-bash-$BASH.so ${ARGS} || exit; \
-    done
+RUN make dockerfile-test
 
-FROM scratch AS output
-COPY --from=test /dest /
+###############################################################################
+# others
+
+FROM docker.io/library/alpine:latest AS alpine
+RUN apk add --no-cache bash

@@ -1,7 +1,5 @@
 use std::cell::UnsafeCell;
 
-
-
 #[repr(transparent)]
 struct NoLock<T>(UnsafeCell<T>);
 unsafe impl<T> Sync for NoLock<T> {}
