@@ -42,7 +42,7 @@ RUN set -x && \
         sh -s -- -y --no-modify-path --default-toolchain 1.75.0 && \
     cargo install bindgen-cli --locked
 
-FROM ${BASE_IMAGE}-base as base
+FROM ${BASE_IMAGE}-base AS base
 RUN set -x && \
     groupadd -g 1000 build && \
     useradd -m -u 1000 -g build -s /bin/bash build
@@ -105,7 +105,7 @@ COPY --from=build /a/a/build/dest /
 # test
 
 FROM build AS test
-COPY --parents tests runtests.sh .
+COPY --parents tests runtests.sh .github/bump.yml .
 ARG ARGS=
 ENV ARGS=${ARGS}
 RUN make ${ARGS} dockerfile-test
