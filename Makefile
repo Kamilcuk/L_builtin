@@ -159,8 +159,15 @@ term: build/init.bash
 gdb: build
 	,gdbbatchrun bash -c "enable -f ./$(CMAKE_DIR)/L_builtin.so L_builtin && L_builtin $(ARGS)"
 
-readme: build
-	uv run --with markdown-it-py scripts/gen_readme.py --so $(CMAKE_DIR)/L_builtin.so --bash $(BASH_EXE)
+REFERENCE = doc/reference.md
+
+$(REFERENCE): scripts/gen_reference.py
+	scripts/gen_reference.py ./L_builtin.so > $@
+
+readme: $(REFERENCE)
+test-readme: scripts/gen_reference.py
+	scripts/gen_reference.py ./L_builtin.so \
+		| diff -u $(REFERENCE) -
 
 ###############################################################################
 # ---- Dispatcher targets ----
@@ -179,7 +186,7 @@ dispatcher-test: dispatcher-build
 dispatcher-clean:
 	cd dispatcher && cargo clean --target-dir ../build/dispatcher/target
 
-.PHONY: all build release test check rust-checks format check-format tidy cppcheck clean sh readme
+.PHONY: all build release test check rust-checks format check-format tidy cppcheck clean sh readme test-readme
 
 ###############################################################################
 # For all bash versions

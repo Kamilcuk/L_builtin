@@ -27,6 +27,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           outputs: type=local,dest=/tmp/build-output
+          provenance: false
 
       - name: Upload L_builtin.so artifacts
         uses: actions/upload-artifact@v7
