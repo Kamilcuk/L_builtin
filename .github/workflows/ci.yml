@@ -22,7 +22,8 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          target: output
+          # target: output
+          target: build-output
           cache-from: type=gha
           cache-to: type=gha,mode=max
           outputs: type=local,dest=/tmp/build-output

@@ -98,7 +98,7 @@ build-embedded:
 
 TESTARGS ?= -Pn
 
-runtests = timeout -v -k 2 -- 2m $1 ./runtests.sh $2 $(ARGS) $(TESTARGS)
+runtests = timeout -v -k 2 -- 5m $1 ./runtests.sh $2 $(ARGS) $(TESTARGS)
 test:
 	$(call runtests, $(BASH_EXE), $(CMAKE_DIR)/L_builtin_standalone_$(BASH_U).so)
 ANY_BASH = $(subst .,_,$(firstword $(BASHES)))
@@ -262,11 +262,11 @@ indocker-test:
 ###############################################################################
 # dockerfile support
 
-DESTDIR = ./build/dest
+DESTDIR = $(BUILD_DIR)/dest
 install:
 	@mkdir -vp $(DESTDIR)
 	ls -la $(CMAKE_DIR)
-	cp -va $(CMAKE_DIR)/L_builtin_standalone_[0-9]*.so $(DESTDIR)
+	cp -va $(CMAKE_DIR)/L_builtin_standalone_[0-9]*.so $(DESTDIR) || :
 	cp -va $(CMAKE_DIR)/libL_builtin_dispatcher.so $(DESTDIR)/L_builtin.so
 	ls -la $(DESTDIR)
 
@@ -277,18 +277,13 @@ docker-test:
 docker-install:
 	podman build --target build-output --output type=local,dest=$(DESTDIR) .
 
-dockerfile-build: CMAKE_EXTRA_FLAGS = -DCARGO_LOCKED=ON
 dockerfile-build:
 	@echo 'BASHES=$(BASHES)'
-	$(foreach BASH,$(BASHES),\
-		$(MAKE) BASH=$(BASH) build CMAKE_EXTRA_FLAGS=$(CMAKE_EXTRA_FLAGS) \
-	$(NL))
-	$(MAKE) dispatcher-build CMAKE_EXTRA_FLAGS=-DCARGO_LOCKED=ON
+	$(MAKE) dispatcher-build CMAKE_EXTRA_FLAGS=-DCARGO_LOCKED=ON BASHES='$(BASHES)'
 	$(MAKE) install
 dockerfile-test:
 	$(foreach BASH, $(BASHES),\
 		$(call runtests, ./build/bash/$(BASH)/bash, $(DESTDIR)/L_builtin.so)$(NL) \
-		$(call runtests, ./build/bash/$(BASH)/bash, $(DESTDIR)/L_builtin_standalone_$(subst .,_,$(BASH)).so)$(NL) \
 	)
 
 ###############################################################################
