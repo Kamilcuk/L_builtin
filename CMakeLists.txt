@@ -158,7 +158,7 @@ foreach(ver IN LISTS bash_versions_list)
         ./l_builtin/c/L_builtin.c
         ./l_builtin/c/poll.c
         ./l_builtin/c/sig.c
-        ./l_builtin/c/bash_api.c
+        ./l_builtin/c/l_bash_api.c
         ./l_builtin/c/cmd_ext.c
         ./l_builtin/c/cmd_fcntl.c
         $<TARGET_OBJECTS:bash_loadables_${ver}>

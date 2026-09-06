@@ -78,10 +78,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-release
-        run: cargo install cargo-release --locked
+        run: |
+          set -x
+          cargo install cargo-release --locked
 
       - name: Configure git
         run: |
+          set -x
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
 
@@ -90,6 +93,7 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
+          set -x
           level="${{ inputs.bump }}"
           if [ -z "$level" ]; then
             level="patch"
@@ -112,7 +116,9 @@ jobs:
 
       - name: Push commit and tag
         if: inputs.dry_run != 'true'
-        run: git push origin HEAD "v${{ steps.version.outputs.version }}"
+        run: |
+          set -x
+          git push origin HEAD "v${{ steps.version.outputs.version }}"
 
       - name: Checkout released tag
         if: inputs.dry_run != 'true'
@@ -140,6 +146,7 @@ jobs:
         if: inputs.dry_run != 'true'
         id: notes
         run: |
+          set -x
           {
             echo "## Changes"
             echo

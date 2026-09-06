@@ -33,7 +33,7 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
 
 ```bash
 # Load once per session
-enable -f ./build/L_builtin.so L_builtin
+enable -f ./L_builtin.so L_builtin
 
 # Help
 L_builtin -h
@@ -77,10 +77,10 @@ The library is one file. Download the latest release from GitHub and put in your
 
 ```bash
 mkdir -vp ~/.local/lib/bash/
-wget -O ~/.local/lib/bash/L_builtin.so https://github.com/Kamilcuk/L_builtin/releases/latest/download/L_builtin-linux-x86_64-bash-5.3.so
+wget -O ~/.local/lib/bash/L_builtin.so https://github.com/Kamilcuk/L_builtin/releases/latest/download/L_builtin.so
 ```
 
-Then load in your `.bashrc` or interactively:
+Then load:
 
 ```bash
 enable -f ~/.local/lib/bash/L_builtin.so L_builtin

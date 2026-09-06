@@ -140,4 +140,6 @@ typedef struct {
 extern const l_flag_entry_t l_open_flags[];
 extern const l_flag_entry_t l_fd_flags[];
 
+/* ------------------------------------------------------------------------- */
+
 #endif /* L_BUILTIN_BASH_API_H_ */

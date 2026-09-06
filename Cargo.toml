@@ -5,6 +5,7 @@ members = [
   "./cmdargs-derive",
   "llib",
   "dispatcher",
+  "l_builtin",
 ]
 
 [workspace.package]

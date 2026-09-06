@@ -8,7 +8,7 @@
 #include <sys/types.h>
 #include <dlfcn.h>
 
-#include "bash_api.h"
+#include "l_bash_api.h"
 
 // My wrappers, that always resolve to external symbols, because of #undef above.
 void *l_xmalloc(size_t s) { return xmalloc(s); }
@@ -123,8 +123,7 @@ static char *l_this_command_name_buffer = 0;
  * rewinds `this_command_name` after the builtin. */
 void l_enter_subcommand(const char *prefix, const char *short_doc, const char *const long_doc[])
 {
-  {
-    assert(prefix && prefix[0]);
+  if (prefix) {
     const size_t prefix_len = strlen(prefix);
     const size_t old_len = this_command_name ? strlen(this_command_name) : 0;
     const size_t space_len = old_len > 0 ? 1 : 0;

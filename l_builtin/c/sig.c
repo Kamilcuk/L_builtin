@@ -4,8 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "bash_api.h"
-#include "L_builtin.h"
+#include "l_bash_api.h"
 
 /* Missing extern declarations from Bash headers */
 extern sigset_t top_level_mask;
@@ -61,7 +60,7 @@ static const char *const sigmask_doc[] = {
   (char *)NULL
 };
 
-int sigmask_subcommand(WORD_LIST *list)
+int l_sigmask_subcommand(WORD_LIST *list)
 {
   sigset_t block_set, unblock_set, old;
   int opt;
@@ -198,7 +197,7 @@ static const char *const sigunmask_doc[] = {
   (char *)NULL
 };
 
-int sigunmask_subcommand(WORD_LIST *list)
+int l_sigunmask_subcommand(WORD_LIST *list)
 {
   sigset_t set, old, unblocked;
   int opt;

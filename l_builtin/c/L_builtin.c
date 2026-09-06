@@ -1,7 +1,3 @@
-#include <config.h>
-
-#include "builtins.h"
-#include "shell.h"
 #include "L_builtin.h"
 
 const char *const L_builtin_doc[] = {

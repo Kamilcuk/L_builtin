@@ -89,8 +89,7 @@ COPY --parents \
 COPY Makefile .
 ARG MAKEARGS=
 ENV MAKEARGS=${MAKEARGS}
-RUN --mount=type=cache,uid=1000,gid=1000,target=/a/a/build/Debug \
-    --mount=type=cache,uid=1000,gid=1000,target=/a/a/build/Release \
+RUN --mount=type=cache,uid=1000,gid=1000,target=/a/a/build/Release \
     --mount=type=cache,uid=1000,gid=1000,target=/a/a/build/rust \
     --mount=type=cache,uid=1000,gid=1000,target=/usr/local/cargo/registry \
     --mount=type=cache,uid=1000,gid=1000,target=/usr/local/cargo/git \

@@ -909,6 +909,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "l_builtin_VERSION"
+version = "0.1.4"
+dependencies = [
+ "cmdargs-derive",
+ "libc",
+ "llib",
+ "memmap2",
+ "mlua",
+ "nix",
+ "parse_duration",
+ "pretty_assertions",
+ "regex",
+ "rkyv",
+ "rustix",
+ "sed-rs",
+ "smallvec",
+ "tempfile",
+ "thiserror",
+ "uu_dirname",
+ "uu_ls",
+ "uu_rm",
+ "uu_sleep",
+ "uu_stat",
+ "uu_tee",
+ "uucore",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -48,7 +48,7 @@ $(BUILD_DIR)/rust/%/Cargo.toml: ./l_builtin/Cargo.tmpl.toml ./l_builtin/Cargo.lo
 	@mkdir -p $(dir $@)
 	ln -svfr ./l_builtin/Cargo.lock $(dir $@)Cargo.lock
 	ln -nsvfr ./l_builtin/src $(dir $@)src
-	sed 's/%VERSION%/$*/' < ./l_builtin/Cargo.tmpl.toml > $(dir $@)Cargo.toml
+	sed 's/_VERSION/_$*/' < ./l_builtin/Cargo.toml > $(dir $@)Cargo.toml
 .PHONY: prepare-rust-workspace
 workspace-rust: $(BASHES_U:%=$(BUILD_DIR)/rust/%/Cargo.toml)
 workspace-rust-trim:
@@ -286,7 +286,7 @@ docker-install:
 
 dockerfile-build:
 	@echo 'BASHES=$(BASHES)'
-	$(MAKE) dispatcher-build CMAKE_EXTRA_FLAGS=-DCARGO_LOCKED=ON BASHES='$(BASHES)'
+	$(MAKE) dispatcher-build CMAKE_EXTRA_FLAGS=-DCARGO_LOCKED=ON BASHES='$(BASHES)' RELEASE=1
 	$(MAKE) install
 dockerfile-test:
 	$(foreach BASH, $(BASHES),\

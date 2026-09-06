@@ -8,8 +8,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#include "bash_api.h"
-#include "L_builtin.h"
+#include "l_bash_api.h"
 
 static short parse_events(const char *s)
 {
@@ -245,7 +244,7 @@ static const char *const poll_doc[] = {
   NULL
 };
 
-int poll_subcommand(WORD_LIST *list)
+int l_poll_subcommand(WORD_LIST *list)
 {
   l_enter_subcommand("poll", "[-t TIMEOUT] [-v ARRAY_VAR] [-i] [FD[:EVENTS] ...]", poll_doc);
   return poll_internal(list, 0);
@@ -287,7 +286,7 @@ static const char *const ppoll_doc[] = {
   NULL
 };
 
-int ppoll_subcommand(WORD_LIST *list)
+int l_ppoll_subcommand(WORD_LIST *list)
 {
   l_enter_subcommand(
     "poll", "[-t TIMEOUT] [-v ARRAY_VAR] [-u SIGSPEC] [-i] [FD[:EVENTS] ...]", ppoll_doc

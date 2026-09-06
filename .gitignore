@@ -39,3 +39,4 @@ __pycache__/
 .uv/
 .mypy_cache/
 .ruff_cache/
+list.md

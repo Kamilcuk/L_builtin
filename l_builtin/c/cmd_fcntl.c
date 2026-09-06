@@ -12,7 +12,7 @@
 #include <config.h>
 #include <fcntl.h>
 
-#include "bash_api.h"
+#include "l_bash_api.h"
 
 /*
  * open(2) flag names, used to parse the comma-separated FLAGS argument of

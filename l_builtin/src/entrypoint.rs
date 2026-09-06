@@ -11,7 +11,7 @@
 
 use cmdargs_derive::CmdArgs;
 
-use crate::bash_api::{c_char, c_int, this_cmd_name, WordListView, EX_USAGE, WORD_LIST};
+use crate::bash_api::{c_char, c_int, this_cmd_name, WordListView, EX_USAGE, WORD_LIST, l_enter_subcommand, L_builtin_struct};
 use crate::cmdargs::WordListIterCpnt;
 use crate::shared::{capture_into_variable, flush_stdout_buffers};
 #[cfg(not(feature = "bash_lt_4_3"))]
@@ -22,22 +22,10 @@ use crate::{bprintln, l_builtin_usage_error};
 #[cfg(not(feature = "bash_lt_4_3"))]
 use crate::bash_api::l_execute_command_string;
 
-// C subcommand handlers (compiled into the same .so)
-extern "C" {
-    fn poll_subcommand(list: *mut WORD_LIST) -> c_int;
-    #[cfg(feature = "ppoll")]
-    fn ppoll_subcommand(list: *mut WORD_LIST) -> c_int;
-    fn sigmask_subcommand(list: *mut WORD_LIST) -> c_int;
-    fn sigunmask_subcommand(list: *mut WORD_LIST) -> c_int;
-    fn l_cmd_ext(list: *mut WORD_LIST) -> c_int;
-    #[link_name = "L_builtin_doc"]
-    static L_BUILTIN_DOC: [*const c_char; 0];
-}
-
 macro_rules! c_wrap {
-    ($f:expr) => {
+    ($f:ident) => {
         |list| {
-            let ret = unsafe { $f(list) };
+            let ret = unsafe { $crate::bash_api::$f(list) };
             if ret == 0 {
                 ::core::result::Result::Ok(())
             } else {
@@ -50,11 +38,11 @@ macro_rules! c_wrap {
 // Dispatch table: a plain map of subcommand name -> extern "C" handler.
 const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("lseek", crate::lseek::lseek_subcommand),
-    ("poll", c_wrap!(poll_subcommand)),
+    ("poll", c_wrap!(l_poll_subcommand)),
     #[cfg(feature = "ppoll")]
-    ("ppoll", c_wrap!(ppoll_subcommand)),
-    ("sigmask", c_wrap!(sigmask_subcommand)),
-    ("sigunmask", c_wrap!(sigunmask_subcommand)),
+    ("ppoll", c_wrap!(l_ppoll_subcommand)),
+    ("sigmask", c_wrap!(l_sigmask_subcommand)),
+    ("sigunmask", c_wrap!(l_sigunmask_subcommand)),
     ("pipe", crate::pipe::pipe_subcommand),
     ("listen", crate::listen::listen_subcommand),
     ("accept", crate::accept::accept_subcommand),
@@ -213,13 +201,14 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
 }
 
 pub unsafe fn entrypoint(list: *mut WORD_LIST) -> CmdResult {
+    l_enter_subcommand(std::ptr::null(), L_builtin_struct.short_doc.cast(), L_builtin_struct.long_doc.cast());
     let args = EntrypointArgs::parse(list)?;
     let mut list = args.rest;
     let first_word = match list.next() {
         Some(first_word) => first_word,
         None => return Err(l_builtin_usage_error!("missing subcommand")),
     };
-let first = unsafe { first_word.as_bytes() };
+    let first = unsafe { first_word.as_bytes() };
      // Find the subcommand for this name using intlookup's packed table.
      let subcommand = match SUBCOMMAND_TABLE.lookup(first) {
          Some(f) => f,
