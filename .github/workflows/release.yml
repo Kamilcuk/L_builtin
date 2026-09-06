@@ -5,7 +5,7 @@ on:
     branches: [main]
     inputs:
       bump:
-        description: 'bump type, major or minor or patch or empty string'
+        description: 'bump type, major, minor, patch or empty (defaults to patch)'
         default: ''
         type: string
       dry_run:
@@ -60,39 +60,114 @@ jobs:
               repo: context.repo.repo,
               run_id: run.id,
             });
-            const artifact = artifacts.artifacts.find(a => a.name === 'L_builtin-artifacts' && !a.expired);
-            if (!artifact) throw new Error('L_builtin-artifacts not found in CI run ' + run.id);
+            const matching = artifacts.artifacts.filter(a => a.name === 'L_builtin-artifacts' && !a.expired);
+            if (matching.length < 1) {
+              throw new Error('L_builtin-artifacts not found in CI run ' + run.id);
+            }
+            core.info(`CI run ${run.id} has ${matching.length} L_builtin-artifacts artifact(s)`);
 
             core.setOutput('run_id', String(run.id));
-
-      - name: Download build output
-        uses: actions/download-artifact@v8
-        with:
-          name: L_builtin-artifacts
-          path: /tmp/build-output
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ steps.find_ci.outputs.run_id }}
 
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Bump version and create release
-        id: create_release
-        uses: MeilCli/bump-release-action@v3.0.10
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-release
+        run: cargo install cargo-release --locked
+
+      - name: Configure git
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+
+      - name: Bump version, update lock, commit and tag
+        id: bump
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          level="${{ inputs.bump }}"
+          if [ -z "$level" ]; then
+            level="patch"
+          fi
+          args=(release "$level" --no-publish)
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          else
+            args+=(--execute)
+          fi
+          cargo "${args[@]}"
+
+      - name: Read new version
+        id: version
+        if: inputs.dry_run != 'true'
+        run: |
+          version=$(grep -E '^version\s*=' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Push commit and tag
+        if: inputs.dry_run != 'true'
+        run: git push origin HEAD "v${{ steps.version.outputs.version }}"
+
+      - name: Checkout released tag
+        if: inputs.dry_run != 'true'
+        uses: actions/checkout@v7
         with:
-          config_path: '.github/bump.yml'
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          bump: ${{ inputs.bump }}
-          dry_run: ${{ inputs.dry_run }}
-          draft: ${{ inputs.draft }}
-          pre_release: ${{ inputs.pre_release }}
-          commit_user: ${{ github.actor }}
-          commit_email: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
+          fetch-depth: 0
+          ref: v${{ steps.version.outputs.version }}
 
-      - name: Upload L_builtin.so artifacts
+      - name: Set up Docker Buildx
+        if: inputs.dry_run != 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build, Test, Output
+        if: inputs.dry_run != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: build-output
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=local,dest=/tmp/build-output
+          provenance: false
+
+      - name: Generate release notes from commits since last tag
+        if: inputs.dry_run != 'true'
+        id: notes
+        run: |
+          {
+            echo "## Changes"
+            echo
+            prev_tag=$(git tag --sort=-version:refname | grep -v "^v${{ steps.version.outputs.version }}$" | head -1 || true)
+            if [ -z "$prev_tag" ]; then
+              range="${{ steps.version.outputs.version }}"
+            else
+              range="${prev_tag}..v${{ steps.version.outputs.version }}"
+            fi
+            echo "Range: ${range}"
+            git log "${range}" --no-merges --pretty=format:'- %h %s'
+            echo
+            if [ -n "$prev_tag" ]; then
+              echo
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${prev_tag}...v${{ steps.version.outputs.version }}"
+            fi
+          } > release_notes.md
+          cat release_notes.md
+
+      - name: Create GitHub release and attach artifacts
+        if: inputs.dry_run != 'true'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ fromJSON(steps.create_release.outputs.release).tag_name }}
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.pre_release }}
           files: /tmp/build-output/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
