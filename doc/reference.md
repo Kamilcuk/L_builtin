@@ -158,12 +158,14 @@ Examples:
 ### `L_builtin capture`
 
 ```
-L_builtin capture: usage: VAR <command> [args...]
+L_builtin run: usage: <command> [args...]
 
-Run <command> with its stdout captured into the shell variable VAR
-(trailing newlines stripped, like $(...)). The command runs through the
-shell, so external commands, functions, builtins and L_builtin subcommands
-all work uniformly.
+Run <command> through the shell.
+The command is always executed through the shell, so external commands,
+shell functions, builtins, and L_builtin subcommands all work uniformly.
+Words are single-quoted before being joined, so arguments reach the
+command verbatim (no re-splitting or globbing).
+Use with -v VAR to capture the command's stdout into a shell variable.
 ```
 
 ### `L_builtin connect`
@@ -192,6 +194,7 @@ Available subcommands:
     rm       Remove files or directories
     tee      Copy stdin to each FILE and stdout
     sleep    Delay for a specified amount of time
+    printf
 
 Use 'L_builtin core <subcommand> --help' for more information.
 ```

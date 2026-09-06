@@ -34,6 +34,7 @@ uu_dirname.workspace = true
 uu_rm.workspace = true
 uu_tee.workspace = true
 uu_sleep.workspace = true
+uu_printf.workspace = true
 rkyv.workspace = true
 regex.workspace = true
 sed-rs.workspace = true

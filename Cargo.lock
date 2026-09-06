@@ -546,6 +546,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "icu_collator"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08984ed58ac439ebf3e13d2cf26b0c46a60afcd21721c1d14087c0b240344dda"
+dependencies = [
+ "icu_collator_data",
+ "icu_collections",
+ "icu_locale_core",
+ "icu_locale_fallback",
+ "icu_normalizer",
+ "icu_properties",
+ "icu_provider",
+ "smallvec",
+ "utf16_iter",
+ "utf8_iter",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_collator_data"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7d7e54efdddeb1208c08dd5d32b53a879ac00d2d3d051b2255fd26821d16368"
+
+[[package]]
 name = "icu_collections"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -613,6 +638,50 @@ name = "icu_locale_fallback_data"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "decf2a22ec8fa68f1a0c1129a3f8583f8f8bc24e8b9ccbe98ead99f62a4dc3a8"
+
+[[package]]
+name = "icu_normalizer"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12f9cf5f235641ed274641dd81c3f28d870e276763d0797aeeab72317b1c646f"
+dependencies = [
+ "icu_collections",
+ "icu_normalizer_data",
+ "icu_properties",
+ "icu_provider",
+ "smallvec",
+ "utf16_iter",
+ "utf8_iter",
+ "write16",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_normalizer_data"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1563da1ed3e0b3bf3d74c9b85917ac9c56464d2f57242270c09c9e752f8021a0"
+
+[[package]]
+name = "icu_properties"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e7ca276ad3145661a65914e6daf131ca5120cd3dcee8f8f3214b8875184a148"
+dependencies = [
+ "displaydoc",
+ "icu_collections",
+ "icu_locale_core",
+ "icu_properties_data",
+ "icu_provider",
+ "zerotrie",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_properties_data"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e590f038c1464a96894fd6d10127e90a8be4509f56ff7ecef851b15cee0b7caa"
 
 [[package]]
 name = "icu_provider"
@@ -895,6 +964,7 @@ dependencies = [
  "thiserror",
  "uu_dirname",
  "uu_ls",
+ "uu_printf",
  "uu_rm",
  "uu_sleep",
  "uu_stat",
@@ -923,6 +993,7 @@ dependencies = [
  "thiserror",
  "uu_dirname",
  "uu_ls",
+ "uu_printf",
  "uu_rm",
  "uu_sleep",
  "uu_stat",
@@ -991,9 +1062,9 @@ dependencies = [
 
 [[package]]
 name = "lua-src"
-version = "551.0.1"
+version = "551.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "087097f9936a7d819bda525b32d6e96f9c54f3d35ff23ff72fc0c1697d2127db"
+checksum = "d400ffef0e3d4d29287092bdc5a276d0bf468b2c69709d5bab0d469312d9f947"
 dependencies = [
  "cc",
 ]
@@ -1731,6 +1802,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
 
 [[package]]
+name = "utf16_iter"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8232dd3cdaed5356e0f716d285e4b40b932ac434100fe9b7e0e8e935b9e6246"
+
+[[package]]
 name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1744,8 +1821,8 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uu_dirname"
-version = "0.9.0"
-source = "git+https://github.com/uutils/coreutils?rev=f66e155d80df3d82798324726e460675a02c5cd5#f66e155d80df3d82798324726e460675a02c5cd5"
+version = "0.11.0"
+source = "git+https://github.com/uutils/coreutils?rev=0.11.0#bf65901e1ed82963436844c2cf8e796ba9158c65"
 dependencies = [
  "clap",
  "fluent",
@@ -1754,8 +1831,8 @@ dependencies = [
 
 [[package]]
 name = "uu_ls"
-version = "0.9.0"
-source = "git+https://github.com/uutils/coreutils?rev=f66e155d80df3d82798324726e460675a02c5cd5#f66e155d80df3d82798324726e460675a02c5cd5"
+version = "0.11.0"
+source = "git+https://github.com/uutils/coreutils?rev=0.11.0#bf65901e1ed82963436844c2cf8e796ba9158c65"
 dependencies = [
  "ansi-width",
  "clap",
@@ -1771,9 +1848,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "uu_printf"
+version = "0.11.0"
+source = "git+https://github.com/uutils/coreutils?rev=0.11.0#bf65901e1ed82963436844c2cf8e796ba9158c65"
+dependencies = [
+ "clap",
+ "fluent",
+ "uucore",
+]
+
+[[package]]
 name = "uu_rm"
-version = "0.9.0"
-source = "git+https://github.com/uutils/coreutils?rev=f66e155d80df3d82798324726e460675a02c5cd5#f66e155d80df3d82798324726e460675a02c5cd5"
+version = "0.11.0"
+source = "git+https://github.com/uutils/coreutils?rev=0.11.0#bf65901e1ed82963436844c2cf8e796ba9158c65"
 dependencies = [
  "clap",
  "fluent",
@@ -1786,8 +1873,8 @@ dependencies = [
 
 [[package]]
 name = "uu_sleep"
-version = "0.9.0"
-source = "git+https://github.com/uutils/coreutils?rev=f66e155d80df3d82798324726e460675a02c5cd5#f66e155d80df3d82798324726e460675a02c5cd5"
+version = "0.11.0"
+source = "git+https://github.com/uutils/coreutils?rev=0.11.0#bf65901e1ed82963436844c2cf8e796ba9158c65"
 dependencies = [
  "clap",
  "fluent",
@@ -1796,19 +1883,20 @@ dependencies = [
 
 [[package]]
 name = "uu_stat"
-version = "0.9.0"
-source = "git+https://github.com/uutils/coreutils?rev=f66e155d80df3d82798324726e460675a02c5cd5#f66e155d80df3d82798324726e460675a02c5cd5"
+version = "0.11.0"
+source = "git+https://github.com/uutils/coreutils?rev=0.11.0#bf65901e1ed82963436844c2cf8e796ba9158c65"
 dependencies = [
  "clap",
  "fluent",
+ "rustix",
  "thiserror",
  "uucore",
 ]
 
 [[package]]
 name = "uu_tee"
-version = "0.9.0"
-source = "git+https://github.com/uutils/coreutils?rev=f66e155d80df3d82798324726e460675a02c5cd5#f66e155d80df3d82798324726e460675a02c5cd5"
+version = "0.11.0"
+source = "git+https://github.com/uutils/coreutils?rev=0.11.0#bf65901e1ed82963436844c2cf8e796ba9158c65"
 dependencies = [
  "clap",
  "fluent",
@@ -1818,8 +1906,8 @@ dependencies = [
 
 [[package]]
 name = "uucore"
-version = "0.9.0"
-source = "git+https://github.com/uutils/coreutils?rev=f66e155d80df3d82798324726e460675a02c5cd5#f66e155d80df3d82798324726e460675a02c5cd5"
+version = "0.11.0"
+source = "git+https://github.com/uutils/coreutils?rev=0.11.0#bf65901e1ed82963436844c2cf8e796ba9158c65"
 dependencies = [
  "bigdecimal",
  "bstr",
@@ -1828,6 +1916,7 @@ dependencies = [
  "fluent",
  "fluent-syntax",
  "glob",
+ "icu_collator",
  "icu_locale",
  "itertools",
  "jiff",
@@ -1840,18 +1929,18 @@ dependencies = [
  "rustix",
  "thiserror",
  "unic-langid",
+ "unicode-width 0.2.2",
  "unit-prefix",
  "uucore_procs",
  "wild",
- "winapi-util",
  "windows-sys",
  "xattr",
 ]
 
 [[package]]
 name = "uucore_procs"
-version = "0.9.0"
-source = "git+https://github.com/uutils/coreutils?rev=f66e155d80df3d82798324726e460675a02c5cd5#f66e155d80df3d82798324726e460675a02c5cd5"
+version = "0.11.0"
+source = "git+https://github.com/uutils/coreutils?rev=0.11.0#bf65901e1ed82963436844c2cf8e796ba9158c65"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1950,15 +2039,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "winapi-util"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
-dependencies = [
- "windows-sys",
-]
-
-[[package]]
 name = "windows-core"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2025,6 +2105,12 @@ checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
 ]
+
+[[package]]
+name = "write16"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1890f4022759daae28ed4fe62859b1236caebfc61ede2f63ed4e695f3f6d936"
 
 [[package]]
 name = "writeable"
@@ -2099,6 +2185,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ea269c3bd32f0a32c321907a2ae912ba6f4649bb0fc764a15627e99a7095a3f"
 dependencies = [
  "displaydoc",
+ "yoke",
+ "zerofrom",
  "zerovec",
 ]
 

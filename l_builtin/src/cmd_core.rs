@@ -13,9 +13,9 @@
 use crate::bash_api::{
     WordListIterCpnt, WordListIterOsString, WordListView, EX_NOTFOUND, WORD_LIST,
 };
+use crate::beprintln;
 use crate::l_builtin_error;
 use crate::subcmd::{CmdDesc, CmdResult};
-use crate::beprintln;
 use cmdargs_derive::CmdArgs;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -31,6 +31,7 @@ Available subcommands:
     rm       Remove files or directories
     tee      Copy stdin to each FILE and stdout
     sleep    Delay for a specified amount of time
+    printf
 
 Use 'L_builtin core <subcommand> --help' for more information.
 ",
@@ -57,6 +58,7 @@ const UU_DISPATCH_ENTRIES: &[(&str, UuMain)] = &[
     ("stat", uu_entry!(uu_stat)),
     ("tee", uu_entry!(uu_tee)),
     ("sleep", uu_entry!(uu_sleep)),
+    ("printf", uu_entry!(uu_printf)),
 ];
 
 const UU_DISPATCH_TABLE: llib::intlookup::U64::IntLookup<UuMain, { UU_DISPATCH_ENTRIES.len() }> =
