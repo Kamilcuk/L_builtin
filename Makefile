@@ -56,6 +56,9 @@ workspace-rust-trim:
 workspace-rust-clean:
 	rm -rf $(BUILD_DIR)/rust/*
 
+cargo-update: workspace-rust workspace-rust-trim
+	cargo update
+
 ###############################################################################
 # ---- L_builtin targets ----
 # Makefile drives CMake, which drives the Rust crate via Corrosion and the C

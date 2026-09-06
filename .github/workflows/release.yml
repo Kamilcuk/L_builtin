@@ -98,16 +98,19 @@ jobs:
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
 
+      - name: Generate rust
+        run: |
+          set -x
+          make workspace-rust
+
       - name: Bump version
         id: bump
-        if: inputs.dry_run != 'true'
         run: |
           set -x
           level="${{ inputs.bump }}"
           if [ -z "$level" ]; then
             level="patch"
           fi
-          
           # Bump version with cargo-release
           args=(release "$level" --no-publish)
           if [ "${{ inputs.dry_run }}" = "true" ]; then
@@ -119,24 +122,10 @@ jobs:
 
       - name: Read new version
         id: version
-        if: inputs.dry_run != 'true'
         run: |
           version=$(grep -E '^version\s*=' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
-
-      - name: Push commit and tag
-        if: inputs.dry_run != 'true'
-        run: |
-          set -x
-          git push origin HEAD "v${{ steps.version.outputs.version }}"
-
-      - name: Checkout released tag
-        if: inputs.dry_run != 'true'
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          ref: v${{ steps.version.outputs.version }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -153,7 +142,6 @@ jobs:
           provenance: false
 
       - name: Generate release notes
-        if: inputs.dry_run != 'true'
         id: notes
         run: |
           set -x
@@ -175,6 +163,12 @@ jobs:
             fi
           } > release_notes.md
           cat release_notes.md
+
+      - name: Push commit and tag
+        if: inputs.dry_run != 'true'
+        run: |
+          set -x
+          git push origin HEAD "v${{ steps.version.outputs.version }}"
 
       - name: Create GitHub release and attach artifacts
         if: inputs.dry_run != 'true'
