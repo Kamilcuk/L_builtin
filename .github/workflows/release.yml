@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     branches: [main]
     inputs:
-      bump-type:
+      bumptype:
         description: 'Bump type'
         required: true
         default: 'patch'
@@ -106,7 +106,7 @@ jobs:
         run: |
           set -x
           echo "previous-version=$(bump-my-version show current_version)" >> "$GITHUB_OUTPUT"
-          bump-my-version bump ${{ inputs.'bump-type' }}
+          bump-my-version bump ${{ inputs.bumptype }}
           echo "current-version=$(bump-my-version show current_version)" >> "$GITHUB_OUTPUT"
 
       - name: Generate release notes
