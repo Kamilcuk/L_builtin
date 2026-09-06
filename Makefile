@@ -59,6 +59,10 @@ workspace-rust-clean:
 cargo-update: workspace-rust workspace-rust-trim
 	cargo update
 
+pre-bump-my-version:
+	$(MAKE) cargo-update BASHES="4.4 5.0 5.1 5.2 5.3"
+	git add Cargo.lock
+
 ###############################################################################
 # ---- L_builtin targets ----
 # Makefile drives CMake, which drives the Rust crate via Corrosion and the C

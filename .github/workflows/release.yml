@@ -4,22 +4,31 @@ on:
   workflow_dispatch:
     branches: [main]
     inputs:
-      bump:
-        description: 'bump type, major, minor, patch or empty (defaults to patch)'
-        default: ''
-        type: string
+      bump-type:
+        description: 'Bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - major
+        - minor
+        - patch
       dry_run:
         description: 'dry run, true or false'
-        default: 'false'
-        type: string
+        default: false
+        type: boolean
       draft:
         description: 'draft, true or false'
-        default: 'false'
-        type: string
+        default: false
+        type: boolean
       pre_release:
         description: 'pre release, true or false'
-        default: 'false'
-        type: string
+        default: false
+        type: boolean
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -72,65 +81,51 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: recursive
 
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
+      - name: Set up Python
+        uses: actions/setup-python@v7
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          python-version: '3.12'
+          cache: 'pip'
 
-      - name: Install cargo-release
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-release@latest
+      - name: Install bump-my-version
+        shell: bash
+        run: pip install "bump-my-version==1.5.1"
 
       - name: Configure git
         run: |
           set -x
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
-
-      - name: Generate rust
-        run: |
-          set -x
-          make workspace-rust
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+          git config --global init.defaultBranch main
 
       - name: Bump version
+        if: github.ref == 'refs/heads/main'
         id: bump
         run: |
           set -x
-          level="${{ inputs.bump }}"
-          if [ -z "$level" ]; then
-            level="patch"
-          fi
-          # Bump version with cargo-release
-          args=(release "$level" --no-publish)
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            args+=(--dry-run)
-          else
-            args+=(--execute)
-          fi
-          cargo "${args[@]}"
+          echo "previous-version=$(bump-my-version show current_version)" >> "$GITHUB_OUTPUT"
+          bump-my-version bump ${{ inputs.'bump-type' }}
+          echo "current-version=$(bump-my-version show current_version)" >> "$GITHUB_OUTPUT"
 
-      - name: Read new version
-        id: version
+      - name: Generate release notes
+        if: github.ref == 'refs/heads/main'
+        id: notes
         run: |
-          version=$(grep -E '^version\s*=' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [ -z "${{ steps.bump.outputs.previous-version }}" ]; then
+            scripts/generate-release-notes.sh v${{ steps.bump.outputs.current-version }} | tee release_notes.md
+          else
+            scripts/generate-release-notes.sh v${{ steps.bump.outputs.current-version }} v${{ steps.bump.outputs.previous-version }} | tee release_notes.md
+          fi
 
       - name: Set up Docker Buildx
+        if: github.ref == 'refs/heads/main'
         uses: docker/setup-buildx-action@v4
 
       - name: Build and output artifacts
+        if: github.ref == 'refs/heads/main'
         id: build
         uses: docker/build-push-action@v7
         with:
@@ -141,41 +136,18 @@ jobs:
           outputs: type=local,dest=/tmp/build-output
           provenance: false
 
-      - name: Generate release notes
-        id: notes
-        run: |
-          set -x
-          {
-            echo "## Changes"
-            echo
-            prev_tag=$(git tag --sort=-version:refname | grep -v "^v${{ steps.version.outputs.version }}$" | head -1 || true)
-            if [ -z "$prev_tag" ]; then
-              range="${{ steps.version.outputs.version }}"
-            else
-              range="${prev_tag}..v${{ steps.version.outputs.version }}"
-            fi
-            echo "Range: ${range}"
-            git log "${range}" --no-merges --pretty=format:'- %h %s'
-            echo
-            if [ -n "$prev_tag" ]; then
-              echo
-              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${prev_tag}...v${{ steps.version.outputs.version }}"
-            fi
-          } > release_notes.md
-          cat release_notes.md
-
       - name: Push commit and tag
-        if: inputs.dry_run != 'true'
+        if: ${{ !inputs.dry_run && github.ref == 'refs/heads/main' }}
         run: |
           set -x
-          git push origin HEAD "v${{ steps.version.outputs.version }}"
+          git push origin HEAD "v${{ steps.bump.outputs.current-version }}"
 
       - name: Create GitHub release and attach artifacts
-        if: inputs.dry_run != 'true'
+        if: ${{ !inputs.dry_run && github.ref == 'refs/heads/main' }}
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: Release v${{ steps.version.outputs.version }}
+          tag_name: v${{ steps.bump.outputs.current-version }}
+          name: Release v${{ steps.bump.outputs.current-version }}
           body_path: release_notes.md
           draft: ${{ inputs.draft }}
           prerelease: ${{ inputs.pre_release }}

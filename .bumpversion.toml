@@ -1,0 +1,10 @@
+[tool.bumpversion]
+commit = true
+tag = true
+push_tag = false
+pre_commit_hooks = ["make post-bump-my-version"]
+
+[[tool.bumpversion.files]]
+filename = "Cargo.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
