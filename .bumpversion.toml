@@ -2,7 +2,7 @@
 commit = true
 tag = true
 push_tag = false
-pre_commit_hooks = ["make post-bump-my-version"]
+pre_commit_hooks = ["make pre-bump-my-version"]
 
 [[tool.bumpversion.files]]
 filename = "Cargo.toml"
