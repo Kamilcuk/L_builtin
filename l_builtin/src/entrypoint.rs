@@ -17,7 +17,7 @@ use crate::shared::{capture_into_variable, flush_stdout_buffers};
 #[cfg(not(feature = "bash_lt_4_3"))]
 use crate::subcmd::cint_to_cmd_result;
 use crate::subcmd::{cmd_result_to_cint, CmdResult, SubcommandFn, SubcommandGuard};
-use crate::{bprintln, intlookup, l_builtin_usage_error};
+use crate::{bprintln, l_builtin_usage_error};
 
 #[cfg(not(feature = "bash_lt_4_3"))]
 use crate::bash_api::l_execute_command_string;
@@ -104,10 +104,10 @@ const fn extract_first<const N: usize>(a: &[(&'static str, SubcommandFn)]) -> [&
 const SUBCOMMAND_NAMES: &[&str] =
     &extract_first::<{ SUBCOMMAND_ENTRIES.len() }>(SUBCOMMAND_ENTRIES);
 
-const SUBCOMMAND_TABLE: crate::intlookup::U128::IntLookup<
+const SUBCOMMAND_TABLE: llib::intlookup::U128::IntLookup<
     SubcommandFn,
     { SUBCOMMAND_ENTRIES.len() },
-> = intlookup!(&SUBCOMMAND_ENTRIES);
+> = llib::intlookup!(&SUBCOMMAND_ENTRIES);
 
 fn l_builtin_print_usage() {
     let cmd_name = this_cmd_name();
@@ -219,12 +219,12 @@ pub unsafe fn entrypoint(list: *mut WORD_LIST) -> CmdResult {
         Some(first_word) => first_word,
         None => return Err(l_builtin_usage_error!("missing subcommand")),
     };
-    let first = unsafe { first_word.as_bytes() };
-    // Find the subcommand for this name using intlookup's packed table.
-    let subcommand = match SUBCOMMAND_TABLE.lookup(first) {
-        Some(f) => f,
-        None => return Err(l_builtin_usage_error!("unknown subcommand: ", first_word)),
-    };
+let first = unsafe { first_word.as_bytes() };
+     // Find the subcommand for this name using intlookup's packed table.
+     let subcommand = match SUBCOMMAND_TABLE.lookup(first) {
+         Some(f) => f,
+         None => return Err(l_builtin_usage_error!("unknown subcommand: ", first)),
+     };
     // Construct the guard before dispatching so current_builtin's doc pointers
     // (set by the subcommand's CmdDesc::enter) are restored when l_entrypoint
     // returns.

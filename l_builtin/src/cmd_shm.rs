@@ -1179,8 +1179,8 @@ Examples:
 ",
 );
 
-const SHM_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 8> =
-    crate::intlookup!(&SHM_SUBCOMMANDS);
+const SHM_TABLE: llib::intlookup::U64::IntLookup<SubcommandFn, 8> =
+    llib::intlookup!(&SHM_SUBCOMMANDS);
 
 /// # Safety
 ///

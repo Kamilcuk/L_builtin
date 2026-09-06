@@ -205,8 +205,8 @@ const TIMERFD_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("set", timerfd_set_subcommand),
 ];
 
-const TIMERFD_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 2> =
-    crate::intlookup!(&TIMERFD_SUBCOMMANDS);
+const TIMERFD_TABLE: llib::intlookup::U64::IntLookup<SubcommandFn, 2> =
+    llib::intlookup!(&TIMERFD_SUBCOMMANDS);
 
 /// # Safety
 ///

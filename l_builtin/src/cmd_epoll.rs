@@ -349,8 +349,8 @@ const EPOLL_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("wait", epoll_wait_subcommand),
 ];
 
-const EPOLL_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 5> =
-    crate::intlookup!(&EPOLL_SUBCOMMANDS);
+const EPOLL_TABLE: llib::intlookup::U64::IntLookup<SubcommandFn, 5> =
+    llib::intlookup!(&EPOLL_SUBCOMMANDS);
 
 /// # Safety
 ///

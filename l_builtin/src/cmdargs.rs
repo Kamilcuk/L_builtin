@@ -14,9 +14,10 @@
 
 pub use crate::bash_api::{
     builtin_usage, internal_getopt, l_builtin_usage_long, list_optarg, loptend,
-    reset_internal_getopt, Cpnt, WordListIterCpnt, WordListView, EX_USAGE, GETOPT_HELP, WORD_LIST,
+    reset_internal_getopt, WordListIterCpnt, WordListView, EX_USAGE, GETOPT_HELP, WORD_LIST,
 };
-pub use crate::intstr::{IntStrPtr, ToIntStr};
+pub use ::llib::io_common::Cpnt;
+pub use llib::intstr::{IntStrPtr, ToIntStr};
 use crate::{
     bash_api::{find_variable, l_readonly_p},
     subcmd::CmdResult,

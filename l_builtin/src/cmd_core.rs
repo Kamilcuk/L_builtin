@@ -15,7 +15,7 @@ use crate::bash_api::{
 };
 use crate::l_builtin_error;
 use crate::subcmd::{CmdDesc, CmdResult};
-use crate::{beprintln, intlookup};
+use crate::beprintln;
 use cmdargs_derive::CmdArgs;
 
 const CMD: CmdDesc = CmdDesc::new(
@@ -59,8 +59,8 @@ const UU_DISPATCH_ENTRIES: &[(&str, UuMain)] = &[
     ("sleep", uu_entry!(uu_sleep)),
 ];
 
-const UU_DISPATCH_TABLE: crate::intlookup::U64::IntLookup<UuMain, { UU_DISPATCH_ENTRIES.len() }> =
-    intlookup!(UU_DISPATCH_ENTRIES);
+const UU_DISPATCH_TABLE: llib::intlookup::U64::IntLookup<UuMain, { UU_DISPATCH_ENTRIES.len() }> =
+    llib::intlookup!(UU_DISPATCH_ENTRIES);
 
 /// # Safety
 ///

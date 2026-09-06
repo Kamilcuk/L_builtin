@@ -9,7 +9,7 @@ use std::os::raw::{c_char, c_int};
 use cmdargs_derive::CmdArgs;
 
 use crate::bash_api::{builtin, current_builtin, EX_USAGE, WORD_LIST};
-use crate::intlookup::Lookup;
+use llib::intlookup::Lookup;
 use crate::l_builtin_error;
 
 /// Constant check that a C string ends with the NUL terminator (the pieces of

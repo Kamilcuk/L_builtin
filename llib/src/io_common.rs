@@ -9,7 +9,51 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use crate::cmdargs::Cpnt;
+use std::marker::PhantomData;
+use std::os::raw::c_char;
+use std::ffi::CStr;
+use std::fmt;
+
+/// Wrapper to track lifetimes of char pointers.
+#[repr(transparent)]
+pub struct Cpnt<'a>(*mut c_char, PhantomData<&'a c_char>);
+
+impl<'a> Cpnt<'a> {
+    pub const fn new(ptr: *mut c_char) -> Self {
+        Self(ptr, PhantomData)
+    }
+    pub unsafe fn as_cstr(&self) -> &'a CStr {
+        CStr::from_ptr(self.0)
+    }
+    pub unsafe fn as_bytes(&self) -> &'a [u8] {
+        self.as_cstr().to_bytes()
+    }
+    pub unsafe fn as_str(&self) -> Result<&'a str, std::str::Utf8Error> {
+        Ok(std::str::from_utf8(self.as_cstr().to_bytes())?)
+    }
+    pub const fn as_ptr(&self) -> *mut c_char {
+        self.0
+    }
+}
+
+impl<'a, 'b> PartialEq<&'b [u8]> for Cpnt<'a> {
+    fn eq(&self, other: &&'b [u8]) -> bool {
+        unsafe { self.as_cstr().to_bytes() == *other }
+    }
+}
+
+impl<'a> PartialEq<&str> for Cpnt<'a> {
+    fn eq(&self, other: &&str) -> bool {
+        unsafe { self.as_cstr().to_string_lossy() == *other }
+    }
+}
+
+impl<'a> fmt::Display for Cpnt<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Safety: The pointer is valid for the lifetime 'a
+        unsafe { writeln!(f, "{}", self.as_cstr().to_string_lossy()) }
+    }
+}
 
 const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 

@@ -29,13 +29,12 @@ pub(crate) mod entrypoint;
 pub(crate) mod eventfd;
 pub(crate) mod flock;
 pub(crate) mod handles;
-pub(crate) mod intlookup;
-pub(crate) mod intstr;
-pub(crate) mod io_common;
+
+
 pub(crate) mod listen;
 pub(crate) mod lseek;
 pub(crate) mod memfd;
-pub(crate) mod nolock;
+
 pub(crate) mod pipe;
 pub(crate) mod pthread;
 pub(crate) mod read;
@@ -50,7 +49,7 @@ pub(crate) mod subcmd;
 pub(crate) mod timerfd;
 pub(crate) mod unittest;
 pub(crate) mod vardb;
-pub(crate) mod variadic;
+
 pub(crate) mod write;
 
 // Test-only stand-ins for bash C symbols (allocator) so `cargo test` links

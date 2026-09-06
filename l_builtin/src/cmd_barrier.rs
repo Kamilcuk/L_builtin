@@ -16,8 +16,9 @@ use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
 
 use cmdargs_derive::CmdArgs;
+use ::llib::io_common::Cpnt;
 
-use crate::bash_api::{Cpnt, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
 use crate::pthread::PthreadMutexGuard;
 use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
@@ -250,7 +251,7 @@ pub unsafe fn barrier_open_subcommand(list: *mut WORD_LIST) -> CmdResult {
     BARRIER_OPEN_CMD.enter();
     let args = BarrierOpenArgs::parse(list)?;
     let name_c =
-        unsafe { crate::bash_api::Cpnt::new(args.name as *mut c_char).as_cstr() }.to_owned();
+        unsafe { Cpnt::new(args.name as *mut c_char).as_cstr() }.to_owned();
     let size = barrier_bytes();
     let ptr = match map_named(&name_c, size, false) {
         Ok(p) => p,
@@ -480,8 +481,8 @@ const BARRIER_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("destroy", barrier_destroy_subcommand),
 ];
 
-const BARRIER_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
-    crate::intlookup!(&BARRIER_SUBCOMMANDS);
+const BARRIER_TABLE: llib::intlookup::U64::IntLookup<SubcommandFn, 6> =
+    llib::intlookup!(&BARRIER_SUBCOMMANDS);
 
 /// # Safety
 ///

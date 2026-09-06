@@ -9,7 +9,7 @@
 
 use crate::bash_api::{EXECUTION_FAILURE, WORD_LIST};
 use crate::cmdargs::BashVar;
-use crate::intstr::ToIntStr;
+use llib::intstr::ToIntStr;
 use crate::l_builtin_error;
 use crate::shared::ensure_high_fd;
 use crate::subcmd::{CmdDesc, CmdResult};

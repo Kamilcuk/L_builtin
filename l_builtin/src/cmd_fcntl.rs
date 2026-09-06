@@ -22,8 +22,9 @@ use std::ffi::CStr;
 use std::os::raw::c_int;
 
 use cmdargs_derive::CmdArgs;
+use ::llib::io_common::Cpnt;
 
-use crate::bash_api::{l_fd_flags, l_flag_entry_t, l_open_flags, Cpnt, WORD_LIST};
+use crate::bash_api::{l_fd_flags, l_flag_entry_t, l_open_flags, WORD_LIST};
 use crate::bprintln;
 use crate::cmdargs::BashVar;
 use crate::l_builtin_error;
@@ -511,8 +512,8 @@ const FCNTL_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("list", fcntl_list_subcommand),
 ];
 
-const FCNTL_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
-    crate::intlookup!(&FCNTL_SUBCOMMANDS);
+const FCNTL_TABLE: llib::intlookup::U64::IntLookup<SubcommandFn, 6> =
+    llib::intlookup!(&FCNTL_SUBCOMMANDS);
 
 ///////////////////////////////////////////////////////////////////////////
 // Entry point

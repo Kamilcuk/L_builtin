@@ -39,6 +39,7 @@ regex.workspace = true
 sed-rs.workspace = true
 parse_duration.workspace = true
 cmdargs-derive.workspace = true
+llib.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

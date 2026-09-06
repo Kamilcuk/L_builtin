@@ -18,7 +18,8 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
 
-use crate::bash_api::{Cpnt, EXECUTION_FAILURE, WORD_LIST};
+use ::llib::io_common::Cpnt;
+use crate::bash_api::{EXECUTION_FAILURE, WORD_LIST};
 use crate::cmdargs::BashVar;
 use crate::handles::{map_anonymous, unmap, HandleRegistry};
 use crate::l_builtin_error;
@@ -387,8 +388,8 @@ const SEMAPHORE_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("destroy", semaphore_destroy_subcommand),
 ];
 
-const SEMAPHORE_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
-    crate::intlookup!(&SEMAPHORE_SUBCOMMANDS);
+const SEMAPHORE_TABLE: llib::intlookup::U64::IntLookup<SubcommandFn, 6> =
+    llib::intlookup!(&SEMAPHORE_SUBCOMMANDS);
 
 /// # Safety
 ///

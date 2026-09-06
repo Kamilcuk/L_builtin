@@ -236,8 +236,8 @@ const EVENTFD_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("read", eventfd_read_subcommand),
 ];
 
-const EVENTFD_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 3> =
-    crate::intlookup!(&EVENTFD_SUBCOMMANDS);
+const EVENTFD_TABLE: llib::intlookup::U64::IntLookup<SubcommandFn, 3> =
+    llib::intlookup!(&EVENTFD_SUBCOMMANDS);
 
 /// # Safety
 ///

@@ -26,7 +26,7 @@ bash-version: bash-build
 .PHONY: bash-clean bash-distclean bash-version
 
 # Hardcoded version list
-BASHES ?= 5.3 5.2 5.1 5.0 4.4
+BASHES ?= 5.3 #  5.2 5.1 5.0 4.4
 
 BASHES_U := $(subst .,_,$(BASHES))
 

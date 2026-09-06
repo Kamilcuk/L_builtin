@@ -19,8 +19,9 @@ use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
 use cmdargs_derive::CmdArgs;
+use ::llib::io_common::Cpnt;
 
-use crate::bash_api::{Cpnt, EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
+use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
 use crate::handles::HandleEntry;
 use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
@@ -453,8 +454,8 @@ const MUTEX_SUBCOMMANDS: &[(&str, SubcommandFn)] = &[
     ("destroy", mutex_destroy_subcommand),
 ];
 
-const MUTEX_TABLE: crate::intlookup::U64::IntLookup<SubcommandFn, 6> =
-    crate::intlookup!(&MUTEX_SUBCOMMANDS);
+const MUTEX_TABLE: llib::intlookup::U64::IntLookup<SubcommandFn, 6> =
+    llib::intlookup!(&MUTEX_SUBCOMMANDS);
 
 /// # Safety
 ///

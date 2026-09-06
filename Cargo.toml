@@ -16,6 +16,7 @@ repository = "https://github.com/Kamilcuk/l_builtin"
 
 [workspace.dependencies]
 cmdargs-derive = { path = "./cmdargs-derive/" }
+llib = { path = "./llib/" }
 
 syn = { version = "3.0.4", features = ["full"] }
 quote = "1.0"

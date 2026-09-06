@@ -8,7 +8,7 @@
 
 use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
-use crate::intstr::ToIntStr;
+use llib::intstr::ToIntStr;
 use crate::l_builtin_error;
 use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
