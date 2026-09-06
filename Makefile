@@ -44,7 +44,7 @@ bash-install-all:
 
 ###############################################################################
 
-$(BUILD_DIR)/rust/%/Cargo.toml: ./l_builtin/Cargo.tmpl.toml ./l_builtin/Cargo.lock ./l_builtin/src # Makefile
+$(BUILD_DIR)/rust/%/Cargo.toml: ./l_builtin/Cargo.toml ./l_builtin/Cargo.lock ./l_builtin/src # Makefile
 	@mkdir -p $(dir $@)
 	ln -svfr ./l_builtin/Cargo.lock $(dir $@)Cargo.lock
 	ln -nsvfr ./l_builtin/src $(dir $@)src
@@ -281,13 +281,16 @@ docker-build:
 	podman build --target build .
 docker-test:
 	podman build --target test .
-docker-install:
+docker-output:
+	-rm -v $(DESTDIR)/L_builtin.so
 	podman build --target build-output --output type=local,dest=$(DESTDIR) .
+	ls -lah $(DESTDIR)/L_builtin.so
+	ln -sfv $(DESTDIR)/L_builtin.so ./L_builtin.so
 
-dockerfile-build:
-	@echo 'BASHES=$(BASHES)'
+dockerfile-build: workspace-rust
+	@echo 'BASHES=$(BASHES) RELEASE=1'
 	$(MAKE) dispatcher-build CMAKE_EXTRA_FLAGS=-DCARGO_LOCKED=ON BASHES='$(BASHES)' RELEASE=1
-	$(MAKE) install
+	$(MAKE) install RELEASE=1
 dockerfile-test:
 	$(foreach BASH, $(BASHES),\
 		$(call runtests, ./build/bash/$(BASH)/bash, $(DESTDIR)/L_builtin.so)$(NL) \
