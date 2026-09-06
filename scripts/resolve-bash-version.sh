@@ -2,7 +2,7 @@
 set -euo pipefail
 # This script takes two argumenst - path to bash repository and what to resturn
 repo="${1:?bare repo path required}"
-spec="${2:-system}"
+spec="${2:?system}"
 # An array of <version>|<commit number> extracted from git essages from bash commit history.
 version_info=$(
     git -C "$repo" log --all --format="%H|%s" |
@@ -31,7 +31,8 @@ fi
 IFS='|' read -r BASH_RESOLVED_VERSION BASH_RESOLVED_COMMIT BASH_RESOLVED_MESSAGE <<<"$chosen"
 BASH_RESOLVED_VERSION=${BASH_RESOLVED_VERSION%.}
 BASH_RESOLVED_VERSION=${BASH_RESOLVED_VERSION%.}
-echo "BASH_RESOLVED_VERSION=$BASH_RESOLVED_VERSION"
-echo "BASH_RESOLVED_COMMIT=$BASH_RESOLVED_COMMIT"
-echo "BASH_RESOLVED_MESSAGE=${BASH_RESOLVED_MESSAGE//$'\n'}"
-echo "BASH_RESOLVED_ALL_VERSIONS=${all_versions}"
+echo "$BASH_RESOLVED_COMMIT"
+# echo "BASH_RESOLVED_VERSION=$BASH_RESOLVED_VERSION"
+# echo "BASH_RESOLVED_COMMIT=$BASH_RESOLVED_COMMIT"
+# echo "BASH_RESOLVED_MESSAGE=${BASH_RESOLVED_MESSAGE//$'\n'}"
+# echo "BASH_RESOLVED_ALL_VERSIONS=${all_versions}"

@@ -37,21 +37,15 @@ $(BASH_RESOLVED_FILE): ./scripts/resolve-bash-version.sh $(BASH_BARE_REPO)/HEAD
 	mkdir -vp $(dir $@)
 	$< $(BASH_BARE_REPO) $(BASH) > $@
 
-# Include resolved version (auto-regenerates Makefile on first run)
--include $(BASH_RESOLVED_FILE)
-
 ###############################################################################
 # ---- Building bash ----
 BASH_SOURCE_DIR = $(BUILD_DIR)/bash/$(BASH)
 
 # git worktree depends on bare repo
 $(BASH_SOURCE_DIR)/configure: $(BASH_BARE_REPO)/HEAD
-	@[ -n "$(BASH_RESOLVED_COMMIT)" ] || { \
-		echo "Could not resolve bash version from spec: $(BASH)"; \
-		cat $(BASH_RESOLVED_FILE); \
-		exit 1; \
-	}
-	[ -e $@ ] || git -C $(BASH_BARE_REPO) worktree add -f $(abspath $(BASH_SOURCE_DIR)) $(BASH_RESOLVED_COMMIT)
+	set -x && \
+		commit=$$(./scripts/resolve-bash-version.sh '$(BASH_BARE_REPO)' '$(BASH)') && \
+		git -C $(BASH_BARE_REPO) worktree add -f $(abspath $(BASH_SOURCE_DIR)) "$$commit"
 
 export BASH_CFLAGS = -Wno-old-style-definition -Wno-implicit-function-declaration -std=gnu99 -Wno-int-conversion -w -Wno-implicit-int -Wno-discarded-qualifiers -D_GNU_SOURCE -Wno-return-mismatch -Wno-incompatible-pointer-types -Wno-error=implicit-function-declaration
 
