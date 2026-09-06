@@ -77,10 +77,20 @@ jobs:
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
       - name: Install cargo-release
-        run: |
-          set -x
-          cargo install cargo-release --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-release@latest
 
       - name: Configure git
         run: |
@@ -88,18 +98,19 @@ jobs:
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
 
-      - name: Bump version, update lock, commit and tag
+      - name: Bump version
         id: bump
-        env:
-          DRY_RUN: ${{ inputs.dry_run }}
+        if: inputs.dry_run != 'true'
         run: |
           set -x
           level="${{ inputs.bump }}"
           if [ -z "$level" ]; then
             level="patch"
           fi
+          
+          # Bump version with cargo-release
           args=(release "$level" --no-publish)
-          if [ "$DRY_RUN" = "true" ]; then
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
             args+=(--dry-run)
           else
             args+=(--execute)
@@ -128,11 +139,10 @@ jobs:
           ref: v${{ steps.version.outputs.version }}
 
       - name: Set up Docker Buildx
-        if: inputs.dry_run != 'true'
         uses: docker/setup-buildx-action@v4
 
-      - name: Build, Test, Output
-        if: inputs.dry_run != 'true'
+      - name: Build and output artifacts
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -142,7 +152,7 @@ jobs:
           outputs: type=local,dest=/tmp/build-output
           provenance: false
 
-      - name: Generate release notes from commits since last tag
+      - name: Generate release notes
         if: inputs.dry_run != 'true'
         id: notes
         run: |
