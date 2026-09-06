@@ -132,7 +132,16 @@ rustchecks:
 
 format:
 	git ls-files '*.c' '*.h' | xargs clang-format -i
-	cd l_builtin && cargo fix --lib --allow-dirty
+	cargo fmt
+	set -x && env L_DISPATCHER_SO_FILES="$$( \
+			find $(BUILD_DIR) -type f -name "L_builtin_embedded_*.so" -type f -printf "%s\t%p\n" | \
+			sort -n | head -n 1 | cut -f2 | xargs readlink -f | sort -u \
+		)" \
+		GENERATED_RUST="$$( \
+			find $(BUILD_DIR) -type f -name bash_api_gen.rs -printf '%T+\t%p\n' | \
+			sort -r | head -n 1 | cut -f2 | xargs dirname | xargs readlink -f \
+		)" cargo fix --lib --allow-dirty -p llib \
+		-p cmdargs-derive -p l_builtin_VERSION -p L_builtin_dispatcher
 
 check-format:
 	git ls-files '*.c' '*.h' | xargs clang-format --dry-run --Werror

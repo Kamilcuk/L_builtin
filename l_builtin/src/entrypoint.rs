@@ -9,18 +9,109 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use cmdargs_derive::CmdArgs;
-
-use crate::bash_api::{c_char, c_int, this_cmd_name, WordListView, EX_USAGE, WORD_LIST, l_enter_subcommand, L_builtin_struct};
+use crate::bash_api::{
+    l_enter_subcommand, this_cmd_name, L_builtin_struct, WordListView, WORD_LIST,
+};
+use crate::cmdargs::BashVar;
 use crate::cmdargs::WordListIterCpnt;
-use crate::shared::{capture_into_variable, flush_stdout_buffers};
-#[cfg(not(feature = "bash_lt_4_3"))]
-use crate::subcmd::cint_to_cmd_result;
+use crate::l_builtin_error;
+use crate::shared::Memfd;
 use crate::subcmd::{cmd_result_to_cint, CmdResult, SubcommandFn, SubcommandGuard};
 use crate::{bprintln, l_builtin_usage_error};
+use cmdargs_derive::CmdArgs;
+use memmap2::MmapMut;
+use std::fs::File;
+use std::io::{self, Write};
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::raw::{c_char, c_int};
 
-#[cfg(not(feature = "bash_lt_4_3"))]
-use crate::bash_api::l_execute_command_string;
+pub(crate) fn trim_trailing_newlines_in_zero_terminated_array_place(bytes: &mut [u8]) {
+    debug_assert!(
+        !bytes.is_empty() && bytes.last() == Some(&0),
+        "array must be non-empty and null-terminated, found: {:?}",
+        bytes
+    );
+    let orig_len = bytes.len() - 1;
+    let mut i = orig_len;
+    while i > 0 {
+        if bytes[i - 1] == b'\n' {
+            i -= 1;
+            if i > 0 && bytes[i - 1] == b'\r' {
+                i -= 1;
+            }
+        } else {
+            break;
+        }
+    }
+    if i < orig_len {
+        bytes[i] = b'\0';
+    }
+}
+
+struct RedirectStdout {
+    saved_stdout: File,
+}
+
+impl RedirectStdout {
+    pub fn new(target: &File) -> io::Result<Self> {
+        flush_stdout_buffers();
+        let saved_fd = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 256) };
+        if saved_fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let res = unsafe { libc::dup2(target.as_raw_fd(), 1) };
+        if res < 0 {
+            unsafe {
+                libc::close(saved_fd);
+            }
+            return Err(io::Error::last_os_error());
+        }
+        let saved_stdout = unsafe { File::from_raw_fd(saved_fd) };
+        Ok(Self { saved_stdout })
+    }
+}
+
+impl Drop for RedirectStdout {
+    fn drop(&mut self) {
+        flush_stdout_buffers();
+        unsafe {
+            libc::dup2(self.saved_stdout.as_raw_fd(), 1);
+        }
+    }
+}
+
+pub(crate) fn flush_stdout_buffers() {
+    let _ = io::stdout().flush();
+    unsafe { libc::fflush(std::ptr::null_mut()) };
+}
+
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub(crate) fn capture_into_variable(
+    _ename: &str,
+    var: BashVar,
+    trimnewlines: bool,
+    f: impl FnOnce() -> CmdResult,
+) -> CmdResult {
+    let mut memfd = Memfd::new().map_err(|_e| l_builtin_error!("cannot capture stdout"))?;
+    let result;
+    {
+        let _guard = RedirectStdout::new(&memfd.file)
+            .map_err(|e| l_builtin_error!("cannot redirect stdout: ", e))?;
+        result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+            .map_err(|e| l_builtin_error!("captured command panicked: ", e))?;
+    }
+    memfd
+        .file
+        .write(b"\0")
+        .map_err(|e| l_builtin_error!("couldn't write to memfd: ", e))?;
+    let mut mmap = unsafe { MmapMut::map_mut(&memfd.file) }
+        .map_err(|e| l_builtin_error!("could not mmap:", e))?;
+    if trimnewlines {
+        trim_trailing_newlines_in_zero_terminated_array_place(&mut mmap)
+    }
+    var.set(mmap.as_ptr().cast())?;
+    result
+}
 
 macro_rules! c_wrap {
     ($f:ident) => {
@@ -72,7 +163,9 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     ("replace", crate::cmd_replace::replace_subcommand),
     ("sedvar", crate::cmd_sedvar::sedvar_subcommand),
     #[cfg(not(feature = "bash_lt_4_3"))]
-    ("capture", l_capture_subcommand),
+    ("run", crate::cmd_run::l_run_subcommand),
+    #[cfg(not(feature = "bash_lt_4_3"))]
+    ("capture", crate::cmd_run::l_run_subcommand),
     #[cfg(feature = "dev")]
     ("unittest", crate::unittest::l_unittest_subcommand),
     ("version", crate::cmd_version::version_subcommand),
@@ -114,75 +207,6 @@ fn l_builtin_print_usage() {
     }
 }
 
-#[cfg(not(feature = "bash_lt_4_3"))]
-fn build_eval_command<'a>(args: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
-    let mut buf = Vec::new();
-    for (i, word) in args.enumerate() {
-        buf.reserve(word.len() + 2);
-        if i > 0 {
-            buf.push(b' ');
-        }
-        buf.push(b'\'');
-        for &b in word {
-            if b == b'\'' {
-                buf.extend_from_slice(b"'\\''");
-            } else {
-                buf.push(b);
-            }
-        }
-        buf.push(b'\'');
-    }
-    buf.push(b'\0');
-    buf
-}
-
-/// `capture VAR <command> [args...]`: run the command with stdout captured
-/// into VAR (memfd redirection).
-///
-/// The command is always executed through the shell, so external commands,
-/// shell functions, builtins, and L_builtin subcommands all work uniformly.
-/// Words are single-quoted before being joined, so arguments reach the
-/// command verbatim (no re-splitting or globbing).
-///
-/// Lives in the dispatch table with the same C ABI as every other handler;
-/// `list` starts at VAR (the dispatcher already consumed the word `capture`).
-/// # Safety
-#[cfg(not(feature = "bash_lt_4_3"))]
-const CAPTURE_CMD: crate::subcmd::CmdDesc = crate::subcmd::CmdDesc::new(
-    c"capture",
-    c"VAR <command> [args...]",
-    c"\
-Run <command> with its stdout captured into the shell variable VAR
-(trailing newlines stripped, like $(...)). The command runs through the
-shell, so external commands, functions, builtins and L_builtin subcommands
-all work uniformly.
-",
-);
-
-#[derive(CmdArgs)]
-struct CaptureArgs {
-    #[positional]
-    var: BashVar,
-    #[positional]
-    command: &'static [u8],
-    #[rest]
-    args: WordListIterCpnt<'static>,
-}
-
-/// # Safety
-#[cfg(not(feature = "bash_lt_4_3"))]
-pub unsafe fn l_capture_subcommand(list: *mut WORD_LIST) -> CmdResult {
-    CAPTURE_CMD.enter();
-    let args = CaptureArgs::parse(list)?;
-    let cmd = build_eval_command(
-        std::iter::once(args.command).chain(args.args.map(|c| unsafe { c.as_bytes() })),
-    );
-    assert!(!cmd.is_empty());
-    capture_into_variable("L_builtin capture", args.var, false, || {
-        cint_to_cmd_result(l_execute_command_string(cmd.as_ptr().cast()))
-    })
-}
-
 #[derive(CmdArgs)]
 struct EntrypointArgs {
     #[opt('v')]
@@ -201,7 +225,11 @@ pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
 }
 
 pub unsafe fn entrypoint(list: *mut WORD_LIST) -> CmdResult {
-    l_enter_subcommand(std::ptr::null(), L_builtin_struct.short_doc.cast(), L_builtin_struct.long_doc.cast());
+    l_enter_subcommand(
+        std::ptr::null(),
+        L_builtin_struct.short_doc.cast(),
+        L_builtin_struct.long_doc.cast(),
+    );
     let args = EntrypointArgs::parse(list)?;
     let mut list = args.rest;
     let first_word = match list.next() {
@@ -209,11 +237,11 @@ pub unsafe fn entrypoint(list: *mut WORD_LIST) -> CmdResult {
         None => return Err(l_builtin_usage_error!("missing subcommand")),
     };
     let first = unsafe { first_word.as_bytes() };
-     // Find the subcommand for this name using intlookup's packed table.
-     let subcommand = match SUBCOMMAND_TABLE.lookup(first) {
-         Some(f) => f,
-         None => return Err(l_builtin_usage_error!("unknown subcommand: ", first)),
-     };
+    // Find the subcommand for this name using intlookup's packed table.
+    let subcommand = match SUBCOMMAND_TABLE.lookup(first) {
+        Some(f) => f,
+        None => return Err(l_builtin_usage_error!("unknown subcommand: ", first)),
+    };
     // Construct the guard before dispatching so current_builtin's doc pointers
     // (set by the subcommand's CmdDesc::enter) are restored when l_entrypoint
     // returns.

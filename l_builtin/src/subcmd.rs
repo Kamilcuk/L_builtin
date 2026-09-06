@@ -9,8 +9,8 @@ use std::os::raw::{c_char, c_int};
 use cmdargs_derive::CmdArgs;
 
 use crate::bash_api::{builtin, current_builtin, EX_USAGE, WORD_LIST};
-use llib::intlookup::Lookup;
 use crate::l_builtin_error;
+use llib::intlookup::Lookup;
 
 /// Constant check that a C string ends with the NUL terminator (the pieces of
 /// a `CmdDesc` must be NUL-terminated: C code does `strlen()` on them).

@@ -1,16 +1,10 @@
 //! Shared utilities for L_builtin Rust implementation
 
-use std::fs::File;
-use std::io::{self, Write};
-use std::os::fd::{AsRawFd, FromRawFd, RawFd};
-use std::os::raw::{c_char, c_int};
-
-use memmap2::MmapMut;
-
 use crate::bash_api::{bind_variable, EXECUTION_FAILURE, EXECUTION_SUCCESS};
-use crate::cmdargs::BashVar;
-use crate::l_builtin_error;
-use crate::subcmd::CmdResult;
+use std::fs::File;
+use std::io::{self};
+use std::os::fd::{FromRawFd, RawFd};
+use std::os::raw::{c_char, c_int};
 
 /// Bind `value` to the shell variable `var`, returning `EXECUTION_SUCCESS` on
 /// success or `EXECUTION_FAILURE` if the bind failed (e.g. a readonly variable).
@@ -62,47 +56,10 @@ pub(crate) fn ensure_high_fd(fd: RawFd, cloexec: bool) -> io::Result<RawFd> {
     Ok(new_fd)
 }
 
-struct RedirectStdout {
-    saved_stdout: File,
-}
-
-impl RedirectStdout {
-    pub fn new(target: &File) -> io::Result<Self> {
-        flush_stdout_buffers();
-        let saved_fd = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 256) };
-        if saved_fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let res = unsafe { libc::dup2(target.as_raw_fd(), 1) };
-        if res < 0 {
-            unsafe {
-                libc::close(saved_fd);
-            }
-            return Err(io::Error::last_os_error());
-        }
-        let saved_stdout = unsafe { File::from_raw_fd(saved_fd) };
-        Ok(Self { saved_stdout })
-    }
-}
-
-impl Drop for RedirectStdout {
-    fn drop(&mut self) {
-        flush_stdout_buffers();
-        unsafe {
-            libc::dup2(self.saved_stdout.as_raw_fd(), 1);
-        }
-    }
-}
-
-pub(crate) fn flush_stdout_buffers() {
-    let _ = io::stdout().flush();
-    unsafe { libc::fflush(std::ptr::null_mut()) };
-}
-
 ////////////////////////////////////
 
 pub(crate) struct Memfd {
-    file: File,
+    pub file: File,
 }
 
 impl Memfd {
@@ -116,59 +73,6 @@ impl Memfd {
             file: unsafe { File::from_raw_fd(new_fd) },
         })
     }
-}
-
-pub(crate) fn trim_trailing_newlines_in_zero_terminated_array_place(bytes: &mut [u8]) {
-    debug_assert!(
-        !bytes.is_empty() && bytes.last() == Some(&0),
-        "array must be non-empty and null-terminated, found: {:?}",
-        bytes
-    );
-    let orig_len = bytes.len() - 1;
-    let mut i = orig_len;
-    while i > 0 {
-        if bytes[i - 1] == b'\n' {
-            i -= 1;
-            if i > 0 && bytes[i - 1] == b'\r' {
-                i -= 1;
-            }
-        } else {
-            break;
-        }
-    }
-    if i < orig_len {
-        bytes[i] = b'\0';
-    }
-}
-
-////////////////////////////////////
-
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub(crate) fn capture_into_variable(
-    _ename: &str,
-    var: BashVar,
-    trimnewlines: bool,
-    f: impl FnOnce() -> CmdResult,
-) -> CmdResult {
-    let mut memfd = Memfd::new().map_err(|_e| l_builtin_error!("cannot capture stdout"))?;
-    let result;
-    {
-        let _guard = RedirectStdout::new(&memfd.file)
-            .map_err(|e| l_builtin_error!("cannot redirect stdout: ", e))?;
-        result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
-            .map_err(|e| l_builtin_error!("captured command panicked: ", e))?;
-    }
-    memfd
-        .file
-        .write(b"\0")
-        .map_err(|e| l_builtin_error!("couldn't write to memfd: ", e))?;
-    let mut mmap = unsafe { MmapMut::map_mut(&memfd.file) }
-        .map_err(|e| l_builtin_error!("could not mmap:", e))?;
-    if trimnewlines {
-        trim_trailing_newlines_in_zero_terminated_array_place(&mut mmap)
-    }
-    var.set(mmap.as_ptr().cast())?;
-    result
 }
 
 /// Format a string into a stack buffer and return the buffer.

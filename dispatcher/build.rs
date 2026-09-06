@@ -89,7 +89,9 @@ where
         let path_str = path.as_ref().display().to_string();
         let mut version = if let Some(caps) = version_r.captures(&path_str) {
             caps.get(1)
-                .unwrap_or_else(|| panic!("regex matched but capture group 1 missing in {}", path_str))
+                .unwrap_or_else(|| {
+                    panic!("regex matched but capture group 1 missing in {}", path_str)
+                })
                 .as_str()
                 .to_string()
         } else {
@@ -124,7 +126,9 @@ where
         .unwrap_or_panic("create zstd encoder", "with level 19");
     std::io::Write::write_all(&mut encoder, &tar_buf)
         .unwrap_or_panic("write into zstd encoder", "tar buffer");
-    encoder.finish().unwrap_or_panic("finish zstd stream", "to inner vec");
+    encoder
+        .finish()
+        .unwrap_or_panic("finish zstd stream", "to inner vec");
 
     std::fs::write(output.as_ref(), &zstd_buf)
         .unwrap_or_panic("write output", &format!("'{}'", output.as_ref().display()));

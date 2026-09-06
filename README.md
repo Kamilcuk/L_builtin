@@ -7,6 +7,7 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
 ## Table of Contents
 
 - [L_builtin](#l_builtin)
+  - [Subcommands documentation](doc/reference.md)
   - [Quick Reference](#quick-reference)
   - [Installation](#installation)
   - [Quick Start](#quick-start)
@@ -15,7 +16,7 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
     - [Build](#build)
     - [Load into Bash](#load-into-bash)
     - [Run Tests](#run-tests)
-  - [Features](#features)
+  - [Example Features](#example-features)
   - [Usage Examples](#usage-examples)
     - [Sleep](#sleep)
     - [Create and Use a Pipe](#create-and-use-a-pipe)
@@ -25,7 +26,6 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
     - [Embedded Lua](#embedded-lua)
     - [Core Utilities (Rust/uutils)](#core-utilities-rustuutils)
     - [Capture Command Output](#capture-command-output)
-  - [Subcommand Reference](doc/commands.md)
   - [License](#license)
   - [Self promotion](#self-promotion)
 
@@ -68,7 +68,7 @@ L_builtin core ls -la
 L_builtin core stat file.txt
 
 # Capture
-L_builtin capture var echo hello
+L_builtin -v var run echo hello
 ```
 
 ## Installation
@@ -106,14 +106,17 @@ L_builtin --help
 ### Build
 
 ```bash
-make build
+# Build bash 5.2
+make bash-build BASH=5.2
 
-# or manually:
-cmake -S . -B build -DL_DEV=1
-cmake --build build
+# Build code for bash 5.2
+make build BASH=5.2 BASHES=5.2
+
+# Build single muilti-version dispatcher.
+make dispatcher-build BASHES="5.3 5.2"
 ```
 
-Creates `build/L_builtin.so`.
+Creates `./L_builtin.so`.
 
 ### Load into Bash
 
@@ -122,18 +125,22 @@ Creates `build/L_builtin.so`.
 make sh
 
 # Or manually:
-enable -f ./build/L_builtin.so L_builtin
+enable -f ./L_builtin.so L_builtin
 ```
 
 ### Run Tests
 
 ```bash
 make test
+# or
+./runtests.sh ./L_builtin.so --help
 ```
 
 This compiles the module, runs all modular test files in `tests/`, and executes style checks, formatting validation, and static analysis.
 
-## Features
+## Example Features
+
+The full reference for every subcommand lives in [doc/reference.md](doc/reference.md).
 
 - **`lseek`**: Reposition read/write file offset with `SEEK_SET`/`SEEK_CUR`/`SEEK_END`
   ```bash
@@ -195,9 +202,9 @@ This compiles the module, runs all modular test files in `tests/`, and executes 
   ```bash
   L_builtin core stat file.txt
   ```
-- **`capture`**: Run a command with stdout captured into a variable
+- **`run`**: Run any command with stdout captured into a variable
   ```bash
-  L_builtin capture var echo hello
+  L_builtin -v var run var echo hello
   ```
 - **`lua`**: Execute inline LuaJIT code within the Bash process; exposes a `bash` table for shell interaction
   ```bash
@@ -205,6 +212,8 @@ This compiles the module, runs all modular test files in `tests/`, and executes 
   ```
 
 ## Usage Examples
+
+The full reference for every subcommand lives in [doc/reference.md](doc/reference.md).
 
 ### Sleep
 
@@ -284,12 +293,9 @@ L_builtin core stat /etc/passwd
 ### Capture Command Output
 
 ```bash
-L_builtin capture output_var echo "hello world"
-
-$output_var"
+L_builtin -v output_var run echo "hello world"
+echo $output_var"
 ```
-
-The full reference for every subcommand lives in [doc/commands.md](doc/commands.md).
 
 ## License
 
@@ -297,4 +303,4 @@ This project is licensed under the GNU General Public License v3.0 - see [LICENS
 
 ## Self promotion
 
-[mkdocstrings-sh](https://github.com/kamilcuk/mkdocstrings-sh), [L_lib](https://github.com/Kamilcuk/L_lib), [L_bash_profile](https://github.com/Kamilcuk/L_bash_profile).
+See my other projects: [mkdocstrings-sh](https://github.com/kamilcuk/mkdocstrings-sh), [L_lib](https://github.com/Kamilcuk/L_lib), [L_bash_profile](https://github.com/Kamilcuk/L_bash_profile).

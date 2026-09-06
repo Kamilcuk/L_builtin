@@ -7,12 +7,12 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::WORD_LIST;
-use ::llib::io_common::{hex_decode, parse_format, Format};
+use crate::cmdargs::Cpnt;
 use crate::l_builtin_error;
 use crate::subcmd::{CmdDesc, CmdResult};
+use ::llib::io_common::{hex_decode, parse_format, Format};
 use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
-use crate::cmdargs::Cpnt;
 
 const CMD: CmdDesc = CmdDesc::new(
     c"send",

@@ -18,8 +18,8 @@
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
-use cmdargs_derive::CmdArgs;
 use ::llib::io_common::Cpnt;
+use cmdargs_derive::CmdArgs;
 
 use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;

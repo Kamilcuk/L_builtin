@@ -12,7 +12,7 @@ use std::ffi::{c_char, CStr};
 use std::io::Write;
 use std::os::raw::c_int;
 
-use mlua::{Lua, Value, LuaString};
+use mlua::{Lua, LuaString, Value};
 
 use crate::bash_api::{
     array_flush, array_insert, assoc_flush, assoc_keys_to_word_list, assoc_reference,

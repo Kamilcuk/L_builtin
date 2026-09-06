@@ -8,9 +8,9 @@
 
 use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
-use ::llib::io_common::{hex_encode, parse_format, Format};
 use crate::l_builtin_error;
 use crate::subcmd::{CmdDesc, CmdResult};
+use ::llib::io_common::{hex_encode, parse_format, Format};
 use cmdargs_derive::CmdArgs;
 use std::os::raw::c_int;
 

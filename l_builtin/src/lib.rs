@@ -19,6 +19,7 @@ pub(crate) mod cmd_fcntl;
 pub(crate) mod cmd_lua;
 pub(crate) mod cmd_mutex;
 pub(crate) mod cmd_replace;
+pub(crate) mod cmd_run;
 pub(crate) mod cmd_sedvar;
 pub(crate) mod cmd_semaphore;
 pub(crate) mod cmd_shm;
@@ -29,7 +30,6 @@ pub(crate) mod entrypoint;
 pub(crate) mod eventfd;
 pub(crate) mod flock;
 pub(crate) mod handles;
-
 
 pub(crate) mod listen;
 pub(crate) mod lseek;

@@ -15,8 +15,8 @@
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
 
-use cmdargs_derive::CmdArgs;
 use ::llib::io_common::Cpnt;
+use cmdargs_derive::CmdArgs;
 
 use crate::bash_api::{EXECUTION_FAILURE, EX_USAGE, WORD_LIST};
 use crate::cmdargs::BashVar;
@@ -250,8 +250,7 @@ struct BarrierOpenArgs {
 pub unsafe fn barrier_open_subcommand(list: *mut WORD_LIST) -> CmdResult {
     BARRIER_OPEN_CMD.enter();
     let args = BarrierOpenArgs::parse(list)?;
-    let name_c =
-        unsafe { Cpnt::new(args.name as *mut c_char).as_cstr() }.to_owned();
+    let name_c = unsafe { Cpnt::new(args.name as *mut c_char).as_cstr() }.to_owned();
     let size = barrier_bytes();
     let ptr = match map_named(&name_c, size, false) {
         Ok(p) => p,

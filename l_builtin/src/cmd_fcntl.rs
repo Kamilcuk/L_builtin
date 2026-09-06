@@ -21,8 +21,8 @@
 use std::ffi::CStr;
 use std::os::raw::c_int;
 
-use cmdargs_derive::CmdArgs;
 use ::llib::io_common::Cpnt;
+use cmdargs_derive::CmdArgs;
 
 use crate::bash_api::{l_fd_flags, l_flag_entry_t, l_open_flags, WORD_LIST};
 use crate::bprintln;

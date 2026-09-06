@@ -9,10 +9,10 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::marker::PhantomData;
-use std::os::raw::c_char;
 use std::ffi::CStr;
 use std::fmt;
+use std::marker::PhantomData;
+use std::os::raw::c_char;
 
 /// Wrapper to track lifetimes of char pointers.
 #[repr(transparent)]

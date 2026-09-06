@@ -18,13 +18,13 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
 
-use ::llib::io_common::Cpnt;
 use crate::bash_api::{EXECUTION_FAILURE, WORD_LIST};
 use crate::cmdargs::BashVar;
 use crate::handles::{map_anonymous, unmap, HandleRegistry};
 use crate::l_builtin_error;
 use crate::shared::timespec_from_now;
 use crate::subcmd::{CmdDesc, CmdResult, SubCommandCallerArgs, SubcommandFn};
+use ::llib::io_common::Cpnt;
 
 #[derive(CmdArgs)]
 struct SemaphoreCreateArgs {

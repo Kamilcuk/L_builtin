@@ -9,11 +9,11 @@
 
 use crate::bash_api::{EXECUTION_FAILURE, WORD_LIST};
 use crate::cmdargs::BashVar;
-use llib::intstr::ToIntStr;
 use crate::l_builtin_error;
 use crate::shared::ensure_high_fd;
 use crate::subcmd::{CmdDesc, CmdResult};
 use cmdargs_derive::CmdArgs;
+use llib::intstr::ToIntStr;
 use std::os::raw::c_int;
 
 const CMD: CmdDesc = CmdDesc::new(
