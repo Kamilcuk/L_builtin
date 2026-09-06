@@ -12,7 +12,7 @@ use std::ffi::{c_char, CStr};
 use std::io::Write;
 use std::os::raw::c_int;
 
-use mlua::{Lua, Value};
+use mlua::{Lua, Value, LuaString};
 
 use crate::bash_api::{
     array_flush, array_insert, assoc_flush, assoc_keys_to_word_list, assoc_reference,
@@ -26,13 +26,13 @@ use crate::subcmd::{CmdDesc, CmdResult};
 #[cfg(not(feature = "bash_lt_4_3"))]
 use crate::bash_api::l_execute_command_string;
 
-impl BDisplay for mlua::BorrowedBytes<'_> {
+impl BDisplay for mlua::BorrowedBytes {
     fn bwrite<W: Write + ?Sized>(&self, w: &mut W) {
         w.write_all(self).ok();
     }
 }
 
-impl BDisplay for mlua::String {
+impl BDisplay for LuaString {
     fn bwrite<W: Write + ?Sized>(&self, w: &mut W) {
         w.write_all(self.as_bytes().as_ref()).ok();
     }
@@ -212,7 +212,7 @@ fn parse_base(base: Option<i64>) -> Result<i64, mlua::Error> {
 }
 
 enum ScalarCstr<'a> {
-    Lua(mlua::BorrowedBytes<'a>),
+    Lua(mlua::BorrowedBytes),
     Vec(Vec<u8>),
     Arr(&'a [u8]),
 }
@@ -344,7 +344,7 @@ unsafe fn set_assoc_from_table(
 // irrelevant).
 fn get_bash_from_lua(
     lua: &mlua::Lua,
-    (name, base): (mlua::String, Option<i64>),
+    (name, base): (LuaString, Option<i64>),
 ) -> mlua::Result<mlua::Value> {
     let name = name.as_bytes_with_nul();
     let base = parse_base(base)?;
@@ -479,7 +479,7 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
     bash_module.set(
         "set",
         lua.create_function(
-            |lua, (name, value, base): (mlua::String, Value, Option<i64>)| {
+            |lua, (name, value, base): (LuaString, Value, Option<i64>)| {
                 let name = name.as_bytes_with_nul();
                 set_bash_from_lua_in(lua, name.as_ptr().cast(), value, base)
             },
@@ -491,7 +491,7 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
     // error for readonly variables (bash also prints its own diagnostic).
     bash_module.set(
         "unset",
-        lua.create_function(|_, sname: mlua::String| unsafe {
+        lua.create_function(|_, sname: LuaString| unsafe {
             let name = sname.as_bytes_with_nul();
             match l_check_unbind_variable(name.as_ptr().cast()) {
                 10000 => Err(mlua::Error::RuntimeError(format!(
@@ -519,7 +519,7 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
     #[cfg(not(feature = "bash_lt_4_3"))]
     bash_module.set(
         "eval",
-        lua.create_function(|_lua, cmd: mlua::String| unsafe {
+        lua.create_function(|_lua, cmd: LuaString| unsafe {
             let cmd = cmd.as_bytes_with_nul();
             let result = l_execute_command_string(cmd.as_ptr().cast());
             Ok(Value::Integer(result as i64))
@@ -528,7 +528,7 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
     // bash.expand(string) -> string
     bash_module.set(
         "expand",
-        lua.create_function(|lua, s: mlua::String| unsafe {
+        lua.create_function(|lua, s: LuaString| unsafe {
             let s = s.as_bytes_with_nul();
             let result = CStringOwned(l_expand_string_to_string_in_quotes(s.as_ptr().cast()));
             Ok(Value::String(lua.create_string(result.to_bytes())?))
@@ -537,7 +537,7 @@ fn register_bash_api(lua: &Lua) -> Result<(), mlua::Error> {
     // bash.expand_list(string) -> table
     bash_module.set(
         "expand_list",
-        lua.create_function(|lua, s: mlua::String| unsafe {
+        lua.create_function(|lua, s: LuaString| unsafe {
             let s = s.as_bytes_with_nul();
             let table = lua.create_table()?;
             for (idx, word) in WordListOwned(expand_string(
