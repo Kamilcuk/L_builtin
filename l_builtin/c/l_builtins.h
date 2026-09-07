@@ -22,8 +22,6 @@ int l_poll_subcommand(WORD_LIST *list);
 #if HAVE_PPOLL
 int l_ppoll_subcommand(WORD_LIST *list);
 #endif
-int l_sigmask_subcommand(WORD_LIST *list);
-int l_sigunmask_subcommand(WORD_LIST *list);
 int l_cmd_ext(WORD_LIST *list);
 
 #endif

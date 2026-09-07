@@ -50,7 +50,7 @@ from markdown_it import MarkdownIt
 # Commands whose -h lists child actions that we recurse into automatically.
 COMPOUND = {
     "shm", "mutex", "semaphore", "barrier",
-    "fcntl", "epoll", "eventfd", "timerfd",
+    "fcntl", "epoll", "eventfd", "timerfd", "sig",
 }
 # Commands never emitted at all.
 SKIP = {"unittest"}

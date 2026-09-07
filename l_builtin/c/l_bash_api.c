@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <dlfcn.h>
 
@@ -303,4 +304,92 @@ HASH_TABLE *l_prepare_assoc_array(const char *name)
   HASH_TABLE *h = assoc_cell(v);
   assoc_flush(h);
   return h;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Signal-mask builtin helpers */
+
+/* Restore the process signal mask from a heap-owned snapshot. Used as the
+ * unwind handler for l_run_with_unblocked so the parent's mask survives any
+ * non-local exit (throw_to_top_level, longjmp, etc.). */
+static void l_restore_process_sigmask(void *arg)
+{
+  sigset_t *mask = (sigset_t *)arg;
+  sigprocmask(SIG_SETMASK, mask, NULL);
+}
+
+/* Build a SIMPLE_COMMAND node from CMD_LIST. The trailing line-number argument
+ * to make_bare_simple_command was added in bash 5.3.1; on older versions it
+ * takes no arguments. The empty case here (`line_number not used`) is purely
+ * to satisfy the compiler on the older signature. */
+static COMMAND *l_make_bare_simple_command(void)
+{
+#if L_BASH_VERSION > 50300
+  return make_bare_simple_command(line_number);
+#else
+  return make_bare_simple_command();
+#endif
+}
+
+int l_run_with_unblocked(WORD_LIST *cmd_list, const sigset_t *unblocked)
+{
+  sigset_t set, old, newmask;
+  int result;
+
+  sigemptyset(&set);
+  if (sigprocmask(SIG_BLOCK, &set, &old) < 0) {
+    builtin_error("sigprocmask: %s", strerror(errno));
+    return (EXECUTION_FAILURE);
+  }
+
+  newmask = old;
+  for (int i = 1; i < NSIG; i++) {
+    if (sigismember(unblocked, i))
+      sigdelset(&newmask, i);
+  }
+
+  begin_unwind_frame("l_run_with_unblocked");
+
+  unwind_protect_mem((char *)&top_level_mask, sizeof(sigset_t));
+  top_level_mask = newmask;
+
+  sigset_t *pold = l_xmalloc(sizeof(sigset_t));
+  *pold = old;
+  add_unwind_protect(l_xfree, pold);
+  add_unwind_protect(l_restore_process_sigmask, pold);
+
+  if (sigprocmask(SIG_SETMASK, &newmask, NULL) < 0) {
+    builtin_error("sigprocmask: %s", strerror(errno));
+    run_unwind_frame("l_run_with_unblocked");
+    return (EXECUTION_FAILURE);
+  }
+
+  QUIT;
+
+  int caught = 0;
+  for (int i = 1; i < NSIG; i++) {
+    if (sigismember(unblocked, i) && pending_traps[i]) {
+      caught = i;
+      break;
+    }
+  }
+
+  if (caught) {
+    run_pending_traps();
+    run_unwind_frame("l_run_with_unblocked");
+    return (128 + caught);
+  }
+
+  run_pending_traps();
+
+  COMMAND *cmd = l_make_bare_simple_command();
+  cmd->value.Simple->words = copy_word_list(cmd_list);
+
+  result = execute_command(cmd);
+
+  dispose_command(cmd);
+
+  run_unwind_frame("l_run_with_unblocked");
+
+  return (result);
 }

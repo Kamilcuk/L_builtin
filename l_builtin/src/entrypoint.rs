@@ -166,8 +166,7 @@ static L_BUILTIN_DOC: &[SyncPtr<*const c_char>] = &llib::doc_array!(
     c"  ppoll        Wait for FDs and unblock signals atomically",
     c"",
     c"Signals:",
-    c"  sigmask      Block or unblock signals",
-    c"  sigunmask    Unblock signals and run a command",
+    c"  sig          Inspect or modify the shell's signal mask",
     c"",
     c"Synchronization:",
     c"  barrier      Process-shared barrier synchronization",
@@ -223,8 +222,7 @@ const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
     #[cfg(feature = "ppoll")]
     ("ppoll", c_wrap!(l_ppoll_subcommand)),
     // Signals
-    ("sigmask", c_wrap!(l_sigmask_subcommand)),
-    ("sigunmask", c_wrap!(l_sigunmask_subcommand)),
+    ("sig", crate::cmd_sig::sig_subcommand),
     // Sync (incl. shared-memory variables)
     ("barrier", crate::cmd_barrier::barrier_subcommand),
     ("mutex", crate::cmd_mutex::mutex_subcommand),

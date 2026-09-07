@@ -2,7 +2,6 @@
 #![allow(non_snake_case)]
 
 use nix::libc::{dlerror, dlopen, dlsym, memfd_create, write, RTLD_LOCAL, RTLD_NOW};
-use std::cell::UnsafeCell;
 use std::ffi::CStr;
 use std::io::{Cursor, Read};
 use std::os::raw::{c_char, c_int, c_void};
@@ -26,7 +25,7 @@ pub struct Builtin {
 
 const BUILTIN_ENABLED: c_int = 1;
 
-static L_BUILTIN_DOC: &[SyncPtr] = &llib::doc_array!(
+static L_BUILTIN_DOC: &[SyncPtr<*const c_char>] = &llib::doc_array!(
     c"L_builtin multi-version dispatcher.",
     c"",
     c"L_builtin <subcommand> [options] [args]",

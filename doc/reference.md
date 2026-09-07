@@ -120,9 +120,12 @@
   - [L_builtin shm sync](#l_builtin-shm-sync)
   - [L_builtin shm unbind](#l_builtin-shm-unbind)
 - [L_builtin shutdown](#l_builtin-shutdown)
-- [L_builtin sigmask](#l_builtin-sigmask)
+- [L_builtin sig](#l_builtin-sig)
+  - [L_builtin sig block](#l_builtin-sig-block)
+  - [L_builtin sig list](#l_builtin-sig-list)
+  - [L_builtin sig run](#l_builtin-sig-run)
+  - [L_builtin sig unblock](#l_builtin-sig-unblock)
 - [L_builtin signalfd](#l_builtin-signalfd)
-- [L_builtin sigunmask](#l_builtin-sigunmask)
 - [L_builtin sleep](#l_builtin-sleep)
 - [L_builtin splice](#l_builtin-splice)
 - [L_builtin timerfd](#l_builtin-timerfd)
@@ -2487,48 +2490,151 @@ Exit Status:
 Returns success unless shutdown fails.
 ```
 
-### `L_builtin sigmask`
+### `L_builtin sig`
 
 ```
-L_builtin sigmask: usage: [-s sigspec] [-u sigspec] [sigspec ...]
+L_builtin sig: usage: list [-v VAR] | block sigspec... | unblock sigspec... | run sigspec... -- cmd [args...]
 
-Block or unblock signals.
+Inspect and modify the shell's process signal mask.
 
-L_builtin sigmask [-s sigspec] [-u sigspec] [sigspec ...]
+Subcommands:
+  list [-v VAR]            Print the signals currently blocked in the shell's
+                           signal mask (one per line), or write them into the
+                           indexed array VAR when -v is given.
+  block sigspec...         Block the listed signals in the current shell
+                           process. Subsequent commands inherit the modified
+                           mask.
+  unblock sigspec...       Unblock the listed signals in the current shell
+                           process.
+  run sigspec... -- cmd    Run `cmd` with the listed signals unblocked. The
+                           caller's signal mask is not permanently modified.
 
-Block or unblock signals in the shell process. Without options, it
-prints the current signal mask. -s blocks, -u unblocks.
-Each of -s and -u takes a single sigspec (e.g. -s INT, then -u TERM
-in two flags). For multiple signals, repeat the flag (-s INT -s TERM)
-use 'ALL' (case-insensitive), or list remaining signals as positional
-args (positional args are always BLOCKED, never unblocked).
-
-Examples:
-  # Block INT/TERM for the duration of a critical loop, unblocking them
-  # only around the sleep so the user can cancel with Ctrl-C.
-  trap 'cancel=1' INT TERM
-  L_builtin sigmask INT TERM
-  while ! cancel; do
-    echo 'critical step'
-    L_builtin sigunmask -s INT sleep 1
-  done
-
-  # Once a signal is unmasked with -u, it stays unmasked for every
-  # subsequent command in this shell (changes persist via top_level_mask).
-  trap 'echo USR1' USR1
-  L_builtin sigmask -s USR1
-  L_builtin sigmask          # shows SIGUSR1 is blocked
-  L_builtin sigmask -u USR1
-  L_builtin sigmask          # shows SIGUSR1 is no longer listed
-  L_raise -USR1              # trap fires immediately
-
-  # Mixed flags + positional args: -u unblocks INT, then TERM (positional)
-  # is blocked. This is NOT equivalent to 'unblock both INT and TERM'.
-  L_builtin sigmask -s INT TERM USR1
-  L_builtin sigmask -u INT TERM   # unblock INT, block TERM again
+Signal specifications follow Bash's existing conventions: signal names with
+or without a `SIG` prefix, numeric signal numbers, and the special case-
+insensitive token `all` (matches every signal).
 
 Exit Status:
-Returns success unless an invalid signal is provided or a system error 
+Returns success unless an invalid signal is provided or a system error
+occurs. For `run`, returns the executed command's exit status.
+
+Examples:
+  L_builtin sig block USR1 USR2
+  L_builtin sig list
+  # SIGUSR1
+  # SIGUSR2
+  L_builtin sig list -v blocked
+  echo "${blocked[@]}"
+```
+
+#### `L_builtin sig block`
+
+```
+L_builtin sig block: usage: block sigspec...
+
+Block the listed signals in the current shell process.
+
+The modification persists for the lifetime of the shell (or until changed
+again): subsequent commands run with the modified mask unless they restore
+it themselves.
+
+Signal specifications: `SIGINT`/`INT`, numeric numbers, or the case-
+insensitive token `all` to block every signal.
+
+Examples:
+  L_builtin sig block INT
+  L_builtin sig block USR1 USR2
+
+  # Block SIGINT/SIGTERM around a critical region, then briefly unblock
+  # them via `sig run` so Ctrl-C / kill can land during the sleep.
+  cancel=0
+  trap 'cancel=1' INT TERM
+  L_builtin sig block INT TERM
+  while (( !cancel )); do
+    echo 'critical step'
+    L_builtin sig run INT TERM -- sleep 1
+  done
+
+Exit Status:
+Returns success unless an invalid signal is provided or a system error
+occurs.
+```
+
+#### `L_builtin sig list`
+
+```
+L_builtin sig list: usage: list [-v VAR]
+
+Print the signals currently blocked in the shell's signal mask, one per line.
+With `-v VAR`, write the names into the indexed array VAR (sparse, 1-based).
+
+This is the process signal mask, not the disposition of any trapped or ignored
+signal. Use `trap` for the latter.
+
+Examples:
+  L_builtin sig block USR1 USR2
+  L_builtin sig list
+  # SIGUSR1
+  # SIGUSR2
+
+  L_builtin sig list -v blocked
+  echo "There are ${#blocked[@]} blocked signals"
+
+Exit Status:
+Returns success.
+```
+
+#### `L_builtin sig run`
+
+```
+L_builtin sig run: usage: run sigspec... -- cmd [args...]
+
+Run `cmd` with the listed signals unblocked in the child only.
+
+The caller's signal mask is not permanently modified: the underlying helper
+restores it after the command finishes (or after a non-local exit via bash's
+unwind-protect machinery).
+
+`--` separates the signal list from the command. At least one signal must be
+specified.
+
+Signal specifications: `SIGINT`/`INT`, numeric numbers, or the case-
+insensitive token `all`.
+
+Examples:
+  # Block SIGINT for a critical step, but let the user Ctrl-C out of the
+  # sleep.
+  cancel=0
+  trap 'cancel=1' INT
+  L_builtin sig block INT
+  while (( !cancel )); do
+    echo 'critical step'
+    L_builtin sig run INT -- sleep 1
+  done
+
+  # Unblock several signals at once.
+  L_builtin sig run USR1 USR2 -- my-command
+
+Exit Status:
+Returns the exit status of the executed command.
+```
+
+#### `L_builtin sig unblock`
+
+```
+L_builtin sig unblock: usage: unblock sigspec...
+
+Unblock the listed signals in the current shell process.
+
+Inverse of `sig block`. Modifies the persistent signal mask; use `sig run` to
+unblock signals only for the duration of a single command.
+
+Examples:
+  L_builtin sig unblock USR1
+  L_builtin sig unblock USR1 USR2
+  L_builtin sig unblock all
+
+Exit Status:
+Returns success unless an invalid signal is provided or a system error
 occurs.
 ```
 
@@ -2553,53 +2659,6 @@ Options:
 
 Exit Status:
 Returns success unless signalfd fails or the variable cannot be bound.
-```
-
-### `L_builtin sigunmask`
-
-```
-L_builtin sigunmask: usage: [-h] -s sigspec cmd [args...]
-
-Unblock signals and run a command.
-
-L_builtin sigunmask [-h] -s sigspec cmd [args...]
-
-Temporarily unblocks the specified signal and executes the command.
-Note: -s takes a single sigspec; to unblock multiple signals use
-'-s ALL' or invoke sigunmask once per signal. ALL is case-insensitive.
-If the signal was pending, the trap is executed and the command is skipped.
-The command can be any shell command (builtin, function, or external).
-
-WARNING: There is a small window between unblocking and starting the command.
-If a signal arrives in this window, it may be delivered to the command itself
-rather than being caught by this builtin's check.
-
-Examples:
-  # Block INT for a critical step, but let the user Ctrl-C out of
-  # the sleep. -s takes ONE signal; 'TERM' here would become part of
-  # the command, not a second signal.
-  trap 'cancel=1' INT
-  L_builtin sigmask INT
-  while ! cancel; do
-    echo 'critical step'
-    L_builtin sigunmask -s INT sleep 1
-  done
-
-  # Unblock several signals at once with ALL.
-  trap 'cancel=1' INT TERM USR1
-  L_builtin sigmask INT TERM USR1
-  L_builtin sigunmask -s ALL sleep 5
-
-  # If the signal is already pending when sigunmask runs, the trap fires
-  # and the command is skipped (exit status is 128+signum).
-  trap 'echo caught' USR1
-  L_builtin sigmask -s USR1
-  L_raise -USR1
-  L_builtin sigunmask -s USR1 echo 'will not run'
-  # prints 'caught', exits 128+SIGUSR1
-
-Exit Status:
-Returns the status of the command, or 128+signum if a signal was caught.
 ```
 
 ### `L_builtin sleep`

@@ -16,6 +16,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <signal.h>
 #include <sys/types.h>
 
 /* -- Bash headers (same set compiled by bash_api.c) ----------------------- */
@@ -40,6 +41,14 @@
 extern int build_version, patch_level;
 extern char *dist_version, *release_status;
 extern char *this_command_name;
+
+/* Defined in bash's sig.c / trap.c; not declared in any public header, but
+ * needed by the signal-mask helpers (l_run_with_unblocked) below. */
+extern sigset_t top_level_mask;
+extern int pending_traps[NSIG];
+/* Defined in bash's parser (y.tab.c); not in any header that l_bash_api.h
+ * pulls in. Used by the signal-mask helper to build a SIMPLE_COMMAND node. */
+extern int line_number;
 
 /* -- Simple allocation wrappers ------------------------------------------- */
 
@@ -120,9 +129,20 @@ ARRAY *l_prepare_indexed_array(const char *name);
 
 /* Prepare NAME as an associative array for a builtin to populate: convert an
  * existing variable in place (or create a fresh one), set the assoc attribute,
- * and flush any existing entries. Returns the flushed HASH_TABLE to insert into,
- * or NULL. */
+ * and flush any existing entries. Returns the (flushed) HASH_TABLE to insert into,
+ * or NULL on failure. */
 HASH_TABLE *l_prepare_assoc_array(const char *name);
+
+/* ------------------------------------------------------------------------- */
+/* Signal-mask builtin helpers (l_run_with_unblocked) */
+
+/* Run `cmd_list` with the supplied signals unblocked. The command sees the
+ * caller's signal mask with `unblocked` removed; the caller's mask itself is
+ * not permanently modified (the helper uses an unwind_protect frame around
+ * any temporary top_level_mask / process-mask changes). Returns the executed
+ * command's exit status, or 128+signum if a previously-blocked pending trap
+ * fires before the command can start. */
+int l_run_with_unblocked(WORD_LIST *cmd_list, const sigset_t *unblocked);
 
 /* ------------------------------------------------------------------------- */
 

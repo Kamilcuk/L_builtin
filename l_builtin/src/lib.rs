@@ -23,6 +23,7 @@ pub(crate) mod cmd_run;
 pub(crate) mod cmd_sedvar;
 pub(crate) mod cmd_semaphore;
 pub(crate) mod cmd_shm;
+pub(crate) mod cmd_sig;
 pub(crate) mod cmd_version;
 pub(crate) mod cmdargs;
 pub(crate) mod connect;
