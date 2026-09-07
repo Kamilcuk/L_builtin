@@ -833,7 +833,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
 name = "l_builtin_4_4"
 version = "0.1.5"
 dependencies = [
@@ -950,125 +949,6 @@ dependencies = [
 ]
 
 [[package]]
-||||||| parent of 8d8d5b1 (rewrite cmd_sig.c in rust and make it a subcommand)
-name = "l_builtin_4_4"
-version = "0.1.4"
-dependencies = [
- "cmdargs-derive",
- "libc",
- "llib",
- "memmap2",
- "mlua",
- "nix",
- "parse_duration",
- "pretty_assertions",
- "regex",
- "rkyv",
- "rustix",
- "sed-rs",
- "smallvec",
- "tempfile",
- "thiserror",
- "uu_dirname",
- "uu_ls",
- "uu_printf",
- "uu_rm",
- "uu_sleep",
- "uu_stat",
- "uu_tee",
- "uucore",
-]
-
-[[package]]
-name = "l_builtin_5_0"
-version = "0.1.4"
-dependencies = [
- "cmdargs-derive",
- "libc",
- "llib",
- "memmap2",
- "mlua",
- "nix",
- "parse_duration",
- "pretty_assertions",
- "regex",
- "rkyv",
- "rustix",
- "sed-rs",
- "smallvec",
- "tempfile",
- "thiserror",
- "uu_dirname",
- "uu_ls",
- "uu_printf",
- "uu_rm",
- "uu_sleep",
- "uu_stat",
- "uu_tee",
- "uucore",
-]
-
-[[package]]
-name = "l_builtin_5_1"
-version = "0.1.4"
-dependencies = [
- "cmdargs-derive",
- "libc",
- "llib",
- "memmap2",
- "mlua",
- "nix",
- "parse_duration",
- "pretty_assertions",
- "regex",
- "rkyv",
- "rustix",
- "sed-rs",
- "smallvec",
- "tempfile",
- "thiserror",
- "uu_dirname",
- "uu_ls",
- "uu_printf",
- "uu_rm",
- "uu_sleep",
- "uu_stat",
- "uu_tee",
- "uucore",
-]
-
-[[package]]
-name = "l_builtin_5_2"
-version = "0.1.4"
-dependencies = [
- "cmdargs-derive",
- "libc",
- "llib",
- "memmap2",
- "mlua",
- "nix",
- "parse_duration",
- "pretty_assertions",
- "regex",
- "rkyv",
- "rustix",
- "sed-rs",
- "smallvec",
- "tempfile",
- "thiserror",
- "uu_dirname",
- "uu_ls",
- "uu_printf",
- "uu_rm",
- "uu_sleep",
- "uu_stat",
- "uu_tee",
- "uucore",
-]
-
-[[package]]
-=======
->>>>>>> 8d8d5b1 (rewrite cmd_sig.c in rust and make it a subcommand)
 name = "l_builtin_5_3"
 version = "0.1.5"
 dependencies = [
