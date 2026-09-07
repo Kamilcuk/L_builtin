@@ -48,18 +48,25 @@ L_builtin shutdown fd WR
 
 # File descriptors
 L_builtin pipe fds
-L_builtin eventfd counter
+L_builtin eventfd create counter
+L_builtin eventfd write $counter 3
+L_builtin eventfd read $counter v
 L_builtin memfd name
-L_builtin timerfd timer
-L_builtin signalfd sfd SIGUSR1
+L_builtin timerfd create timer
+L_builtin signalfd -v sfd SIGUSR1
 L_builtin splice -v n src dst 4096
 L_builtin lseek -v pos 3 1024 CUR
 L_builtin read -v data fd 4096
 L_builtin write -v n fd "hello"
-L_builtin fcntl fd F_GETFL
-L_builtin flock path LOCK_EX
+L_builtin fcntl getfl fd
+L_builtin fcntl setfl fd nonblock
+L_builtin fcntl getfd fd
+L_builtin fcntl setfd fd cloexec
+L_builtin fcntl dup -v newfd fd
+L_builtin fcntl list
+L_builtin flock -x fd
 L_builtin close fd
-L_builtin epoll -v ready 3:r 4:w
+L_builtin epoll create efd
 L_builtin poll -t 1000 -v ready 0:r 1:w
 L_builtin ppoll -t 1000 -v ready -u SIGINT 0:r
 
@@ -70,22 +77,36 @@ L_builtin sig list -v blocked
 L_builtin sig run USR1 USR2 -- my_command
 
 # Synchronization
-L_builtin barrier -n b1 wait
-L_builtin mutex -n m1 lock cmd
-L_builtin semaphore -n s1 wait
-L_builtin shm -s db add -A ASSOC key1 value1
-L_builtin shm -s db info
+L_builtin barrier create -n b1 b 1
+L_builtin mutex create m1
+L_builtin semaphore create s1 1
+L_builtin shm bind VAR
+L_builtin shm info
+L_builtin shm ls
+L_builtin shm unbind VAR
+L_builtin shm drop VAR
+L_builtin shm sync VAR
+L_builtin shm clear
+L_builtin shm rm
 
 # Variables
-L_builtin replace -v out '^foo' 'bar' in
-L_builtin sedvar -e 's/a/b/' var
+L_builtin replace VAR '^foo' 'bar'
+L_builtin sedvar VAR 's/a/b/'
 
 # Utilities
 L_builtin sleep 0.05
 L_builtin core ls -la
 L_builtin core stat file.txt
 L_builtin lua 'local home = bash.get("HOME"); print(home)'
-L_builtin ext readfile /etc/hostname
+L_builtin ext basename /etc/hostname
+L_builtin ext dirname /usr/local/bin/foo.sh
+L_builtin ext cat /etc/hostname
+L_builtin ext head -n 1 /etc/passwd
+L_builtin ext id -u
+L_builtin ext realpath /tmp
+L_builtin ext strftime '%Y'
+L_builtin ext sync
+L_builtin ext whoami
 L_builtin version
 
 # Capture
@@ -204,42 +225,95 @@ L_builtin sig run USR1 USR2 -- my_command
 ### Poll Multiple FDs
 
 ```bash
-L_builtin poll -t 5000 -v ready_fds 3:r 4:w 5:p
+exec 3<> /tmp/L_poll_example
+echo data >&3
+L_builtin poll -t 5000 -v ready_fds 3:r 4:w
 
-# ready_fds contains entries like "3:r" when fd 3 is readable
+# ready_fds is a sparse indexed array keyed by fd:
+#   ${ready_fds[3]} = r    # fd 3 was readable
+#   ${ready_fds[4]} = n    # fd 4 was invalid/hangup
+exec 3<&-
 ```
 
 ### TCP Networking
 
+`listen`, `accept`, `connect`, `send`, `recv`, `shutdown` work on real BSD
+sockets. A minimal round-trip — the server runs in a backgrounded subshell
+and publishes its bound port back to the parent through an `L_builtin pipe`:
+
 ```bash
-# Server
-L_builtin listen -p port_var listen_fd 127.0.0.1 0
+enable -f ./L_builtin.so L_builtin
 
-echo "Listening on port $port_var"
+# Open a pipe for the server → parent port handoff.
+L_builtin pipe pp
 
-L_builtin accept client_fd addr_var listen_fd
+(
+  L_builtin listen -p port_var listen_fd 127.0.0.1 0
+  echo "$port_var" >&${pp[1]}              # publish port to the parent
+  L_builtin accept client_fd addr_var $listen_fd
+  L_builtin send -v sent $client_fd "Hello from server"
+  L_builtin close $client_fd
+  L_builtin close $listen_fd
+) &
+server_pid=$!
 
-L_builtin send -v sent client_fd "Hello from server"
+# Parent reads the port from the pipe (no race, no polling).
+IFS= read -r port <&${pp[0]}
 
-L_builtin shutdown client_fd WR
+L_builtin connect client_fd 127.0.0.1 $port
+L_builtin recv -v data $client_fd 1024
+L_builtin close $client_fd
+echo "received: $data"   # received: Hello from server
 
-# Client
-L_builtin connect client_fd 127.0.0.1 $port_var
-
-L_builtin recv -v data client_fd 1024
-
-$data"
+wait $server_pid
+L_builtin close ${pp[0]} ${pp[1]}
 ```
+
+Variables set in the server subshell are not visible to the parent (they live
+in the subshell's variable table). The pipe above is the channel; other
+options are the filesystem, or any of the sync primitives (`shm`, `barrier`,
+...).
 
 ### Embedded Lua
 
+Lua shares the bash process heap: variables are live in both directions, no
+serialization. Three of the interop primitives:
+
 ```bash
+# Scalar round-trip — read HOME into lua, transform, write back.
 L_builtin lua '
-  bash.set("MY_VAR", "hello from lua")
-  local v = bash.get("MY_VAR")
-  print("MY_VAR =", v)
+  local home = bash.get("HOME")
+  bash.set("HOME_PARENT", home:gsub("/[^/]*$", ""))
 '
+
+# Indexed array round-trip — bash → lua → bash.
+DIRS=(/usr/local/bin /opt/bin /home/kamil/bin)
+L_builtin lua '
+  for i, dir in ipairs(bash.get("DIRS")) do
+    bash.set("PATH", dir .. ":" .. bash.get("PATH"))
+  end
+'
+
+# Associative array round-trip, plus a function call.
+declare -A config=([host]=db1 [port]=5432)
+L_builtin lua '
+  local c = bash.get("config")
+  c.host = c.host .. ".internal"   -- mutate in-place
+  c.replicas = 3                    -- add a key
+  bash.set("config", c)
+'
+# config is now ( [host]=db1.internal [port]=5432 [replicas]=3 )
+
+# bash.eval runs a bash command string. It returns the exit status (integer);
+# the command's stdout goes straight to the calling bash's stdout, not back
+# into lua. So to capture command output you read it from lua's pcall return
+# or use bash.get on a variable the command assigned to.
+L_builtin -v out lua 'bash.eval("FOO=hello; export FOO"); print(bash.get("FOO"))'
+echo "$out"   # hello
 ```
+
+The full lua API (`bash.get/set/unset/eval/expand/expand_list`) is documented
+under [lua](doc/reference.md#lua).
 
 ### Core Utilities (Rust/uutils)
 
@@ -252,7 +326,7 @@ L_builtin core stat /etc/passwd
 
 ```bash
 L_builtin -v output_var run echo "hello world"
-echo $output_var"
+echo "$output_var"   # hello world
 ```
 
 ## License
