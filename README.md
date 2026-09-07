@@ -16,7 +16,6 @@ These builtins are compiled into a shared library (`L_builtin.so`) which can be 
     - [Build](#build)
     - [Load into Bash](#load-into-bash)
     - [Run Tests](#run-tests)
-  - [Example Features](#example-features)
   - [Usage Examples](#usage-examples)
     - [Sleep](#sleep)
     - [Create and Use a Pipe](#create-and-use-a-pipe)
@@ -39,20 +38,7 @@ enable -f ./L_builtin.so L_builtin
 L_builtin -h
 L_builtin <subcommand> -h
 
-# File/Process
-L_builtin lseek -v pos 3 1024 CUR
-L_builtin pipe fds
-L_builtin sleep 0.05
-
-# Signals
-L_builtin sigmask -s SIGUSR1
-L_builtin sigunmask -s SIGUSR1 cmd
-
-# Polling
-L_builtin poll -t 1000 -v ready 0:r 1:w
-L_builtin ppoll -t 1000 -v ready -u SIGINT 0:r
-
-# Networking
+# Network
 L_builtin listen -p port listen_fd 0.0.0.0 0
 L_builtin accept client addr listen_fd
 L_builtin connect client_fd 1.2.3.4 80
@@ -60,12 +46,47 @@ L_builtin send -f hex -v n fd "deadbeef"
 L_builtin recv -f hex -v data -n fd 4096
 L_builtin shutdown fd WR
 
-# Lua
-L_builtin lua 'local home = bash.get("HOME"); print(home)'
+# File descriptors
+L_builtin pipe fds
+L_builtin eventfd counter
+L_builtin memfd name
+L_builtin timerfd timer
+L_builtin signalfd sfd SIGUSR1
+L_builtin splice -v n src dst 4096
+L_builtin lseek -v pos 3 1024 CUR
+L_builtin read -v data fd 4096
+L_builtin write -v n fd "hello"
+L_builtin fcntl fd F_GETFL
+L_builtin flock path LOCK_EX
+L_builtin close fd
+L_builtin epoll -v ready 3:r 4:w
+L_builtin poll -t 1000 -v ready 0:r 1:w
+L_builtin ppoll -t 1000 -v ready -u SIGINT 0:r
 
-# Core utils
+# Signals
+L_builtin sig block USR1 USR2
+L_builtin sig unblock USR1
+L_builtin sig list -v blocked
+L_builtin sig run USR1 USR2 -- my_command
+
+# Synchronization
+L_builtin barrier -n b1 wait
+L_builtin mutex -n m1 lock cmd
+L_builtin semaphore -n s1 wait
+L_builtin shm -s db add -A ASSOC key1 value1
+L_builtin shm -s db info
+
+# Variables
+L_builtin replace -v out '^foo' 'bar' in
+L_builtin sedvar -e 's/a/b/' var
+
+# Utilities
+L_builtin sleep 0.05
 L_builtin core ls -la
 L_builtin core stat file.txt
+L_builtin lua 'local home = bash.get("HOME"); print(home)'
+L_builtin ext readfile /etc/hostname
+L_builtin version
 
 # Capture
 L_builtin -v var run echo hello
@@ -138,82 +159,9 @@ make test
 
 This compiles the module, runs all modular test files in `tests/`, and executes style checks, formatting validation, and static analysis.
 
-## Example Features
-
-The full reference for every subcommand lives in [doc/reference.md](doc/reference.md).
-
-- **`lseek`**: Reposition read/write file offset with `SEEK_SET`/`SEEK_CUR`/`SEEK_END`
-  ```bash
-  L_builtin lseek -v pos 3 1024 CUR
-  ```
-- **`pipe`**: Create a uni-directional data channel (stores FDs in array)
-  ```bash
-  L_builtin pipe fds
-  ```
-- **`sleep`**: Sub-second sleep (microsecond resolution)
-  ```bash
-  L_builtin sleep 0.05
-  ```
-- **`sigmask`**: Block or unblock signal delivery; print current mask
-  ```bash
-  L_builtin sigmask -s SIGUSR1
-  ```
-- **`sigunmask`**: Temporarily unblock signals and execute a command
-  ```bash
-  L_builtin sigunmask -s SIGUSR1 my_command
-  ```
-- **`poll`**: Wait for multiple file descriptors to become ready for I/O
-  ```bash
-  L_builtin poll -t 1000 -v ready 0:r 1:w
-  ```
-- **`ppoll`**: Wait for multiple file descriptors to become ready for I/O with signal unblocking
-  ```bash
-  L_builtin ppoll -t 1000 -v ready -u SIGINT 0:r
-  ```
-- **`listen`**: Create a listening TCP socket (ephemeral port support)
-  ```bash
-  L_builtin listen -p port listen_fd 0.0.0.0 0
-  ```
-- **`accept`**: Accept a new connection on a listening socket
-  ```bash
-  L_builtin client addr listen_fd
-  ```
-- **`connect`**: Establish an outgoing TCP connection
-  ```bash
-  L_builtin connect client_fd 1.2.3.4 80
-  ```
-- **`shutdown`**: Semi-close a full-duplex TCP socket (`RD`, `WR`, `RDWR`)
-  ```bash
-  L_builtin shutdown fd WR
-  ```
-- **`send`**: Transmit raw or hex-encoded data over a socket
-  ```bash
-  L_builtin send -f hex -v n fd "deadbeef"
-  ```
-- **`recv`**: Receive up to N bytes (raw or hex-encoded; non-blocking option)
-  ```bash
-  L_builtin recv -f hex -v data -n fd 4096
-  ```
-- **`core ls`**: `ls` implementation
-  ```bash
-  L_builtin core ls -la
-  ```
-- **`core stat`**: File status display
-  ```bash
-  L_builtin core stat file.txt
-  ```
-- **`run`**: Run any command with stdout captured into a variable
-  ```bash
-  L_builtin -v var run var echo hello
-  ```
-- **`lua`**: Execute inline LuaJIT code within the Bash process; exposes a `bash` table for shell interaction
-  ```bash
-  L_builtin lua 'local home = bash.get("HOME"); print(home)'
-  ```
-
 ## Usage Examples
 
-The full reference for every subcommand lives in [doc/reference.md](doc/reference.md).
+Narrative walkthroughs of common tasks. For the complete per-subcommand reference (every flag, exit code, edge case), see [doc/reference.md](doc/reference.md).
 
 ### Sleep
 
@@ -236,11 +184,21 @@ $line"
 ### Signal Masking
 
 ```bash
-# Block SIGUSR1
-L_builtin sigmask -s SIGUSR1
+# Block SIGUSR1/SIGUSR2 in the current shell
+L_builtin sig block USR1 USR2
 
-# Run command with SIGUSR1 unblocked
-L_builtin sigunmask -s SIGUSR1 my_command
+# List currently blocked signals
+L_builtin sig list
+
+# Or capture them into an indexed array
+L_builtin sig list -v blocked
+echo "${blocked[@]}"
+
+# Unblock signals (persistent)
+L_builtin sig unblock USR1
+
+# Run a command with signals temporarily unblocked (caller's mask restored after)
+L_builtin sig run USR1 USR2 -- my_command
 ```
 
 ### Poll Multiple FDs
