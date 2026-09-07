@@ -124,9 +124,11 @@ int l_cmd_ext(WORD_LIST *list)
   }
   assert(b->function);
   l_enter_subcommand(subcmd, b->short_doc, (void *)b->long_doc);
+  // Advance the list after subcommand.
+  list = list->next;
   // Hijack the -h --help to print full long documentation of the child subcommand.
-  if (list->next && list->next->word) {
-    const char *first = list->next->word->word;
+  if (list && list->word) {
+    const char *first = list->word->word;
     if (first) {
       if (strcmp(first, "--help") == 0 || strcmp(first, "-h") == 0) {
         l_builtin_usage_long();
