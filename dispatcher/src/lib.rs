@@ -26,7 +26,7 @@ pub struct Builtin {
 
 const BUILTIN_ENABLED: c_int = 1;
 
-static L_BUILTIN_DOC: [SyncPtr; 7] = llib::doc_array!(
+static L_BUILTIN_DOC: &[SyncPtr] = &llib::doc_array!(
     c"L_builtin multi-version dispatcher.",
     c"",
     c"L_builtin <subcommand> [options] [args]",

@@ -78,6 +78,7 @@ Examples:
        esac
    done
    exec {tf}<&- {ep}<&-
+"
 );
 
 fn parse_clock(s: Option<&str>) -> Option<libc::clockid_t> {

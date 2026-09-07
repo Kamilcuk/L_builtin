@@ -57,28 +57,30 @@ SKIP = {"unittest"}
 
 
 def run_builtin(bash: str, so: str, args: str) -> str:
-    """Run ``L_builtin <args>`` inside a fresh bash with the .so enabled."""
+    """Run ``L_builtin <args>`` inside a fresh bash with the .so enabled.
+    Raises an error if the command exits non-zero.
+    """
     prog = (
         f"enable -f {so} L_builtin\n"
         f"L_builtin {args} 2>&1\n"
         f"exit $?\n"
     )
-    cp = subprocess.run(
+    return subprocess.check_output(
         [bash, "-c", prog],
-        capture_output=True,
         text=True,
-        check=False,
     )
-    return cp.stdout
 
 
-def _extract_listing(text: str, header: str) -> list[str]:
+def _extract_listing(text: str, header: str, multisection: bool = False) -> list[str]:
     """Return subcommand names from a two-column ``Available subcommands:`` /
     ``Subcommands:`` listing found in *text*.
 
-    Each entry is an indented line ``  name   description``; the block ends at
-    the first blank line (after entries have started) or at the first
-    non-indented content line.
+    Each entry is an indented line ``  name   description``.
+
+    If *multisection* is True, the block may contain multiple sections
+    separated by blank lines and non-indented section headers; in that case
+    every line matching the entry pattern is collected. Otherwise the block
+    ends at the first blank line or non-indented line after the first entry.
     """
     idx = text.find(header)
     if idx == -1:
@@ -88,11 +90,11 @@ def _extract_listing(text: str, header: str) -> list[str]:
     entry_re = re.compile(r"^(?: {4}|  )(\S+)\s+(\S.*)$")
     for line in region.splitlines():
         if line.strip() == "":
-            if names:
+            if not multisection and names:
                 break
             continue
         if not line.startswith("  "):
-            if names:
+            if not multisection and names:
                 break
             continue
         m = entry_re.match(line)
@@ -124,7 +126,7 @@ def _github_anchor(text: str) -> str:
 
 def build_parts(bash: str, so: str) -> list[tuple[int, str, str]]:
     """Return a list of ``(level, title, help_text)`` tuples, in display order."""
-    names = _extract_listing(run_builtin(bash, so, "-h"), "Available subcommands:")
+    names = sorted(_extract_listing(run_builtin(bash, so, "-h"), "Available subcommands:", multisection=True))
     parts: list[tuple[int, str, str]] = []
 
     for name in names:
@@ -136,14 +138,14 @@ def build_parts(bash: str, so: str) -> list[tuple[int, str, str]]:
 
         if name == "core":
             parts.append((3, f"L_builtin {name}", help_text))
-            for child in _extract_listing(help_text, "Available subcommands:"):
+            for child in sorted(_extract_listing(help_text, "Available subcommands:")):
                 child_help = f"runs coreutils `{child}` command\n"
                 parts.append((4, f"L_builtin {name} {child}", child_help))
             continue
 
         if name == "ext":
             parts.append((3, f"L_builtin {name}", help_text))
-            for child in _extract_listing(help_text, "Available subcommands:"):
+            for child in sorted(_extract_listing(help_text, "Available subcommands:")):
                 child_help = _help(bash, so, name, child)
                 if child_help.strip():
                     parts.append((4, f"L_builtin {name} {child}", child_help))
@@ -151,7 +153,7 @@ def build_parts(bash: str, so: str) -> list[tuple[int, str, str]]:
 
         if name in COMPOUND:
             parts.append((3, f"L_builtin {name}", help_text))
-            for child in _extract_listing(help_text, "Subcommands:"):
+            for child in sorted(_extract_listing(help_text, "Subcommands:")):
                 child_help = _help(bash, so, name, child)
                 if child_help.strip():
                     parts.append((4, f"L_builtin {name} {child}", child_help))

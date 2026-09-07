@@ -175,15 +175,12 @@ term: build/init.bash
 gdb: build
 	,gdbbatchrun bash -c "enable -f ./$(CMAKE_DIR)/L_builtin.so L_builtin && L_builtin $(ARGS)"
 
-REFERENCE = doc/reference.md
-
-$(REFERENCE): scripts/gen_reference.py
-	scripts/gen_reference.py ./L_builtin.so > $@
-
-readme: $(REFERENCE)
+.PHONY: readme test-readme
+readme:
+	scripts/gen_reference.py ./L_builtin.so > doc/reference.md
 test-readme: scripts/gen_reference.py
 	scripts/gen_reference.py ./L_builtin.so \
-		| diff -u $(REFERENCE) -
+		| diff -u doc/reference.md -
 
 ###############################################################################
 # ---- Dispatcher targets ----

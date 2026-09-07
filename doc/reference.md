@@ -1,25 +1,32 @@
 # L_builtin — Subcommand Reference
 
 - [L_builtin accept](#l_builtin-accept)
-- [L_builtin capture](#l_builtin-capture)
+- [L_builtin barrier](#l_builtin-barrier)
+  - [L_builtin barrier close](#l_builtin-barrier-close)
+  - [L_builtin barrier create](#l_builtin-barrier-create)
+  - [L_builtin barrier destroy](#l_builtin-barrier-destroy)
+  - [L_builtin barrier open](#l_builtin-barrier-open)
+  - [L_builtin barrier reset](#l_builtin-barrier-reset)
+  - [L_builtin barrier wait](#l_builtin-barrier-wait)
+- [L_builtin close](#l_builtin-close)
 - [L_builtin connect](#l_builtin-connect)
 - [L_builtin core](#l_builtin-core)
-  - [L_builtin core ls](#l_builtin-core-ls)
-  - [L_builtin core stat](#l_builtin-core-stat)
   - [L_builtin core dirname](#l_builtin-core-dirname)
+  - [L_builtin core ls](#l_builtin-core-ls)
   - [L_builtin core rm](#l_builtin-core-rm)
-  - [L_builtin core tee](#l_builtin-core-tee)
   - [L_builtin core sleep](#l_builtin-core-sleep)
+  - [L_builtin core stat](#l_builtin-core-stat)
+  - [L_builtin core tee](#l_builtin-core-tee)
+- [L_builtin epoll](#l_builtin-epoll)
+  - [L_builtin epoll add](#l_builtin-epoll-add)
+  - [L_builtin epoll create](#l_builtin-epoll-create)
+  - [L_builtin epoll del](#l_builtin-epoll-del)
+  - [L_builtin epoll mod](#l_builtin-epoll-mod)
+  - [L_builtin epoll wait](#l_builtin-epoll-wait)
 - [L_builtin eventfd](#l_builtin-eventfd)
   - [L_builtin eventfd create](#l_builtin-eventfd-create)
-  - [L_builtin eventfd write](#l_builtin-eventfd-write)
   - [L_builtin eventfd read](#l_builtin-eventfd-read)
-- [L_builtin epoll](#l_builtin-epoll)
-  - [L_builtin epoll create](#l_builtin-epoll-create)
-  - [L_builtin epoll add](#l_builtin-epoll-add)
-  - [L_builtin epoll mod](#l_builtin-epoll-mod)
-  - [L_builtin epoll del](#l_builtin-epoll-del)
-  - [L_builtin epoll wait](#l_builtin-epoll-wait)
+  - [L_builtin eventfd write](#l_builtin-eventfd-write)
 - [L_builtin ext](#l_builtin-ext)
   - [L_builtin ext accept](#l_builtin-ext-accept)
   - [L_builtin ext asort](#l_builtin-ext-asort)
@@ -30,6 +37,7 @@
   - [L_builtin ext cut](#l_builtin-ext-cut)
   - [L_builtin ext dirname](#l_builtin-ext-dirname)
   - [L_builtin ext dsv](#l_builtin-ext-dsv)
+  - [L_builtin ext echo](#l_builtin-ext-echo)
   - [L_builtin ext enable_mypid](#l_builtin-ext-enable_mypid)
   - [L_builtin ext false](#l_builtin-ext-false)
   - [L_builtin ext fdflags](#l_builtin-ext-fdflags)
@@ -46,7 +54,6 @@
   - [L_builtin ext mkdir](#l_builtin-ext-mkdir)
   - [L_builtin ext mkfifo](#l_builtin-ext-mkfifo)
   - [L_builtin ext mktemp](#l_builtin-ext-mktemp)
-  - [L_builtin ext echo](#l_builtin-ext-echo)
   - [L_builtin ext pathchk](#l_builtin-ext-pathchk)
   - [L_builtin ext print](#l_builtin-ext-print)
   - [L_builtin ext printenv](#l_builtin-ext-printenv)
@@ -69,61 +76,59 @@
   - [L_builtin ext unlink](#l_builtin-ext-unlink)
   - [L_builtin ext whoami](#l_builtin-ext-whoami)
 - [L_builtin fcntl](#l_builtin-fcntl)
-  - [L_builtin fcntl getfl](#l_builtin-fcntl-getfl)
-  - [L_builtin fcntl setfl](#l_builtin-fcntl-setfl)
-  - [L_builtin fcntl getfd](#l_builtin-fcntl-getfd)
-  - [L_builtin fcntl setfd](#l_builtin-fcntl-setfd)
   - [L_builtin fcntl dup](#l_builtin-fcntl-dup)
+  - [L_builtin fcntl getfd](#l_builtin-fcntl-getfd)
+  - [L_builtin fcntl getfl](#l_builtin-fcntl-getfl)
   - [L_builtin fcntl list](#l_builtin-fcntl-list)
+  - [L_builtin fcntl setfd](#l_builtin-fcntl-setfd)
+  - [L_builtin fcntl setfl](#l_builtin-fcntl-setfl)
+- [L_builtin flock](#l_builtin-flock)
 - [L_builtin listen](#l_builtin-listen)
+- [L_builtin lseek](#l_builtin-lseek)
 - [L_builtin lua](#l_builtin-lua)
 - [L_builtin memfd](#l_builtin-memfd)
 - [L_builtin mutex](#l_builtin-mutex)
-  - [L_builtin mutex create](#l_builtin-mutex-create)
-  - [L_builtin mutex open](#l_builtin-mutex-open)
-  - [L_builtin mutex lock](#l_builtin-mutex-lock)
-  - [L_builtin mutex unlock](#l_builtin-mutex-unlock)
   - [L_builtin mutex close](#l_builtin-mutex-close)
+  - [L_builtin mutex create](#l_builtin-mutex-create)
   - [L_builtin mutex destroy](#l_builtin-mutex-destroy)
+  - [L_builtin mutex lock](#l_builtin-mutex-lock)
+  - [L_builtin mutex open](#l_builtin-mutex-open)
+  - [L_builtin mutex unlock](#l_builtin-mutex-unlock)
 - [L_builtin pipe](#l_builtin-pipe)
 - [L_builtin poll](#l_builtin-poll)
 - [L_builtin ppoll](#l_builtin-ppoll)
+- [L_builtin read](#l_builtin-read)
 - [L_builtin recv](#l_builtin-recv)
 - [L_builtin replace](#l_builtin-replace)
+- [L_builtin run](#l_builtin-run)
 - [L_builtin sedvar](#l_builtin-sedvar)
 - [L_builtin semaphore](#l_builtin-semaphore)
-  - [L_builtin semaphore create](#l_builtin-semaphore-create)
-  - [L_builtin semaphore open](#l_builtin-semaphore-open)
-  - [L_builtin semaphore wait](#l_builtin-semaphore-wait)
-  - [L_builtin semaphore post](#l_builtin-semaphore-post)
   - [L_builtin semaphore close](#l_builtin-semaphore-close)
+  - [L_builtin semaphore create](#l_builtin-semaphore-create)
   - [L_builtin semaphore destroy](#l_builtin-semaphore-destroy)
+  - [L_builtin semaphore open](#l_builtin-semaphore-open)
+  - [L_builtin semaphore post](#l_builtin-semaphore-post)
+  - [L_builtin semaphore wait](#l_builtin-semaphore-wait)
 - [L_builtin send](#l_builtin-send)
-- [L_builtin shutdown](#l_builtin-shutdown)
-- [L_builtin sigmask](#l_builtin-sigmask)
-- [L_builtin sigunmask](#l_builtin-sigunmask)
-- [L_builtin sleep](#l_builtin-sleep)
 - [L_builtin shm](#l_builtin-shm)
   - [L_builtin shm bind](#l_builtin-shm-bind)
-  - [L_builtin shm rm](#l_builtin-shm-rm)
-  - [L_builtin shm unbind](#l_builtin-shm-unbind)
-  - [L_builtin shm drop](#l_builtin-shm-drop)
   - [L_builtin shm clear](#l_builtin-shm-clear)
+  - [L_builtin shm drop](#l_builtin-shm-drop)
   - [L_builtin shm info](#l_builtin-shm-info)
   - [L_builtin shm ls](#l_builtin-shm-ls)
+  - [L_builtin shm rm](#l_builtin-shm-rm)
   - [L_builtin shm sync](#l_builtin-shm-sync)
-- [L_builtin splice](#l_builtin-splice)
+  - [L_builtin shm unbind](#l_builtin-shm-unbind)
+- [L_builtin shutdown](#l_builtin-shutdown)
+- [L_builtin sigmask](#l_builtin-sigmask)
 - [L_builtin signalfd](#l_builtin-signalfd)
+- [L_builtin sigunmask](#l_builtin-sigunmask)
+- [L_builtin sleep](#l_builtin-sleep)
+- [L_builtin splice](#l_builtin-splice)
 - [L_builtin timerfd](#l_builtin-timerfd)
   - [L_builtin timerfd create](#l_builtin-timerfd-create)
-- [L_builtin lseek](#l_builtin-lseek)
-- [L_builtin barrier](#l_builtin-barrier)
-  - [L_builtin barrier create](#l_builtin-barrier-create)
-  - [L_builtin barrier open](#l_builtin-barrier-open)
-  - [L_builtin barrier wait](#l_builtin-barrier-wait)
-  - [L_builtin barrier close](#l_builtin-barrier-close)
-  - [L_builtin barrier reset](#l_builtin-barrier-reset)
-  - [L_builtin barrier destroy](#l_builtin-barrier-destroy)
+- [L_builtin version](#l_builtin-version)
+- [L_builtin write](#l_builtin-write)
 
 ### `L_builtin accept`
 
@@ -155,17 +160,149 @@ Examples:
   exec {CFD}>&- {LFD}>&-
 ```
 
-### `L_builtin capture`
+### `L_builtin barrier`
 
 ```
-L_builtin run: usage: <command> [args...]
+L_builtin barrier: usage: create [-n NAME] BARRIER COUNT | open BARRIER NAME | wait BARRIER [-t SECS] [-n] | close BARRIER | reset BARRIER | destroy BARRIER
 
-Run <command> through the shell.
-The command is always executed through the shell, so external commands,
-shell functions, builtins, and L_builtin subcommands all work uniformly.
-Words are single-quoted before being joined, so arguments reach the
-command verbatim (no re-splitting or globbing).
-Use with -v VAR to capture the command's stdout into a shell variable.
+Process synchronization barriers backed by shared memory.
+
+Subcommands:
+  create [-n NAME] BARRIER COUNT
+                          Create a barrier for COUNT processes. BARRIER receives an
+                          opaque integer handle. Without -n the barrier lives in
+                          anonymous shared memory (shared across forked processes,
+                          such as a background job started with &). With -n NAME
+                          it is backed by a named shared-memory object (shm_open)
+                          that unrelated processes can open.
+  open BARRIER NAME           Open an existing named barrier NAME and assign its
+                          handle to BARRIER.
+  wait BARRIER [-t SECS] [-n]  Block until the barrier is satisfied. -t SECS sets a
+                          timeout in seconds (e.g. 1.123); -n is non-blocking and
+                          returns immediately (0 if satisfied, non-zero if not).
+  close BARRIER               Unmap the barrier in the current process without
+                          destroying the shared resource.
+  reset BARRIER               Reset the barrier for reuse (clears the satisfied state
+                          and the arrival count).
+  destroy BARRIER             Unmap and, for a named barrier, unlink its shared-memory
+                          object globally.
+
+The bash variable holds only an opaque integer; the underlying shared-memory
+pointer is never exposed.
+
+Examples:
+  alias b='L_builtin barrier'
+  b create var 2
+  ( b wait $var; echo waited ) &
+  b wait $var; echo also waited
+  b create -n /my_barrier v 3
+  b open w /my_barrier
+  b wait w -t 1.123
+  b reset v
+  b destroy v
+```
+
+#### `L_builtin barrier close`
+
+```
+L_builtin barrier close: usage: close BARRIER
+
+Unmap the barrier BARRIER in the current process without destroying the shared
+resource. Other processes keep their mappings.
+
+Examples:
+  L_builtin barrier close $var
+```
+
+#### `L_builtin barrier create`
+
+```
+L_builtin barrier create: usage: create [-n NAME] BARRIER COUNT
+
+Create a barrier for COUNT processes.
+
+BARRIER receives an opaque integer handle (a bash variable). Without -n the barrier
+is created in anonymous shared memory and is shared across forked processes
+(for example a background job started with &). With -n NAME it is backed by a
+named shared-memory object (shm_open) that unrelated processes can later open.
+
+Examples:
+  L_builtin barrier create var 2
+  L_builtin barrier create -n /my_barrier v 3
+```
+
+#### `L_builtin barrier destroy`
+
+```
+L_builtin barrier destroy: usage: destroy BARRIER
+
+Destroy the barrier BARRIER: unmap it in the current process and, for a named
+barrier, unlink its shared-memory object globally.
+
+Examples:
+  L_builtin barrier destroy $var
+```
+
+#### `L_builtin barrier open`
+
+```
+L_builtin barrier open: usage: open BARRIER NAME
+
+Open an existing named barrier NAME and assign its handle to BARRIER.
+
+The named barrier must already exist (created by another process with
+'create -n NAME').
+
+Examples:
+  L_builtin barrier open w /my_barrier
+```
+
+#### `L_builtin barrier reset`
+
+```
+L_builtin barrier reset: usage: reset BARRIER
+
+Reset the barrier BARRIER for reuse: clears the satisfied state and the arrival
+count so a fresh round can begin.
+
+Examples:
+  L_builtin barrier reset $var
+```
+
+#### `L_builtin barrier wait`
+
+```
+L_builtin barrier wait: usage: wait [-t SECS] [-n] BARRIER
+
+Wait until the barrier BARRIER is satisfied.
+
+Options:
+  -t SECS   Timeout in seconds (e.g. 1.123); if the barrier is not satisfied
+            within SECS, fail.
+  -n        Non-blocking: return immediately, 0 if the barrier is already
+            satisfied, non-zero otherwise.
+
+Examples:
+  L_builtin barrier wait $var
+  L_builtin barrier wait -t 1.123 $var
+  L_builtin barrier wait -n $var
+```
+
+### `L_builtin close`
+
+```
+L_builtin close: usage: FD...
+
+Close the file descriptor(s) FD... (close(2)).
+
+Exit Status:
+   Returns success unless any FD is invalid or close(2) fails.
+
+Examples:
+   L_builtin close 3
+   L_builtin close $MYFD
+   L_builtin close 3 4 5
+   L_builtin close $FD1 $FD2 $FD3
 ```
 
 ### `L_builtin connect`
@@ -199,22 +336,16 @@ Available subcommands:
 Use 'L_builtin core <subcommand> --help' for more information.
 ```
 
-#### `L_builtin core ls`
-
-```
-runs coreutils `ls` command
-```
-
-#### `L_builtin core stat`
-
-```
-runs coreutils `stat` command
-```
-
 #### `L_builtin core dirname`
 
 ```
 runs coreutils `dirname` command
+```
+
+#### `L_builtin core ls`
+
+```
+runs coreutils `ls` command
 ```
 
 #### `L_builtin core rm`
@@ -223,116 +354,22 @@ runs coreutils `dirname` command
 runs coreutils `rm` command
 ```
 
-#### `L_builtin core tee`
-
-```
-runs coreutils `tee` command
-```
-
 #### `L_builtin core sleep`
 
 ```
 runs coreutils `sleep` command
 ```
 
-### `L_builtin eventfd`
+#### `L_builtin core stat`
 
 ```
-L_builtin eventfd: usage: create [-n] [-s] [-C] VAR [INITVAL] | write FD [VALUE] | read FD [VAR]
-
-Create an eventfd(2) counting file descriptor and read/write its 64-bit counter.
-
-Subcommands:
-  create [-n] [-s] [-C] VAR [INITVAL]
-                        Create an eventfd(2) and store its file descriptor in the
-                        shell variable VAR. EFD_CLOEXEC is set by default; -C
-                        clears it. INITVAL initializes the counter (default 0).
-  write FD [VALUE]      Write VALUE (a 64-bit unsigned integer, default 1) into
-                        the eventfd FD, adding it to the counter. VALUE is carried
-                        as 8 bytes in native byte order.
-  read FD [VAR]         Read the eventfd FD counter (an 8-byte native-endian
-                         u64), resetting it to 0. If the counter was 0, a blocking
-                         fd blocks; create the fd with -n (EFD_NONBLOCK) for
-                         non-blocking operation (read then fails with EAGAIN).
-                         Without EFD_SEMAPHORE read returns the full counter; with
-                         it read returns 1 and decrements by 1. If VAR is given the
-                          counter value is stored there, otherwise it is printed.
-
-
-The file descriptor is a real OS descriptor (as with the `close`, `lseek`,
-`timerfd` and `signalfd` subcommands), so it can be polled through the `poll`/
-`ppoll` subcommands and closed with `close`.
-
-Exit Status:
-  Returns success unless eventfd(2) fails or the variable cannot be bound.
-
-Examples:
-  L_builtin eventfd create -n ev          # counter=0, non-blocking, fd in $ev
-  L_builtin eventfd write "$ev" 5        # counter += 5
-  L_builtin eventfd read "$ev" val       # val=5, counter reset to 0
-  L_builtin eventfd write "$ev" 1        # counter += 1
-  L_builtin eventfd read "$ev"           # prints 1
-  exec {ev}<&-
+runs coreutils `stat` command
 ```
 
-#### `L_builtin eventfd create`
+#### `L_builtin core tee`
 
 ```
-L_builtin eventfd create: usage: create [-n] [-s] [-C] VAR [INITVAL]
-
-Create an eventfd(2) and store its file descriptor in the shell variable VAR.
-
-Options:
-  -n   EFD_NONBLOCK (reads/writes do not block).
-  -s   EFD_SEMAPHORE: read returns 1 instead of the counter value.
-  -C   Do not set EFD_CLOEXEC (it is set by default).
-
-INITVAL initializes the 64-bit counter (default 0).
-
-Examples:
-  L_builtin eventfd create ev
-  L_builtin eventfd create -n ev 5
-  L_builtin eventfd create -s -n ev
-  L_builtin eventfd create -C ev 100
-```
-
-#### `L_builtin eventfd write`
-
-```
-L_builtin eventfd write: usage: write FD [VALUE]
-
-Write VALUE into the eventfd FD, adding it to the 64-bit counter.
-
-VALUE is a 64-bit unsigned integer carried as 8 bytes in native byte order
-(default 1). A successful write adds VALUE to the counter. Writing a non-zero
-value that would overflow the counter blocks (or, for a non-blocking fd, fails
-with EAGAIN); writing the value 2**64-1 (0xFFFFFFFFFFFFFFFF) when the counter is
-non-zero fails with EINVAL.
-
-Examples:
-  L_builtin eventfd write "$ev"
-  L_builtin eventfd write "$ev" 42
-```
-
-#### `L_builtin eventfd read`
-
-```
-L_builtin eventfd read: usage: read FD [VAR]
-
-Read the 64-bit counter from the eventfd FD, resetting it to 0.
-
-Without EFD_SEMAPHORE, read returns the whole counter value and resets it to 0.
-With EFD_SEMAPHORE (created via 'create -s'), read returns 1 and decrements the
-counter by 1. If the counter is 0, a blocking fd blocks until it becomes
-non-zero; create the fd with -n (EFD_NONBLOCK) for non-blocking operation (read
-then fails with EAGAIN).
-
-If VAR is given, the counter value is stored in the shell variable VAR as an
-integer. Otherwise it is printed to stdout.
-
-Examples:
-  L_builtin eventfd read "$ev" val
-  L_builtin eventfd read "$ev"
+runs coreutils `tee` command
 ```
 
 ### `L_builtin epoll`
@@ -385,22 +422,6 @@ Examples:
    exec {in[0]}<&- {in[1]}>&- {t}<&- {ep}<&-
 ```
 
-#### `L_builtin epoll create`
-
-```
-L_builtin epoll create: usage: create [-C] FD_VAR
-
-Create an epoll instance (epoll_create1(2)) and store its file descriptor in
-the shell variable FD_VAR. The fd is close-on-exec by default; -C clears it so
-the fd is inherited by child processes. The fd becomes readable (POLLIN) when
-any watched fd is ready, so it can be polled together with other fds (see
-poll/ppoll).
-
-Examples:
-   L_builtin epoll create ep
-   L_builtin epoll create -C ep
-```
-
 #### `L_builtin epoll add`
 
 ```
@@ -417,17 +438,20 @@ Examples:
    L_builtin epoll add $ep 3 rt       # edge-triggered read on fd 3
 ```
 
-#### `L_builtin epoll mod`
+#### `L_builtin epoll create`
 
 ```
-L_builtin epoll mod: usage: mod EPOLLFD FD [events]
+L_builtin epoll create: usage: create [-C] FD_VAR
 
-Change the event mask of FD on EPOLLFD via epoll_ctl(2) EPOLL_CTL_MOD.
-
-EVENTS defaults to 'r'. See `add` for the token meaning.
+Create an epoll instance (epoll_create1(2)) and store its file descriptor in
+the shell variable FD_VAR. The fd is close-on-exec by default; -C clears it so
+the fd is inherited by child processes. The fd becomes readable (POLLIN) when
+any watched fd is ready, so it can be polled together with other fds (see
+poll/ppoll).
 
 Examples:
-   L_builtin epoll mod $ep 3 rw       # now also watch fd 3 for writes
+   L_builtin epoll create ep
+   L_builtin epoll create -C ep
 ```
 
 #### `L_builtin epoll del`
@@ -440,6 +464,19 @@ argument; a trailing token is rejected as 'too many arguments'.
 
 Examples:
    L_builtin epoll del $ep 3
+```
+
+#### `L_builtin epoll mod`
+
+```
+L_builtin epoll mod: usage: mod EPOLLFD FD [events]
+
+Change the event mask of FD on EPOLLFD via epoll_ctl(2) EPOLL_CTL_MOD.
+
+EVENTS defaults to 'r'. See `add` for the token meaning.
+
+Examples:
+   L_builtin epoll mod $ep 3 rw       # now also watch fd 3 for writes
 ```
 
 #### `L_builtin epoll wait`
@@ -461,6 +498,118 @@ Examples:
    L_builtin epoll wait -v ready $ep
    for fd in "${!ready[@]}"; do echo "fd $fd: ${ready[$fd]}"; done
    L_builtin epoll wait -t 2.5 -v r $ep   # timeout after 2.5s
+```
+
+### `L_builtin eventfd`
+
+```
+L_builtin eventfd: usage: create [-n] [-s] [-C] VAR [INITVAL] | write FD [VALUE] | read FD [VAR]
+
+Create an eventfd(2) counting file descriptor and read/write its 64-bit counter.
+
+Subcommands:
+  create [-n] [-s] [-C] VAR [INITVAL]
+                        Create an eventfd(2) and store its file descriptor in the
+                        shell variable VAR. EFD_CLOEXEC is set by default; -C
+                        clears it. INITVAL initializes the counter (default 0).
+  write FD [VALUE]      Write VALUE (a 64-bit unsigned integer, default 1) into
+                        the eventfd FD, adding it to the counter. VALUE is carried
+                        as 8 bytes in native byte order.
+  read FD [VAR]         Read the eventfd FD counter (an 8-byte native-endian
+                         u64), resetting it to 0. If the counter was 0, a blocking
+                         fd blocks; create the fd with -n (EFD_NONBLOCK) for
+                         non-blocking operation (read then fails with EAGAIN).
+                         Without EFD_SEMAPHORE read returns the full counter; with
+                         it read returns 1 and decrements by 1. If VAR is given the
+                          counter value is stored there, otherwise it is printed.
+
+
+The file descriptor is a real OS descriptor (as with the `close`, `lseek`,
+`timerfd` and `signalfd` subcommands), so it can be polled through the `poll`/
+`ppoll` subcommands and closed with `close`.
+
+Exit Status:
+  Returns success unless eventfd(2) fails or the variable cannot be bound.
+
+Examples:
+  L_builtin eventfd create -n ev          # counter=0, non-blocking, fd in $ev
+  L_builtin eventfd write "$ev" 5        # counter += 5
+  L_builtin eventfd read "$ev" val       # val=5, counter reset to 0
+  L_builtin eventfd write "$ev" 1        # counter += 1
+  L_builtin eventfd read "$ev"           # prints 1
+  exec {ev}<&-
+
+  # Signal a child via epoll when a producer increments the counter
+  L_builtin eventfd create -n ev
+  L_builtin epoll create ep
+  L_builtin epoll add "$ep" "$ev" r
+  (                                       # producer
+      sleep 0.2
+      L_builtin eventfd write "$ev" 3    # counter = 3
+  ) &
+  L_builtin epoll wait -t 1 -v ready "$ep"
+  L_builtin eventfd read "$ev" n        # n = 3
+  exec {ev}<&- {ep}<&-
+```
+
+#### `L_builtin eventfd create`
+
+```
+L_builtin eventfd create: usage: create [-n] [-s] [-C] VAR [INITVAL]
+
+Create an eventfd(2) and store its file descriptor in the shell variable VAR.
+
+Options:
+  -n   EFD_NONBLOCK (reads/writes do not block).
+  -s   EFD_SEMAPHORE: read returns 1 instead of the counter value.
+  -C   Do not set EFD_CLOEXEC (it is set by default).
+
+INITVAL initializes the 64-bit counter (default 0).
+
+Examples:
+  L_builtin eventfd create ev
+  L_builtin eventfd create -n ev 5
+  L_builtin eventfd create -s -n ev
+  L_builtin eventfd create -C ev 100
+```
+
+#### `L_builtin eventfd read`
+
+```
+L_builtin eventfd read: usage: read FD [VAR]
+
+Read the 64-bit counter from the eventfd FD, resetting it to 0.
+
+Without EFD_SEMAPHORE, read returns the whole counter value and resets it to 0.
+With EFD_SEMAPHORE (created via 'create -s'), read returns 1 and decrements the
+counter by 1. If the counter is 0, a blocking fd blocks until it becomes
+non-zero; create the fd with -n (EFD_NONBLOCK) for non-blocking operation (read
+then fails with EAGAIN).
+
+If VAR is given, the counter value is stored in the shell variable VAR as an
+integer. Otherwise it is printed to stdout.
+
+Examples:
+  L_builtin eventfd read "$ev" val
+  L_builtin eventfd read "$ev"
+```
+
+#### `L_builtin eventfd write`
+
+```
+L_builtin eventfd write: usage: write FD [VALUE]
+
+Write VALUE into the eventfd FD, adding it to the 64-bit counter.
+
+VALUE is a 64-bit unsigned integer carried as 8 bytes in native byte order
+(default 1). A successful write adds VALUE to the counter. Writing a non-zero
+value that would overflow the counter blocks (or, for a non-blocking fd, fails
+with EAGAIN); writing the value 2**64-1 (0xFFFFFFFFFFFFFFFF) when the counter is
+non-zero fails with EINVAL.
+
+Examples:
+  L_builtin eventfd write "$ev"
+  L_builtin eventfd write "$ev" 42
 ```
 
 ### `L_builtin ext`
@@ -689,6 +838,17 @@ removed.
 
 The return value is 0 unless an invalid option is supplied or the ARRAYNAME
 argument is invalid or readonly.
+```
+
+#### `L_builtin ext echo`
+
+```
+L_builtin ext echo: usage: echo [args]
+
+Display arguments.
+
+Print the arguments to the standard output separated
+by space characters and terminated with a newline.
 ```
 
 #### `L_builtin ext enable_mypid`
@@ -961,17 +1121,6 @@ Any PREFIX supplied with -t is ignored if TEMPLATE is supplied.
 
 The return status is true if the file or directory was created successfully;
 false if an error occurs or VAR is invalid or readonly.
-```
-
-#### `L_builtin ext echo`
-
-```
-L_builtin ext echo: usage: echo [args]
-
-Display arguments.
-
-Print the arguments to the standard output separated
-by space characters and terminated with a newline.
 ```
 
 #### `L_builtin ext pathchk`
@@ -1293,6 +1442,42 @@ Examples:
   L_builtin fcntl list open
 ```
 
+#### `L_builtin fcntl dup`
+
+```
+L_builtin fcntl dup: usage: dup [-v VAR] [-c] FD [START]
+
+Duplicate FD via fcntl(2) F_DUPFD (or F_DUPFD_CLOEXEC with -c).
+
+START specifies the minimum file descriptor to allocate (default 0).
+Without -v, the new fd is printed; with -v VAR it is stored in VAR.
+
+Options:
+  -c   Use F_DUPFD_CLOEXEC instead of F_DUPFD (the new fd has close-on-exec
+       set).
+  -v   Store the result in VAR instead of printing.
+
+Examples:
+  L_builtin fcntl dup 3
+  L_builtin fcntl dup -c 3
+  L_builtin fcntl dup -v newfd 3 256
+```
+
+#### `L_builtin fcntl getfd`
+
+```
+L_builtin fcntl getfd: usage: getfd [-v VAR] FD
+
+Read the file descriptor flags of FD via fcntl(2) F_GETFD.
+
+Without -v, the decoded flag names and raw integer value are printed.
+With -v VAR, the raw integer value is stored in VAR.
+
+Examples:
+  L_builtin fcntl getfd 3
+  L_builtin fcntl getfd -v flags 3
+```
+
 #### `L_builtin fcntl getfl`
 
 ```
@@ -1306,6 +1491,41 @@ With -v VAR, the raw integer value is stored in the shell variable VAR.
 Examples:
   L_builtin fcntl getfl 3
   L_builtin fcntl getfl -v flags 3
+```
+
+#### `L_builtin fcntl list`
+
+```
+L_builtin fcntl list: usage: list [open|fd]
+
+Enumerate the internal fcntl flag lookup tables used to translate flag names
+to numeric values.
+
+Without an argument, both the open(2) status flag table and the file
+descriptor flag table are printed.  With `open` or `fd`, only that table is
+printed.  Each output line is `TABLE: NAME=VALUE`, where VALUE is the numeric
+flag (a value may be 0, e.g. O_RDONLY).
+
+Examples:
+  L_builtin fcntl list
+  L_builtin fcntl list open
+  L_builtin fcntl list fd
+```
+
+#### `L_builtin fcntl setfd`
+
+```
+L_builtin fcntl setfd: usage: setfd FD FLAGS
+
+Set the file descriptor flags of FD via fcntl(2) F_SETFD.
+
+FLAGS is a comma-separated list of fd flag names.  Currently the only
+supported flag is 'cloexec' (FD_CLOEXEC).  An empty string clears all
+fd flags.
+
+Examples:
+  L_builtin fcntl setfd 3 cloexec
+  L_builtin fcntl setfd 3 ''
 ```
 
 #### `L_builtin fcntl setfl`
@@ -1328,75 +1548,31 @@ Examples:
   L_builtin fcntl setfl 3 ''
 ```
 
-#### `L_builtin fcntl getfd`
+### `L_builtin flock`
 
 ```
-L_builtin fcntl getfd: usage: getfd [-v VAR] FD
+L_builtin flock: usage: [-x|-e] [-s] [-u] [-n] FD
 
-Read the file descriptor flags of FD via fcntl(2) F_GETFD.
-
-Without -v, the decoded flag names and raw integer value are printed.
-With -v VAR, the raw integer value is stored in VAR.
-
-Examples:
-  L_builtin fcntl getfd 3
-  L_builtin fcntl getfd -v flags 3
-```
-
-#### `L_builtin fcntl setfd`
-
-```
-L_builtin fcntl setfd: usage: setfd FD FLAGS
-
-Set the file descriptor flags of FD via fcntl(2) F_SETFD.
-
-FLAGS is a comma-separated list of fd flag names.  Currently the only
-supported flag is 'cloexec' (FD_CLOEXEC).  An empty string clears all
-fd flags.
-
-Examples:
-  L_builtin fcntl setfd 3 cloexec
-  L_builtin fcntl setfd 3 ''
-```
-
-#### `L_builtin fcntl dup`
-
-```
-L_builtin fcntl dup: usage: dup [-v VAR] [-c] FD [START]
-
-Duplicate FD via fcntl(2) F_DUPFD (or F_DUPFD_CLOEXEC with -c).
-
-START specifies the minimum file descriptor to allocate (default 0).
-Without -v, the new fd is printed; with -v VAR it is stored in VAR.
+Apply flock(2) to an existing file descriptor FD (fd-only: the fd must
+already be open, e.g. a memfd created with `L_builtin memfd VAR`).
 
 Options:
-  -c   Use F_DUPFD_CLOEXEC instead of F_DUPFD (the new fd has close-on-exec
-       set).
-  -v   Store the result in VAR instead of printing.
+  -x, -e   LOCK_EX (exclusive lock)
+  -s       LOCK_SH (shared lock)
+  -u       LOCK_UN (unlock)
+  -n       LOCK_NB: non-blocking; fail immediately instead of waiting
+
+Exactly one of -x/-e, -s, or -u selects the operation (default -x when
+none is given). -n may be combined with -x/-s/-e.
+
+Exit Status:
+  Returns success unless the fd is invalid, the operation is unknown, or
+  flock(2) fails (a non-blocking lock that would block returns failure).
 
 Examples:
-  L_builtin fcntl dup 3
-  L_builtin fcntl dup -c 3
-  L_builtin fcntl dup -v newfd 3 256
-```
-
-#### `L_builtin fcntl list`
-
-```
-L_builtin fcntl list: usage: list [open|fd]
-
-Enumerate the internal fcntl flag lookup tables used to translate flag names
-to numeric values.
-
-Without an argument, both the open(2) status flag table and the file
-descriptor flag table are printed.  With `open` or `fd`, only that table is
-printed.  Each output line is `TABLE: NAME=VALUE`, where VALUE is the numeric
-flag (a value may be 0, e.g. O_RDONLY).
-
-Examples:
-  L_builtin fcntl list
-  L_builtin fcntl list open
-  L_builtin fcntl list fd
+  L_builtin flock -x 3
+  L_builtin flock -n -s $MYFD
+  L_builtin flock -u 3
 ```
 
 ### `L_builtin listen`
@@ -1424,6 +1600,25 @@ Examples:
   L_builtin listen -p PORT LFD 127.0.0.1 0
   echo "listening on fd $LFD (port $PORT); next run: L_builtin accept CFD ADDR $LFD"
   exec {LFD}>&-
+```
+
+### `L_builtin lseek`
+
+```
+L_builtin lseek: usage: [-v var] fd offset [whence]
+
+Adjust the file offset of file descriptor FD to OFFSET bytes
+according to WHENCE.
+
+WHENCE can be one of:
+  0 or SET  Seek from the beginning (default)
+  1 or CUR  Seek from the current position
+  2 or END  Seek from the end
+
+If -v VAR is provided, the new offset is stored in VAR.
+
+Exit Status:
+Returns success unless an error occurs during lseek or variable binding.
 ```
 
 ### `L_builtin lua`
@@ -1600,6 +1795,18 @@ Examples:
   m destroy v
 ```
 
+#### `L_builtin mutex close`
+
+```
+L_builtin mutex close: usage: close MUTEX
+
+Unmap the mutex MUTEX in the current process without destroying the shared
+resource. Other processes keep their mappings.
+
+Examples:
+  L_builtin mutex close $var
+```
+
 #### `L_builtin mutex create`
 
 ```
@@ -1621,18 +1828,16 @@ Examples:
   L_builtin mutex create -n -r /my_mutex v
 ```
 
-#### `L_builtin mutex open`
+#### `L_builtin mutex destroy`
 
 ```
-L_builtin mutex open: usage: open MUTEX NAME
+L_builtin mutex destroy: usage: destroy MUTEX
 
-Open an existing named mutex NAME and assign its handle to MUTEX.
-
-The named mutex must already exist (created by another process with
-'create -n NAME').
+Destroy the mutex MUTEX: unmap it in the current process and, for a named mutex,
+unlink its shared-memory object globally.
 
 Examples:
-  L_builtin mutex open w /my_mutex
+  L_builtin mutex destroy $var
 ```
 
 #### `L_builtin mutex lock`
@@ -1654,6 +1859,20 @@ Examples:
   L_builtin mutex lock $var -t 1.123
 ```
 
+#### `L_builtin mutex open`
+
+```
+L_builtin mutex open: usage: open MUTEX NAME
+
+Open an existing named mutex NAME and assign its handle to MUTEX.
+
+The named mutex must already exist (created by another process with
+'create -n NAME').
+
+Examples:
+  L_builtin mutex open w /my_mutex
+```
+
 #### `L_builtin mutex unlock`
 
 ```
@@ -1667,30 +1886,6 @@ is useful as a cleanup at the end of a script.
 Examples:
   L_builtin mutex unlock $var
   L_builtin mutex unlock -a
-```
-
-#### `L_builtin mutex close`
-
-```
-L_builtin mutex close: usage: close MUTEX
-
-Unmap the mutex MUTEX in the current process without destroying the shared
-resource. Other processes keep their mappings.
-
-Examples:
-  L_builtin mutex close $var
-```
-
-#### `L_builtin mutex destroy`
-
-```
-L_builtin mutex destroy: usage: destroy MUTEX
-
-Destroy the mutex MUTEX: unmap it in the current process and, for a named mutex,
-unlink its shared-memory object globally.
-
-Examples:
-  L_builtin mutex destroy $var
 ```
 
 ### `L_builtin pipe`
@@ -1790,6 +1985,28 @@ Exit Status:
 Returns success if ppoll succeeds. Returns failure on system errors.
 ```
 
+### `L_builtin read`
+
+```
+L_builtin read: usage: [-f format] [-v READ_VAR] [-n] [-i] FD SIZE
+
+Read up to SIZE bytes from the file descriptor FD via read(2). Works on any fd
+(pipes, files, sockets, etc.), not just sockets.
+
+Supported formats (-f):
+  raw   Store raw bytes directly into READ_VAR (null-byte unsafe) (default)
+  hex   Store read bytes as hexadecimal string into READ_VAR (null-byte safe)
+
+If -n is provided, the fd is temporarily set non-blocking for this call.
+If no data is currently available, it returns success with an empty value.
+
+If -i is provided, the read does not retry on signal interruption (EINTR)
+and instead fails. By default, read retries on EINTR.
+
+Exit Status:
+Returns success unless read fails or variable binding fails.
+```
+
 ### `L_builtin recv`
 
 ```
@@ -1828,6 +2045,19 @@ Replacement is global: every match within each value is replaced.
 Examples:
   v='foobar'; L_builtin replace v 'o' '0'   # v becomes 'f00bar'
   arr=( foo bar ); L_builtin replace arr 'a' '@'
+```
+
+### `L_builtin run`
+
+```
+L_builtin run: usage: <command> [args...]
+
+Run <command> through the shell.
+The command is always executed through the shell, so external commands,
+shell functions, builtins, and L_builtin subcommands all work uniformly.
+Words are single-quoted before being joined, so arguments reach the
+command verbatim (no re-splitting or globbing).
+Use with -v VAR to capture the command's stdout into a shell variable.
 ```
 
 ### `L_builtin sedvar`
@@ -1900,6 +2130,18 @@ Examples:
   s destroy v
 ```
 
+#### `L_builtin semaphore close`
+
+```
+L_builtin semaphore close: usage: close SEMAPHORE
+
+Release this process's reference to the semaphore without destroying the shared
+resource. Other processes keep their references.
+
+Examples:
+  L_builtin semaphore close $var
+```
+
 #### `L_builtin semaphore create`
 
 ```
@@ -1918,6 +2160,18 @@ Examples:
   L_builtin semaphore create -n /my_sem v 3
 ```
 
+#### `L_builtin semaphore destroy`
+
+```
+L_builtin semaphore destroy: usage: destroy SEMAPHORE
+
+Destroy the semaphore: for an anonymous semaphore, destroy and unmap it; for a
+named semaphore, close it and unlink its kernel object globally.
+
+Examples:
+  L_builtin semaphore destroy $var
+```
+
 #### `L_builtin semaphore open`
 
 ```
@@ -1930,6 +2184,17 @@ The named semaphore must already exist (created by another process with
 
 Examples:
   L_builtin semaphore open w /my_sem
+```
+
+#### `L_builtin semaphore post`
+
+```
+L_builtin semaphore post: usage: post SEMAPHORE
+
+Increment the semaphore SEMAPHORE, waking one waiter if any are blocked.
+
+Examples:
+  L_builtin semaphore post $var
 ```
 
 #### `L_builtin semaphore wait`
@@ -1949,41 +2214,6 @@ Examples:
   L_builtin semaphore wait $var
   L_builtin semaphore wait $var -n
   L_builtin semaphore wait $var -t 1.123
-```
-
-#### `L_builtin semaphore post`
-
-```
-L_builtin semaphore post: usage: post SEMAPHORE
-
-Increment the semaphore SEMAPHORE, waking one waiter if any are blocked.
-
-Examples:
-  L_builtin semaphore post $var
-```
-
-#### `L_builtin semaphore close`
-
-```
-L_builtin semaphore close: usage: close SEMAPHORE
-
-Release this process's reference to the semaphore without destroying the shared
-resource. Other processes keep their references.
-
-Examples:
-  L_builtin semaphore close $var
-```
-
-#### `L_builtin semaphore destroy`
-
-```
-L_builtin semaphore destroy: usage: destroy SEMAPHORE
-
-Destroy the semaphore: for an anonymous semaphore, destroy and unmap it; for a
-named semaphore, close it and unlink its kernel object globally.
-
-Examples:
-  L_builtin semaphore destroy $var
 ```
 
 ### `L_builtin send`
@@ -2006,93 +2236,6 @@ is stored in SENT_VAR.
 
 Exit Status:
 Returns success unless send fails or variable binding fails.
-```
-
-### `L_builtin shutdown`
-
-```
-L_builtin shutdown: usage: FD [how]
-
-Close parts or all of a full-duplex connection on network socket FD.
-how can be one of:
-  RD or 0    Further receptions will be disallowed
-  WR or 1    Further transmissions will be disallowed
-  RDWR or 2  Further receptions and transmissions will be disallowed (default)
-
-Exit Status:
-Returns success unless shutdown fails.
-```
-
-### `L_builtin sigmask`
-
-```
-L_builtin sigmask: usage: [-s sigspec] [-u sigspec] [sigspec ...]
-
-Block or unblock signals.
-
-L_builtin sigmask [-s sigspec] [-u sigspec] [sigspec ...]
-
-Block or unblock signals in the shell process. Without options, it
-prints the current signal mask. -s blocks, -u unblocks.
-Use 'ALL' (case-insensitive) with -s or -u to block or unblock all
-signals respectively. Positional arguments are always blocked.
-
-Example:
-  trap 'cancel=1' INT TERM
-  L_builtin sigmask INT TERM
-  while ! cancel; do
-    echo 'critical step'
-    L_builtin sigunmask -s INT TERM sleep 1
-  done
-
-Exit Status:
-Returns success unless an invalid signal is provided or a system error occurs.
-```
-
-### `L_builtin sigunmask`
-
-```
-L_builtin sigunmask: usage: [-h] -s sigspec cmd [args...]
-
-Unblock signals and run a command.
-
-L_builtin sigunmask [-h] -s sigspec cmd [args...]
-
-Temporarily unblocks the specified signal and executes the command.
-Use 'ALL' (case-insensitive) with -s to unblock all signals.
-If the signal was pending, the trap is executed and the command is skipped.
-The command can be any shell command (builtin, function, or external).
-
-WARNING: There is a small window between unblocking and starting the command.
-If a signal arrives in this window, it may be delivered to the command itself
-rather than being caught by this builtin's check.
-
-Example:
-  trap 'cancel=1' INT TERM
-  L_builtin sigmask INT TERM
-  while ! cancel; do
-    echo 'critical step'
-    L_builtin sigunmask -s INT TERM sleep 1
-  done
-
-Exit Status:
-Returns the status of the command, or 128+signum if a signal was caught.
-```
-
-### `L_builtin sleep`
-
-```
-L_builtin sleep: usage: [-i] SECONDS
-
-Sleep for the specified number of SECONDS. SECONDS can be a duration string
-(e.g. `1s`, `500ms`, `1h30m`) or a floating-point number to request
-sub-second/microsecond-level precision.
-
-If -i is provided, the sleep will not automatically retry on signal interruption
-(EINTR). Instead, it will fail with an error. By default, sleep retries on EINTR.
-
-Exit Status:
-  Returns success unless sleep fails.
 ```
 
 ### `L_builtin shm`
@@ -2205,41 +2348,21 @@ Examples:
   v=( [foo]=bar [baz]=qux )  # associative array in shared memory 'mydb'
 ```
 
-#### `L_builtin shm rm`
+#### `L_builtin shm clear`
 
 ```
-L_builtin shm rm: usage: rm [-s NAME | -n NAME | -M NAME | -F PATH]
+L_builtin shm clear: usage: clear [-s NAME | -n NAME | -M NAME | -F PATH]
 
-Remove the whole shared database: unbind every variable this shell has bound to
-it, drop the registry entries, and unlink the backing object/file (for -s/-F).
+Wipe every variable's data from the selected database, leaving the backing
+object/file in place. Variables bound in this shell are left bound (they read as
+empty until re-added); use `rm` to also drop the backing.
 
-The database is selected by the same -s/-n/-F flags as 'bind'; with none given,
-the default 'DEFAULT' database is removed.
+The database is selected by the backing flags, or the default `DEFAULT`
+database when none are given.
 
 Examples:
-  L_builtin shm rm -s mydb   # remove shared memory 'mydb' entirely
-  L_builtin shm rm -n mymem  # remove the in-memory mapping 'mymem'
-  L_builtin shm rm          # remove the default 'DEFAULT' database
-```
-
-#### `L_builtin shm unbind`
-
-```
-L_builtin shm unbind: usage: unbind VAR_NAME [VAR_NAME...]
-
-Unbind the named variable(s) from this shell: drop the registry entry and detach
-the shared database. Unlike a plain unset, the variable's current value is
-preserved: it is snapshotted from the shared database and left in a plain (non-
-dynamic) bash variable, so the data survives the unbind. The database entry
-itself is left untouched; another process that has the variable bound may still
-read it.
-
-The store is found via each variable's existing binding; no backing flags are
-needed.
-
-Examples:
-  L_builtin shm unbind v         # stop sharing 'v' but keep its value locally
-  L_builtin shm unbind v w       # unbind 'v' and 'w', keeping their values
+  L_builtin shm clear -s mydb     # empty shared mem 'mydb', keep the object
+  L_builtin shm clear             # empty the default 'DEFAULT' database
 ```
 
 #### `L_builtin shm drop`
@@ -2258,23 +2381,6 @@ processes mapping the same store no longer see it. To destroy a whole store, use
 
 Examples:
   L_builtin shm drop v           # erase v's data and unbind it in this shell
-```
-
-#### `L_builtin shm clear`
-
-```
-L_builtin shm clear: usage: clear [-s NAME | -n NAME | -M NAME | -F PATH]
-
-Wipe every variable's data from the selected database, leaving the backing
-object/file in place. Variables bound in this shell are left bound (they read as
-empty until re-added); use `rm` to also drop the backing.
-
-The database is selected by the backing flags, or the default `DEFAULT`
-database when none are given.
-
-Examples:
-  L_builtin shm clear -s mydb     # empty shared mem 'mydb', keep the object
-  L_builtin shm clear             # empty the default 'DEFAULT' database
 ```
 
 #### `L_builtin shm info`
@@ -2305,6 +2411,23 @@ Databases are shown by their backing kind and name: 'shm:NAME' for POSIX shared
 memory, 'memfd:NAME' for in-memory, and the file path for -F databases.
 ```
 
+#### `L_builtin shm rm`
+
+```
+L_builtin shm rm: usage: rm [-s NAME | -n NAME | -M NAME | -F PATH]
+
+Remove the whole shared database: unbind every variable this shell has bound to
+it, drop the registry entries, and unlink the backing object/file (for -s/-F).
+
+The database is selected by the same -s/-n/-F flags as 'bind'; with none given,
+the default 'DEFAULT' database is removed.
+
+Examples:
+  L_builtin shm rm -s mydb   # remove shared memory 'mydb' entirely
+  L_builtin shm rm -n mymem  # remove the in-memory mapping 'mymem'
+  L_builtin shm rm          # remove the default 'DEFAULT' database
+```
+
 #### `L_builtin shm sync`
 
 ```
@@ -2327,6 +2450,172 @@ Examples:
    L_builtin shm bind -s mydb v
    v=( a b c )
    L_builtin shm sync -s mydb v       # push v=(a b c) into shared mem 'mydb'
+```
+
+#### `L_builtin shm unbind`
+
+```
+L_builtin shm unbind: usage: unbind VAR_NAME [VAR_NAME...]
+
+Unbind the named variable(s) from this shell: drop the registry entry and detach
+the shared database. Unlike a plain unset, the variable's current value is
+preserved: it is snapshotted from the shared database and left in a plain (non-
+dynamic) bash variable, so the data survives the unbind. The database entry
+itself is left untouched; another process that has the variable bound may still
+read it.
+
+The store is found via each variable's existing binding; no backing flags are
+needed.
+
+Examples:
+  L_builtin shm unbind v         # stop sharing 'v' but keep its value locally
+  L_builtin shm unbind v w       # unbind 'v' and 'w', keeping their values
+```
+
+### `L_builtin shutdown`
+
+```
+L_builtin shutdown: usage: FD [how]
+
+Close parts or all of a full-duplex connection on network socket FD.
+how can be one of:
+  RD or 0    Further receptions will be disallowed
+  WR or 1    Further transmissions will be disallowed
+  RDWR or 2  Further receptions and transmissions will be disallowed (default)
+
+Exit Status:
+Returns success unless shutdown fails.
+```
+
+### `L_builtin sigmask`
+
+```
+L_builtin sigmask: usage: [-s sigspec] [-u sigspec] [sigspec ...]
+
+Block or unblock signals.
+
+L_builtin sigmask [-s sigspec] [-u sigspec] [sigspec ...]
+
+Block or unblock signals in the shell process. Without options, it
+prints the current signal mask. -s blocks, -u unblocks.
+Each of -s and -u takes a single sigspec (e.g. -s INT, then -u TERM
+in two flags). For multiple signals, repeat the flag (-s INT -s TERM)
+use 'ALL' (case-insensitive), or list remaining signals as positional
+args (positional args are always BLOCKED, never unblocked).
+
+Examples:
+  # Block INT/TERM for the duration of a critical loop, unblocking them
+  # only around the sleep so the user can cancel with Ctrl-C.
+  trap 'cancel=1' INT TERM
+  L_builtin sigmask INT TERM
+  while ! cancel; do
+    echo 'critical step'
+    L_builtin sigunmask -s INT sleep 1
+  done
+
+  # Once a signal is unmasked with -u, it stays unmasked for every
+  # subsequent command in this shell (changes persist via top_level_mask).
+  trap 'echo USR1' USR1
+  L_builtin sigmask -s USR1
+  L_builtin sigmask          # shows SIGUSR1 is blocked
+  L_builtin sigmask -u USR1
+  L_builtin sigmask          # shows SIGUSR1 is no longer listed
+  L_raise -USR1              # trap fires immediately
+
+  # Mixed flags + positional args: -u unblocks INT, then TERM (positional)
+  # is blocked. This is NOT equivalent to 'unblock both INT and TERM'.
+  L_builtin sigmask -s INT TERM USR1
+  L_builtin sigmask -u INT TERM   # unblock INT, block TERM again
+
+Exit Status:
+Returns success unless an invalid signal is provided or a system error 
+occurs.
+```
+
+### `L_builtin signalfd`
+
+```
+L_builtin signalfd: usage: [-n] [-b] [-C] [-v FD_VAR] [SIGNAL...]
+
+Create a signalfd(2) and store its file descriptor in FD_VAR (or print it if
+-v is omitted). The fd becomes readable whenever one of the listed SIGNALs is
+pending, so signals can be polled as an fd - see also the `poll` subcommand.
+
+SIGNAL names (SIGTERM, INT, HUP, ...) or numbers are accepted. If none are
+given, the fd covers every signal.
+
+Options:
+  -n     SFD_NONBLOCK
+  -b     Also block (sigprocmask) the listed signals so they are consumed
+         by reads from the fd instead of running their default action
+  -C     Do not set SFD_CLOEXEC (it is set by default)
+  -v     Store the resulting fd in the variable FD_VAR
+
+Exit Status:
+Returns success unless signalfd fails or the variable cannot be bound.
+```
+
+### `L_builtin sigunmask`
+
+```
+L_builtin sigunmask: usage: [-h] -s sigspec cmd [args...]
+
+Unblock signals and run a command.
+
+L_builtin sigunmask [-h] -s sigspec cmd [args...]
+
+Temporarily unblocks the specified signal and executes the command.
+Note: -s takes a single sigspec; to unblock multiple signals use
+'-s ALL' or invoke sigunmask once per signal. ALL is case-insensitive.
+If the signal was pending, the trap is executed and the command is skipped.
+The command can be any shell command (builtin, function, or external).
+
+WARNING: There is a small window between unblocking and starting the command.
+If a signal arrives in this window, it may be delivered to the command itself
+rather than being caught by this builtin's check.
+
+Examples:
+  # Block INT for a critical step, but let the user Ctrl-C out of
+  # the sleep. -s takes ONE signal; 'TERM' here would become part of
+  # the command, not a second signal.
+  trap 'cancel=1' INT
+  L_builtin sigmask INT
+  while ! cancel; do
+    echo 'critical step'
+    L_builtin sigunmask -s INT sleep 1
+  done
+
+  # Unblock several signals at once with ALL.
+  trap 'cancel=1' INT TERM USR1
+  L_builtin sigmask INT TERM USR1
+  L_builtin sigunmask -s ALL sleep 5
+
+  # If the signal is already pending when sigunmask runs, the trap fires
+  # and the command is skipped (exit status is 128+signum).
+  trap 'echo caught' USR1
+  L_builtin sigmask -s USR1
+  L_raise -USR1
+  L_builtin sigunmask -s USR1 echo 'will not run'
+  # prints 'caught', exits 128+SIGUSR1
+
+Exit Status:
+Returns the status of the command, or 128+signum if a signal was caught.
+```
+
+### `L_builtin sleep`
+
+```
+L_builtin sleep: usage: [-i] SECONDS
+
+Sleep for the specified number of SECONDS. SECONDS can be a duration string
+(e.g. `1s`, `500ms`, `1h30m`) or a floating-point number to request
+sub-second/microsecond-level precision.
+
+If -i is provided, the sleep will not automatically retry on signal interruption
+(EINTR). Instead, it will fail with an error. By default, sleep retries on EINTR.
+
+Exit Status:
+  Returns success unless sleep fails.
 ```
 
 ### `L_builtin splice`
@@ -2353,29 +2642,6 @@ Examples:
   L_builtin splice 3 4 8192 move,more
   L_builtin splice 3 4 65536
   L_builtin splice 3 4 1048576
-```
-
-### `L_builtin signalfd`
-
-```
-L_builtin signalfd: usage: [-n] [-b] [-C] [-v FD_VAR] [SIGNAL...]
-
-Create a signalfd(2) and store its file descriptor in FD_VAR (or print it if
--v is omitted). The fd becomes readable whenever one of the listed SIGNALs is
-pending, so signals can be polled as an fd - see also the `poll` subcommand.
-
-SIGNAL names (SIGTERM, INT, HUP, ...) or numbers are accepted. If none are
-given, the fd covers every signal.
-
-Options:
-  -n     SFD_NONBLOCK
-  -b     Also block (sigprocmask) the listed signals so they are consumed
-         by reads from the fd instead of running their default action
-  -C     Do not set SFD_CLOEXEC (it is set by default)
-  -v     Store the resulting fd in the variable FD_VAR
-
-Exit Status:
-Returns success unless signalfd fails or the variable cannot be bound.
 ```
 
 ### `L_builtin timerfd`
@@ -2412,6 +2678,32 @@ Subcommands:
 Exit Status:
   Returns success unless timerfd_create/timerfd_settime fails or the variable
   cannot be bound.
+
+Examples:
+   # Periodic 100ms heartbeat driven through epoll
+   L_builtin timerfd create -n -s 100ms -i 100ms tf
+   L_builtin epoll create ep
+   L_builtin epoll add "$ep" "$tf" r
+   for i in 1 2 3; do
+       L_builtin epoll wait -t 1 -v ready "$ep"
+       L_builtin timerfd read "$tf"
+       echo "tick $i"
+   done
+   exec {tf}<&- {ep}<&-
+
+   # Race a timer against a stdin producer; whoever fires first wins
+   L_builtin timerfd create -n -s 250ms tf
+   L_builtin epoll create ep
+   L_builtin epoll add "$ep" "$tf" r
+   L_builtin epoll add "$ep" 0 r        # also watch stdin (fd 0)
+   L_builtin epoll wait -t 1 -v ready "$ep"
+   for fd in "${!ready[@]}"; do
+       case $fd in
+           "$tf") echo "timer expired first" ;;
+           0)      echo "got stdin input first" ;;
+       esac
+   done
+   exec {tf}<&- {ep}<&-
 ```
 
 #### `L_builtin timerfd create`
@@ -2434,151 +2726,43 @@ Examples:
    L_builtin timerfd create -s 1.0 -i 0.25 tf
 ```
 
-### `L_builtin lseek`
+### `L_builtin version`
 
 ```
-L_builtin lseek: usage: [-v var] fd offset [whence]
+L_builtin version: usage: 
 
-Adjust the file offset of file descriptor FD to OFFSET bytes
-according to WHENCE.
+Print version information for L_builtin and the bash it was compiled against.
 
-WHENCE can be one of:
-  0 or SET  Seek from the beginning (default)
-  1 or CUR  Seek from the current position
-  2 or END  Seek from the end
+Output includes:
+  L_builtin version    -- from Cargo.toml
+  L_builtin commit     -- git commit of L_builtin source
+  Bash version (compile-time) -- version of bash headers used for compilation
+  Bash commit (compile-time)  -- git commit of bash source used
+  Bash version (runtime)      -- version of bash currently running
+```
 
-If -v VAR is provided, the new offset is stored in VAR.
+### `L_builtin write`
+
+```
+L_builtin write: usage: [-f format] [-v WRITTEN_VAR] [-n] FD DATA
+
+Write DATA to the file descriptor FD via write(2). Works on any fd
+(pipes, files, sockets, etc.), not just sockets.
+
+Supported formats (-f):
+  raw   Write DATA as raw bytes (default)
+  hex   Decode DATA from hex representation first, then write
+
+By default, write loops until all bytes are transmitted, retrying on short
+writes and interrupted system calls (EINTR). If -n is provided, only a
+single write(2) call is made and the result (which may be a short write)
+is returned immediately.
+
+If -v WRITTEN_VAR is provided, the number of bytes written is stored in
+WRITTEN_VAR.
 
 Exit Status:
-Returns success unless an error occurs during lseek or variable binding.
-```
-
-### `L_builtin barrier`
-
-```
-L_builtin barrier: usage: create [-n NAME] BARRIER COUNT | open BARRIER NAME | wait BARRIER [-t SECS] [-n] | close BARRIER | reset BARRIER | destroy BARRIER
-
-Process synchronization barriers backed by shared memory.
-
-Subcommands:
-  create [-n NAME] BARRIER COUNT
-                          Create a barrier for COUNT processes. BARRIER receives an
-                          opaque integer handle. Without -n the barrier lives in
-                          anonymous shared memory (shared across forked processes,
-                          such as a background job started with &). With -n NAME
-                          it is backed by a named shared-memory object (shm_open)
-                          that unrelated processes can open.
-  open BARRIER NAME           Open an existing named barrier NAME and assign its
-                          handle to BARRIER.
-  wait BARRIER [-t SECS] [-n]  Block until the barrier is satisfied. -t SECS sets a
-                          timeout in seconds (e.g. 1.123); -n is non-blocking and
-                          returns immediately (0 if satisfied, non-zero if not).
-  close BARRIER               Unmap the barrier in the current process without
-                          destroying the shared resource.
-  reset BARRIER               Reset the barrier for reuse (clears the satisfied state
-                          and the arrival count).
-  destroy BARRIER             Unmap and, for a named barrier, unlink its shared-memory
-                          object globally.
-
-The bash variable holds only an opaque integer; the underlying shared-memory
-pointer is never exposed.
-
-Examples:
-  alias b='L_builtin barrier'
-  b create var 2
-  ( b wait $var; echo waited ) &
-  b wait $var; echo also waited
-  b create -n /my_barrier v 3
-  b open w /my_barrier
-  b wait w -t 1.123
-  b reset v
-  b destroy v
-```
-
-#### `L_builtin barrier create`
-
-```
-L_builtin barrier create: usage: create [-n NAME] BARRIER COUNT
-
-Create a barrier for COUNT processes.
-
-BARRIER receives an opaque integer handle (a bash variable). Without -n the barrier
-is created in anonymous shared memory and is shared across forked processes
-(for example a background job started with &). With -n NAME it is backed by a
-named shared-memory object (shm_open) that unrelated processes can later open.
-
-Examples:
-  L_builtin barrier create var 2
-  L_builtin barrier create -n /my_barrier v 3
-```
-
-#### `L_builtin barrier open`
-
-```
-L_builtin barrier open: usage: open BARRIER NAME
-
-Open an existing named barrier NAME and assign its handle to BARRIER.
-
-The named barrier must already exist (created by another process with
-'create -n NAME').
-
-Examples:
-  L_builtin barrier open w /my_barrier
-```
-
-#### `L_builtin barrier wait`
-
-```
-L_builtin barrier wait: usage: wait [-t SECS] [-n] BARRIER
-
-Wait until the barrier BARRIER is satisfied.
-
-Options:
-  -t SECS   Timeout in seconds (e.g. 1.123); if the barrier is not satisfied
-            within SECS, fail.
-  -n        Non-blocking: return immediately, 0 if the barrier is already
-            satisfied, non-zero otherwise.
-
-Examples:
-  L_builtin barrier wait $var
-  L_builtin barrier wait -t 1.123 $var
-  L_builtin barrier wait -n $var
-```
-
-#### `L_builtin barrier close`
-
-```
-L_builtin barrier close: usage: close BARRIER
-
-Unmap the barrier BARRIER in the current process without destroying the shared
-resource. Other processes keep their mappings.
-
-Examples:
-  L_builtin barrier close $var
-```
-
-#### `L_builtin barrier reset`
-
-```
-L_builtin barrier reset: usage: reset BARRIER
-
-Reset the barrier BARRIER for reuse: clears the satisfied state and the arrival
-count so a fresh round can begin.
-
-Examples:
-  L_builtin barrier reset $var
-```
-
-#### `L_builtin barrier destroy`
-
-```
-L_builtin barrier destroy: usage: destroy BARRIER
-
-Destroy the barrier BARRIER: unmap it in the current process and, for a named
-barrier, unlink its shared-memory object globally.
-
-Examples:
-  L_builtin barrier destroy $var
+Returns success unless write fails or variable binding fails.
 ```
 
 ---
