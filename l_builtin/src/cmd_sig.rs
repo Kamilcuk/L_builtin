@@ -59,9 +59,9 @@ unsafe fn decode_sigspec(cptr: *mut c_char) -> Option<c_int> {
     if bytes.eq_ignore_ascii_case(b"all") {
         return Some(ALL_SIG);
     }
-    let sig = decode_signal(cptr.cast_const(), DSIG_NOCASE | DSIG_SIGPREFIX);
+    let sig = decode_signal(cptr.cast(), DSIG_NOCASE | DSIG_SIGPREFIX);
     if sig < 0 {
-        sh_invalidsig(cptr.cast_const());
+        sh_invalidsig(cptr.cast());
         return None;
     }
     Some(sig)
