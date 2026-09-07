@@ -52,7 +52,32 @@ Subcommands:
 Exit Status:
   Returns success unless timerfd_create/timerfd_settime fails or the variable
   cannot be bound.
-",
+
+Examples:
+   # Periodic 100ms heartbeat driven through epoll
+   L_builtin timerfd create -n -s 100ms -i 100ms tf
+   L_builtin epoll create ep
+   L_builtin epoll add \"$ep\" \"$tf\" r
+   for i in 1 2 3; do
+       L_builtin epoll wait -t 1 -v ready \"$ep\"
+       L_builtin timerfd read \"$tf\"
+       echo \"tick $i\"
+   done
+   exec {tf}<&- {ep}<&-
+
+   # Race a timer against a stdin producer; whoever fires first wins
+   L_builtin timerfd create -n -s 250ms tf
+   L_builtin epoll create ep
+   L_builtin epoll add \"$ep\" \"$tf\" r
+   L_builtin epoll add \"$ep\" 0 r        # also watch stdin (fd 0)
+   L_builtin epoll wait -t 1 -v ready \"$ep\"
+   for fd in \"${!ready[@]}\"; do
+       case $fd in
+           \"$tf\") echo \"timer expired first\" ;;
+           0)      echo \"got stdin input first\" ;;
+       esac
+   done
+   exec {tf}<&- {ep}<&-
 );
 
 fn parse_clock(s: Option<&str>) -> Option<libc::clockid_t> {

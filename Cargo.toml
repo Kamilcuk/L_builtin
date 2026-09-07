@@ -19,7 +19,7 @@ repository = "https://github.com/Kamilcuk/l_builtin"
 cmdargs-derive = { path = "./cmdargs-derive/" }
 llib = { path = "./llib/" }
 
-syn = { version = "3.0.4", features = ["full"] }
+syn = { version = "3.0", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0"
 libc = "0.2"
@@ -27,7 +27,7 @@ thiserror = "2.0"
 nix = "0.31"
 rustix = { version = "1.1", features = ["param", "use-libc-auxv", "time"] }
 mlua = { version = "0.12.1", features = ["lua51", "vendored"] }
-smallvec = "1.15"
+smallvec = "1.16"
 memmap2 = "0.9"
 uucore = { git = "https://github.com/uutils/coreutils", package = "uucore", rev = "0.11.0" }
 uu_ls = { git = "https://github.com/uutils/coreutils", package = "uu_ls", rev = "0.11.0" }
@@ -38,7 +38,7 @@ uu_tee = { git = "https://github.com/uutils/coreutils", package = "uu_tee", rev 
 uu_sleep = { git = "https://github.com/uutils/coreutils", package = "uu_sleep", rev = "0.11.0" }
 uu_printf = { git = "https://github.com/uutils/coreutils", package = "uu_printf", rev = "0.11.0" }
 rkyv = "0.8"
-regex = "1.11"
+regex = "1.13"
 sed-rs = "2.0.0"
 parse_duration = "2.1"
 tar = "0.4"

@@ -10,7 +10,7 @@
 #![allow(non_snake_case)]
 
 use crate::bash_api::{
-    l_enter_subcommand, this_cmd_name, L_builtin_struct, WordListView, WORD_LIST,
+    l_enter_subcommand, this_cmd_name, Builtin, WordListView, BUILTIN_ENABLED, WORD_LIST,
 };
 use crate::cmdargs::BashVar;
 use crate::cmdargs::WordListIterCpnt;
@@ -19,6 +19,7 @@ use crate::shared::Memfd;
 use crate::subcmd::{cmd_result_to_cint, CmdResult, SubcommandFn, SubcommandGuard};
 use crate::{bprintln, l_builtin_usage_error};
 use cmdargs_derive::CmdArgs;
+use llib::nolock::SyncPtr;
 use memmap2::MmapMut;
 use std::fs::File;
 use std::io::{self, Write};
@@ -87,7 +88,6 @@ pub(crate) fn flush_stdout_buffers() {
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn capture_into_variable(
-    _ename: &str,
     var: BashVar,
     trimnewlines: bool,
     f: impl FnOnce() -> CmdResult,
@@ -126,50 +126,147 @@ macro_rules! c_wrap {
     };
 }
 
-// Dispatch table: a plain map of subcommand name -> extern "C" handler.
-const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
-    ("lseek", crate::lseek::lseek_subcommand),
-    ("poll", c_wrap!(l_poll_subcommand)),
+///////////////////////////////////////////////////////////////
+
+// Array length is inferred from the macro expansion (each `c"..."` entry is
+// counted at compile time, including the trailing null sentinel), so adding or
+// removing a subcommand does not require a separate length constant.
+static L_BUILTIN_DOC: [SyncPtr<*const c_char>] = llib::doc_array!(
+    c"L_lib helper builtins.",
+    c"",
+    c"L_builtin [-v VAR] <subcommand> [options] [args]",
+    c"",
+    c"Options:",
+    c"  -v VAR   Capture stdout of the subcommand into shell variable VAR",
+    c"           (trailing newlines stripped, like $(...))",
+    c"",
+    c"Available subcommands:",
+    c"",
+    c"Network:",
+    c"    listen       Create a listening TCP socket",
+    c"    accept       Accept a network connection",
+    c"    connect      Establish a TCP connection",
+    c"    send         Send bytes over a socket",
+    c"    recv         Receive bytes from a socket",
+    c"    shutdown     Semi-close a network socket",
+    c"",
+    c"File descriptors:",
+    c"    pipe         Create a pipe",
+    c"    eventfd      Create an eventfd counter",
+    c"    memfd        Create an anonymous memory-backed file",
+    c"    timerfd      Create a timer as a file descriptor",
+    c"    signalfd     Deliver signals as a file descriptor",
+    c"    splice       Zero-copy move between two file descriptors",
+    c"    lseek        Reposition file offset",
+    c"    read         Read bytes from a file descriptor",
+    c"    write        Write bytes to a file descriptor",
+    c"    fcntl        Manipulate file descriptor properties",
+    c"    flock        Acquire or release an advisory file lock",
+    c"    close        Close a file descriptor",
+    c"    epoll        Wait for file descriptor events (epoll)",
+    c"    poll         Wait for file descriptors to become ready",
     #[cfg(feature = "ppoll")]
-    ("ppoll", c_wrap!(l_ppoll_subcommand)),
-    ("sigmask", c_wrap!(l_sigmask_subcommand)),
-    ("sigunmask", c_wrap!(l_sigunmask_subcommand)),
-    ("pipe", crate::pipe::pipe_subcommand),
+    c"    ppoll        Wait for FDs and unblock signals atomically",
+    c"",
+    c"Signals:",
+    c"    sigmask      Block or unblock signals",
+    c"    sigunmask    Unblock signals and run a command",
+    c"",
+    c"Synchronization (incl. shared-memory variables):",
+    c"    barrier      Process-shared barrier synchronization",
+    c"    mutex        Process-shared mutual-exclusion lock",
+    c"    semaphore    Process-shared counting semaphore",
+    c"    shm          Shared-memory variables backed by a rkyv database",
+    c"                 (run 'L_builtin shm --help' to list available)",
+    c"",
+    c"Variables:",
+    c"    replace      In-place regex substitution on a bash variable",
+    c"    sedvar       Run a sed script over a bash variable, in place",
+    c"",
+    c"Utilities:",
+    c"    sleep        High-precision sub-second sleep",
+    c"    core         Core utilities via Rust/uutils",
+    c"                 (run 'L_builtin core --help' to list available)",
+    c"    lua          Execute LuaJIT script",
+    c"    ext          Builtins from bash examples/loadables/ directory",
+    c"                 (run 'L_builtin ext --help' to list available)",
+    #[cfg(not(feature = "bash_lt_4_3"))]
+    c"    run          Run a command via `enable -f`",
+    c"    version      Print build and bash version information",
+    #[cfg(feature = "dev")]
+    c"    unittest     Run internal unittests. Only on dev build.",
+    c"",
+    c"Use 'L_builtin <subcommand> --help' for more information.",
+);
+
+// Dispatch table: a plain map of subcommand name -> extern "C" handler.
+// Ordered by functional group (network, fd ops, signals, sync, variables,
+// utilities) for readability; the lookup table is hash-based so order has
+// no runtime effect.
+const SUBCOMMAND_ENTRIES: &[(&str, SubcommandFn)] = &[
+    // Network
     ("listen", crate::listen::listen_subcommand),
     ("accept", crate::accept::accept_subcommand),
     ("connect", crate::connect::connect_subcommand),
-    ("shutdown", crate::shutdown::shutdown_subcommand),
     ("send", crate::send::send_subcommand),
     ("recv", crate::recv::recv_subcommand),
-    ("write", crate::write::write_subcommand),
-    ("read", crate::read::read_subcommand),
-    ("sleep", crate::sleep::sleep_subcommand),
-    ("core", crate::cmd_core::l_core_subcommand),
-    ("lua", crate::cmd_lua::l_lua_subcommand),
-    ("ext", c_wrap!(l_cmd_ext)),
+    ("shutdown", crate::shutdown::shutdown_subcommand),
+    // FD ops
+    ("pipe", crate::pipe::pipe_subcommand),
     ("eventfd", crate::eventfd::eventfd_subcommand),
     ("memfd", crate::memfd::memfd_subcommand),
     ("timerfd", crate::timerfd::timerfd_subcommand),
     ("signalfd", crate::signalfd::signalfd_subcommand),
+    ("splice", crate::splice::splice_subcommand),
+    ("lseek", crate::lseek::lseek_subcommand),
+    ("read", crate::read::read_subcommand),
+    ("write", crate::write::write_subcommand),
+    ("fcntl", crate::cmd_fcntl::fcntl_subcommand),
     ("flock", crate::flock::flock_subcommand),
     ("close", crate::close::close_subcommand),
-    ("splice", crate::splice::splice_subcommand),
-    ("shm", crate::cmd_shm::shm_subcommand),
-    ("fcntl", crate::cmd_fcntl::fcntl_subcommand),
     ("epoll", crate::cmd_epoll::epoll_subcommand),
+    ("poll", c_wrap!(l_poll_subcommand)),
+    #[cfg(feature = "ppoll")]
+    ("ppoll", c_wrap!(l_ppoll_subcommand)),
+    // Signals
+    ("sigmask", c_wrap!(l_sigmask_subcommand)),
+    ("sigunmask", c_wrap!(l_sigunmask_subcommand)),
+    // Sync (incl. shared-memory variables)
     ("barrier", crate::cmd_barrier::barrier_subcommand),
     ("mutex", crate::cmd_mutex::mutex_subcommand),
     ("semaphore", crate::cmd_semaphore::semaphore_subcommand),
+    ("shm", crate::cmd_shm::shm_subcommand),
+    // Variables
     ("replace", crate::cmd_replace::replace_subcommand),
     ("sedvar", crate::cmd_sedvar::sedvar_subcommand),
+    // Utilities
+    ("sleep", crate::sleep::sleep_subcommand),
+    ("core", crate::cmd_core::l_core_subcommand),
+    ("lua", crate::cmd_lua::l_lua_subcommand),
+    ("ext", c_wrap!(l_cmd_ext)),
     #[cfg(not(feature = "bash_lt_4_3"))]
     ("run", crate::cmd_run::l_run_subcommand),
-    #[cfg(not(feature = "bash_lt_4_3"))]
-    ("capture", crate::cmd_run::l_run_subcommand),
+    ("version", crate::cmd_version::version_subcommand),
     #[cfg(feature = "dev")]
     ("unittest", crate::unittest::l_unittest_subcommand),
-    ("version", crate::cmd_version::version_subcommand),
 ];
+
+#[no_mangle]
+pub static mut L_builtin_struct: Builtin = Builtin {
+    name: c"L_builtin".as_ptr().cast_mut(),
+    function: Some(l_entrypoint),
+    flags: BUILTIN_ENABLED as i32,
+    long_doc: L_BUILTIN_DOC.as_ptr().cast_mut().cast(),
+    short_doc: c"L_builtin <subcommand> [options] [args]"
+        .as_ptr()
+        .cast_mut(),
+    handle: std::ptr::null_mut(),
+};
+
+#[no_mangle]
+pub static L_builtin_impl: SyncPtr<*mut Builtin> = SyncPtr(&raw mut L_builtin_struct);
+
+///////////////////////////////////////////////////////////////
 
 const fn extract_first<const N: usize>(a: &[(&'static str, SubcommandFn)]) -> [&'static str; N] {
     let mut names = [""; N];
@@ -216,8 +313,7 @@ struct EntrypointArgs {
 }
 
 /// Top-level L_builtin entry point called by bash via L_builtin_struct.function
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
+unsafe extern "C" fn l_entrypoint(list: *mut WORD_LIST) -> c_int {
     flush_stdout_buffers();
     let ret = cmd_result_to_cint(entrypoint(list));
     flush_stdout_buffers();
@@ -250,9 +346,7 @@ pub unsafe fn entrypoint(list: *mut WORD_LIST) -> CmdResult {
     // against direct fd writes from Rust.
     if let Some(ret) = args.var {
         // -v VAR was provided: capture subcommand stdout into VAR
-        capture_into_variable("L_builtin", ret, true, || unsafe {
-            subcommand(list.as_ptr())
-        })
+        capture_into_variable(ret, true, || unsafe { subcommand(list.as_ptr()) })
     } else {
         unsafe { subcommand(list.as_ptr()) }
     }

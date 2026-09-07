@@ -56,11 +56,11 @@ workspace-rust-trim:
 workspace-rust-clean:
 	rm -rf $(BUILD_DIR)/rust/*
 
-cargo-update: workspace-rust workspace-rust-trim
+cargo-update:
+	$(MAKE) workspace-rust workspace-rust-trim BASHES="4.4 5.0 5.1 5.2 5.3"
 	cargo update
 
-pre-bump-my-version:
-	$(MAKE) cargo-update BASHES="4.4 5.0 5.1 5.2 5.3"
+pre-bump-my-version: cargo-update
 	git add Cargo.lock
 
 ###############################################################################

@@ -17,3 +17,34 @@ impl<T> NoLock<T> {
         }
     }
 }
+
+/// `*const c_char` made `Sync` so a `static` array of C string literals can
+/// back a `long_doc` field across threads without unsafe blocks.
+#[repr(transparent)]
+pub struct SyncPtr<T>(pub T);
+unsafe impl<T> Sync for SyncPtr<T> {}
+impl<T> SyncPtr<T> {
+    pub const fn as_ptr(self) -> T
+    where
+        T: Copy,
+    {
+        self.0
+    }
+}
+
+/// Build a null-terminated array of `c_char` pointers suitable for a bash
+/// `long_doc` field. Each `$cstr` literal is converted to a `SyncPtr`, and a
+/// trailing `SyncPtr(null)` is appended as the required sentinel. The macro
+/// accepts a comma-separated list of `c"..."` literals.
+#[macro_export]
+macro_rules! doc_array {
+    ($( $( #[cfg($meta:meta)] )? $cstr:literal ),* $(,)?) => {
+        [
+            $(
+                $( #[cfg($meta)] )?
+                $crate::nolock::SyncPtr($cstr.as_ptr()),
+            )*
+            $crate::nolock::SyncPtr(core::ptr::null()),
+        ]
+    };
+}

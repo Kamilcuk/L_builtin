@@ -30,7 +30,7 @@ function(generate_rust_bindings_and_version)
         OUTPUT "${L_GENERATED_RUST_BINDINGS}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${generated_rust_dir}"
         COMMAND "${L_BINDGEN_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/c/L_builtin.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/c/l_builtins.h"
             --output "${L_GENERATED_RUST_BINDINGS}"
             --allowlist-function "l_.*"
             --allowlist-function "find_variable"
@@ -76,6 +76,7 @@ function(generate_rust_bindings_and_version)
             --allowlist-var "EX_USAGE"
             --allowlist-var "EX_RETRYFAIL"
             --allowlist-var "EX_NOTFOUND"
+            --allowlist-var "BUILTIN_ENABLED"
             --allowlist-var "EXECUTION_SUCCESS"
             --allowlist-var "EXECUTION_FAILURE"
             --allowlist-var "att_assoc"
@@ -105,9 +106,10 @@ function(generate_rust_bindings_and_version)
             "-I${bash_source}/include"
             "-I${bash_source}/builtins"
             "-I${bash_source}/lib"
-            DEPENDS
-                "${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/c/L_builtin.h"
-                "${L_BINDGEN_EXECUTABLE}"
+        DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/c/l_bash_api.h"
+            "${CMAKE_CURRENT_SOURCE_DIR}/l_builtin/c/l_builtins.h"
+            "${L_BINDGEN_EXECUTABLE}"
         VERBATIM
         COMMENT "Generating Rust bindings: ${generated_rust_dir}/bash_api_gen.rs"
     )

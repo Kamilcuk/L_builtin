@@ -126,20 +126,4 @@ HASH_TABLE *l_prepare_assoc_array(const char *name);
 
 /* ------------------------------------------------------------------------- */
 
-/*
- * Flag lookup tables for the fcntl subcommand (defined in cmd_fcntl.c).
- * Each entry maps a human-readable flag name to its numeric constant.
- * The arrays are sentinel-terminated ({NULL, 0}) so Rust can iterate
- * without a compile-time length.
- */
-typedef struct {
-  const char *name;
-  int flag;
-} l_flag_entry_t;
-
-extern const l_flag_entry_t l_open_flags[];
-extern const l_flag_entry_t l_fd_flags[];
-
-/* ------------------------------------------------------------------------- */
-
 #endif /* L_BUILTIN_BASH_API_H_ */

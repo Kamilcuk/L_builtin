@@ -9,10 +9,9 @@
  * with the #ifdef guards below).
  */
 
-#include <config.h>
 #include <fcntl.h>
 
-#include "l_bash_api.h"
+#include "l_builtins.h"
 
 /*
  * open(2) flag names, used to parse the comma-separated FLAGS argument of

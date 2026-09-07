@@ -50,12 +50,9 @@ include(cmake/Submodules.cmake)
 include(CheckSymbolExists)
 set(CMAKE_REQUIRED_DEFINITIONS -D_GNU_SOURCE)
 check_symbol_exists(ppoll "poll.h" HAVE_PPOLL)
+set(L_BUILTIN_RS_FEATURES "")
 if(HAVE_PPOLL)
-    message(STATUS "ppoll(2) found, enabling ppoll subcommand")
-    set(L_BUILTIN_RS_FEATURES ppoll)
-else()
-    message(WARNING "ppoll(2) not found, disabling ppoll subcommand")
-    set(L_BUILTIN_RS_FEATURES "")
+    list(APPEND L_BUILTIN_RS_FEATURES ppoll)
 endif()
 if(L_DEV)
     list(APPEND L_BUILTIN_RS_FEATURES dev)
@@ -80,7 +77,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/create_bash_target.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/create_bash_loadables_target.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rust_bindings_and_version.cmake)
 
-set(CARGO_FLAGS)
+set(CARGO_FLAGS "")
 if(CARGO_LOCKED)
     list(APPEND CARGO_FLAGS LOCKED)
 endif()
@@ -127,7 +124,7 @@ foreach(ver IN LISTS bash_versions_list)
     )
 
     corrosion_set_features(l_builtin_${ver}
-        ${L_BUILTIN_RS_FEATURES} ${bash_lt_4_3_feature}
+        FEATURES ${L_BUILTIN_RS_FEATURES} ${bash_lt_4_3_feature}
     )
     corrosion_set_env_vars(l_builtin_${ver}
         GENERATED_RUST=${ver_generated_rust}
@@ -155,12 +152,11 @@ foreach(ver IN LISTS bash_versions_list)
     # in Rust (see l_builtin/src/*.rs).
 
     add_library(L_builtin_object_${ver} OBJECT
-        ./l_builtin/c/L_builtin.c
-        ./l_builtin/c/poll.c
-        ./l_builtin/c/sig.c
-        ./l_builtin/c/l_bash_api.c
         ./l_builtin/c/cmd_ext.c
-        ./l_builtin/c/cmd_fcntl.c
+        ./l_builtin/c/fcntl_flags.c
+        ./l_builtin/c/cmd_poll.c
+        ./l_builtin/c/cmd_sig.c
+        ./l_builtin/c/l_bash_api.c
         $<TARGET_OBJECTS:bash_loadables_${ver}>
     )
     # target_compile_options(L_builtin_object_${ver} PUBLIC -ffunction-sections -fdata-sections)

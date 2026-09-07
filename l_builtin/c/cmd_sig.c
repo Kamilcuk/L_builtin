@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "l_bash_api.h"
+#include "l_builtins.h"
 
 /* Missing extern declarations from Bash headers */
 extern sigset_t top_level_mask;
@@ -46,16 +46,27 @@ static const char *const sigmask_doc[] = {
   "Use 'ALL' (case-insensitive) with -s or -u to block or unblock all",
   "signals respectively. Positional arguments are always blocked.",
   "",
-  "Example:",
+"Examples:",
+  "  # Block INT/TERM for the duration of a critical loop, unblocking them",
+  "  # only around the sleep so the user can cancel with Ctrl-C.",
   "  trap 'cancel=1' INT TERM",
   "  L_builtin sigmask INT TERM",
   "  while ! cancel; do",
   "    echo 'critical step'",
-  "    L_builtin sigunmask -s INT TERM sleep 1",
+  "    L_builtin sigunmask -s INT sleep 1",
   "  done",
   "",
+  "  # Once a signal is unmasked with -u, it stays unmasked for every",
+  "  # subsequent command in this shell (changes persist via top_level_mask).",
+  "  trap 'echo USR1' USR1",
+  "  L_builtin sigmask -s USR1",
+  "  L_builtin sigmask          # shows SIGUSR1 is blocked",
+  "  L_builtin sigmask -u USR1",
+  "  L_builtin sigmask          # shows SIGUSR1 is no longer listed",
+  "  L_raise -USR1              # trap fires immediately",
+  "",
   "Exit Status:",
-  "Returns success unless an invalid signal is provided or a system error "
+  "Returns success unless an invalid signal is provided or a system error ",
   "occurs.",
   (char *)NULL
 };
@@ -173,7 +184,8 @@ static const char *const sigunmask_doc[] = {
   "L_builtin sigunmask [-h] -s sigspec cmd [args...]",
   "",
   "Temporarily unblocks the specified signal and executes the command.",
-  "Use 'ALL' (case-insensitive) with -s to unblock all signals.",
+  "Note: -s takes a single sigspec; to unblock multiple signals use",
+  "'-s ALL' or invoke sigunmask once per signal. ALL is case-insensitive.",
   "If the signal was pending, the trap is executed and the command is "
   "skipped.",
   "The command can be any shell command (builtin, function, or external).",
@@ -184,13 +196,29 @@ static const char *const sigunmask_doc[] = {
   "itself",
   "rather than being caught by this builtin's check.",
   "",
-  "Example:",
-  "  trap 'cancel=1' INT TERM",
-  "  L_builtin sigmask INT TERM",
+  "Examples:",
+  "  # Block INT for a critical step, but let the user Ctrl-C out of",
+  "  # the sleep. -s takes ONE signal; 'TERM' here would become part of",
+  "  # the command, not a second signal.",
+  "  trap 'cancel=1' INT",
+  "  L_builtin sigmask INT",
   "  while ! cancel; do",
   "    echo 'critical step'",
-  "    L_builtin sigunmask -s INT TERM sleep 1",
+  "    L_builtin sigunmask -s INT sleep 1",
   "  done",
+  "",
+  "  # Unblock several signals at once with ALL.",
+  "  trap 'cancel=1' INT TERM USR1",
+  "  L_builtin sigmask INT TERM USR1",
+  "  L_builtin sigunmask -s ALL sleep 5",
+  "",
+  "  # If the signal is already pending when sigunmask runs, the trap fires",
+  "  # and the command is skipped (exit status is 128+signum).",
+  "  trap 'echo caught' USR1",
+  "  L_builtin sigmask -s USR1",
+  "  L_raise -USR1",
+  "  L_builtin sigunmask -s USR1 echo 'will not run'",
+  "  # prints 'caught', exits 128+SIGUSR1",
   "",
   "Exit Status:",
   "Returns the status of the command, or 128+signum if a signal was caught.",

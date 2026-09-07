@@ -167,6 +167,18 @@ Examples:
   L_builtin eventfd write \"$ev\" 1        # counter += 1
   L_builtin eventfd read \"$ev\"           # prints 1
   exec {ev}<&-
+
+  # Signal a child via epoll when a producer increments the counter
+  L_builtin eventfd create -n ev
+  L_builtin epoll create ep
+  L_builtin epoll add \"$ep\" \"$ev\" r
+  (                                       # producer
+      sleep 0.2
+      L_builtin eventfd write \"$ev\" 3    # counter = 3
+  ) &
+  L_builtin epoll wait -t 1 -v ready \"$ep\"
+  L_builtin eventfd read \"$ev\" n        # n = 3
+  exec {ev}<&- {ep}<&-
 ",
 );
 

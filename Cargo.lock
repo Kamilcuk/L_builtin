@@ -7,6 +7,7 @@ name = "L_builtin_dispatcher"
 version = "0.1.5"
 dependencies = [
  "libc",
+ "llib",
  "nix",
  "regex",
  "tar",

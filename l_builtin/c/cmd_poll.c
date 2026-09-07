@@ -8,7 +8,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#include "l_bash_api.h"
+#include "l_builtins.h"
 
 static short parse_events(const char *s)
 {

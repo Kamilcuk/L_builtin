@@ -10,6 +10,8 @@ use std::os::raw::{c_char, c_int, c_void};
 use tar::Archive;
 use zstd::stream::Decoder;
 
+use llib::nolock::{SyncPtr, NoLock};
+
 ///////////////////////////////////////////////////////////////////////////////
 
 #[repr(C)]
@@ -24,26 +26,13 @@ pub struct Builtin {
 
 const BUILTIN_ENABLED: c_int = 1;
 
-#[repr(transparent)]
-struct SyncPtr(*const c_char);
-unsafe impl Sync for SyncPtr {}
-
-macro_rules! doc_array {
-    ($($cstr:literal),* $(,)?) => {
-        [
-            $(SyncPtr($cstr.as_ptr())),*,
-            SyncPtr(core::ptr::null()),
-        ]
-    };
-}
-
-static L_BUILTIN_DOC: [SyncPtr; 7] = doc_array!(
+static L_BUILTIN_DOC: [SyncPtr; 7] = llib::doc_array!(
     c"L_builtin multi-version dispatcher.",
     c"",
     c"L_builtin <subcommand> [options] [args]",
     c"",
-    c"Available subcommands:",
-    c"  version      Print build and bash version information",
+    c"This is stub documentaion.",
+    c"Run L_builtin -h to load proper documetnation.",
 );
 
 #[no_mangle]
@@ -150,31 +139,6 @@ fn get_embedded_builtin(handle: *mut c_void) -> Option<&'static Builtin> {
         return None;
     }
     Some(unsafe { &**(ptr as *const *const Builtin) })
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-#[repr(transparent)]
-struct NoLock<T>(UnsafeCell<T>);
-unsafe impl<T> Sync for NoLock<T> {}
-impl<T> NoLock<T> {
-    pub const fn new(value: T) -> Self {
-        Self(UnsafeCell::new(value))
-    }
-}
-impl<T> NoLock<Option<T>> {
-    pub fn get_or_try_init<E, F>(&self, f: F) -> Result<&T, E>
-    where
-        F: FnOnce() -> Result<T, E>,
-    {
-        unsafe {
-            let slot = &mut *self.0.get();
-            if slot.is_none() {
-                *slot = Some(f()?);
-            }
-            Ok(slot.as_ref().unwrap())
-        }
-    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
